@@ -32,8 +32,7 @@
 /* INCLUDES                                                                  */
 /*---------------------------------------------------------------------------*/
 
-#include <stdint.h>
-#include <string.h>
+#include "../tiku_kits_maths.h"
 
 /*---------------------------------------------------------------------------*/
 /* CONFIGURATION                                                             */
@@ -89,16 +88,6 @@ struct tiku_kits_matrix {
 };
 
 /*---------------------------------------------------------------------------*/
-/* RETURN CODES                                                              */
-/*---------------------------------------------------------------------------*/
-
-#define TIKU_KITS_MATRIX_OK          0  /**< Operation succeeded */
-#define TIKU_KITS_MATRIX_ERR_DIM    -1  /**< Dimension mismatch */
-#define TIKU_KITS_MATRIX_ERR_SIZE   -2  /**< Exceeds TIKU_KITS_MATRIX_MAX_SIZE */
-#define TIKU_KITS_MATRIX_ERR_SINGULAR -3 /**< Matrix is singular */
-#define TIKU_KITS_MATRIX_ERR_NULL   -4  /**< NULL pointer argument */
-
-/*---------------------------------------------------------------------------*/
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
@@ -107,14 +96,14 @@ struct tiku_kits_matrix {
  * @param m    Matrix to initialize
  * @param rows Number of rows (1..TIKU_KITS_MATRIX_MAX_SIZE)
  * @param cols Number of columns (1..TIKU_KITS_MATRIX_MAX_SIZE)
- * @return TIKU_KITS_MATRIX_OK or TIKU_KITS_MATRIX_ERR_SIZE
+ * @return TIKU_KITS_MATHS_OK or TIKU_KITS_MATHS_ERR_SIZE
  */
 int tiku_kits_matrix_init(struct tiku_kits_matrix *m, uint8_t rows, uint8_t cols);
 
 /**
  * @brief Set all elements to zero, preserving dimensions
  * @param m Matrix to zero
- * @return TIKU_KITS_MATRIX_OK or TIKU_KITS_MATRIX_ERR_NULL
+ * @return TIKU_KITS_MATHS_OK or TIKU_KITS_MATHS_ERR_NULL
  */
 int tiku_kits_matrix_zero(struct tiku_kits_matrix *m);
 
@@ -122,7 +111,7 @@ int tiku_kits_matrix_zero(struct tiku_kits_matrix *m);
  * @brief Set matrix to the identity matrix
  * @param m Matrix (must be square)
  * @param n Dimension (n x n)
- * @return TIKU_KITS_MATRIX_OK, TIKU_KITS_MATRIX_ERR_SIZE, or TIKU_KITS_MATRIX_ERR_NULL
+ * @return TIKU_KITS_MATHS_OK, TIKU_KITS_MATHS_ERR_SIZE, or TIKU_KITS_MATHS_ERR_NULL
  */
 int tiku_kits_matrix_identity(struct tiku_kits_matrix *m, uint8_t n);
 
@@ -158,7 +147,7 @@ tiku_kits_matrix_elem_t tiku_kits_matrix_get(const struct tiku_kits_matrix *m,
  * @brief Copy matrix src to dst
  * @param dst Destination matrix
  * @param src Source matrix
- * @return TIKU_KITS_MATRIX_OK or TIKU_KITS_MATRIX_ERR_NULL
+ * @return TIKU_KITS_MATHS_OK or TIKU_KITS_MATHS_ERR_NULL
  */
 int tiku_kits_matrix_copy(struct tiku_kits_matrix *dst,
                      const struct tiku_kits_matrix *src);
@@ -181,7 +170,7 @@ int tiku_kits_matrix_equal(const struct tiku_kits_matrix *a,
  * @param result Output matrix (may alias a or b)
  * @param a      Left operand
  * @param b      Right operand
- * @return TIKU_KITS_MATRIX_OK or TIKU_KITS_MATRIX_ERR_DIM
+ * @return TIKU_KITS_MATHS_OK or TIKU_KITS_MATHS_ERR_DIM
  *
  * Matrices a and b must have the same dimensions.
  */
@@ -194,7 +183,7 @@ int tiku_kits_matrix_add(struct tiku_kits_matrix *result,
  * @param result Output matrix (may alias a or b)
  * @param a      Left operand
  * @param b      Right operand
- * @return TIKU_KITS_MATRIX_OK or TIKU_KITS_MATRIX_ERR_DIM
+ * @return TIKU_KITS_MATHS_OK or TIKU_KITS_MATHS_ERR_DIM
  *
  * Matrices a and b must have the same dimensions.
  */
@@ -207,7 +196,7 @@ int tiku_kits_matrix_sub(struct tiku_kits_matrix *result,
  * @param result Output matrix (must NOT alias a or b)
  * @param a      Left operand (m x n)
  * @param b      Right operand (n x p)
- * @return TIKU_KITS_MATRIX_OK, TIKU_KITS_MATRIX_ERR_DIM, or TIKU_KITS_MATRIX_ERR_SIZE
+ * @return TIKU_KITS_MATHS_OK, TIKU_KITS_MATHS_ERR_DIM, or TIKU_KITS_MATHS_ERR_SIZE
  *
  * Requires a->cols == b->rows. Result dimensions: a->rows x b->cols.
  */
@@ -220,7 +209,7 @@ int tiku_kits_matrix_mul(struct tiku_kits_matrix *result,
  * @param result Output matrix (may alias a)
  * @param a      Input matrix
  * @param scalar Scalar value
- * @return TIKU_KITS_MATRIX_OK or TIKU_KITS_MATRIX_ERR_NULL
+ * @return TIKU_KITS_MATHS_OK or TIKU_KITS_MATHS_ERR_NULL
  */
 int tiku_kits_matrix_scale(struct tiku_kits_matrix *result,
                       const struct tiku_kits_matrix *a,
@@ -234,7 +223,7 @@ int tiku_kits_matrix_scale(struct tiku_kits_matrix *result,
  * @brief Transpose: result = a^T
  * @param result Output matrix (must NOT alias a)
  * @param a      Input matrix
- * @return TIKU_KITS_MATRIX_OK or TIKU_KITS_MATRIX_ERR_NULL
+ * @return TIKU_KITS_MATHS_OK or TIKU_KITS_MATHS_ERR_NULL
  */
 int tiku_kits_matrix_transpose(struct tiku_kits_matrix *result,
                           const struct tiku_kits_matrix *a);
@@ -247,7 +236,7 @@ int tiku_kits_matrix_transpose(struct tiku_kits_matrix *result,
  * @brief Compute the determinant of a square matrix
  * @param m   Square matrix (up to TIKU_KITS_MATRIX_MAX_SIZE x TIKU_KITS_MATRIX_MAX_SIZE)
  * @param det Output: determinant value
- * @return TIKU_KITS_MATRIX_OK or TIKU_KITS_MATRIX_ERR_DIM (if not square)
+ * @return TIKU_KITS_MATHS_OK or TIKU_KITS_MATHS_ERR_DIM (if not square)
  *
  * Uses cofactor expansion. Practical for small matrices (up to 4x4).
  */
@@ -258,7 +247,7 @@ int tiku_kits_matrix_det(const struct tiku_kits_matrix *m,
  * @brief Compute the trace (sum of diagonal elements)
  * @param m     Square matrix
  * @param trace Output: trace value
- * @return TIKU_KITS_MATRIX_OK or TIKU_KITS_MATRIX_ERR_DIM (if not square)
+ * @return TIKU_KITS_MATHS_OK or TIKU_KITS_MATHS_ERR_DIM (if not square)
  */
 int tiku_kits_matrix_trace(const struct tiku_kits_matrix *m,
                       tiku_kits_matrix_elem_t *trace);
