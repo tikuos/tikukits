@@ -4,7 +4,7 @@
  *
  * Authors: Ambuj Varshney <ambuj@tiku-os.org>
  *
- * tiku_matrix.c - Basic matrix operations library
+ * tiku_kits_matrix.c - Basic matrix operations library
  *
  * Platform-independent implementation of common matrix operations.
  * All storage is statically allocated; no heap usage.
@@ -28,7 +28,7 @@
 /* INCLUDES                                                                  */
 /*---------------------------------------------------------------------------*/
 
-#include "tiku_matrix.h"
+#include "tiku_kits_matrix.h"
 
 /*---------------------------------------------------------------------------*/
 /* INTERNAL HELPERS                                                          */
@@ -43,17 +43,17 @@
  * @return Determinant value
  *
  * Recursive cofactor expansion along the first row.
- * Stack depth is bounded by TIKU_MATRIX_MAX_SIZE.
+ * Stack depth is bounded by TIKU_KITS_MATRIX_MAX_SIZE.
  */
-static tiku_matrix_elem_t det_recursive(
-    const struct tiku_matrix *m,
+static tiku_kits_matrix_elem_t det_recursive(
+    const struct tiku_kits_matrix *m,
     const uint8_t *row_idx,
     const uint8_t *col_idx,
     uint8_t n)
 {
-    tiku_matrix_elem_t result;
-    tiku_matrix_elem_t cofactor;
-    uint8_t sub_cols[TIKU_MATRIX_MAX_SIZE];
+    tiku_kits_matrix_elem_t result;
+    tiku_kits_matrix_elem_t cofactor;
+    uint8_t sub_cols[TIKU_KITS_MATRIX_MAX_SIZE];
     uint8_t j;
     uint8_t k;
     int sign;
@@ -93,46 +93,46 @@ static tiku_matrix_elem_t det_recursive(
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_init(struct tiku_matrix *m, uint8_t rows, uint8_t cols)
+int tiku_kits_matrix_init(struct tiku_kits_matrix *m, uint8_t rows, uint8_t cols)
 {
     if (m == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
     if (rows == 0 || cols == 0
-        || rows > TIKU_MATRIX_MAX_SIZE
-        || cols > TIKU_MATRIX_MAX_SIZE) {
-        return TIKU_MATRIX_ERR_SIZE;
+        || rows > TIKU_KITS_MATRIX_MAX_SIZE
+        || cols > TIKU_KITS_MATRIX_MAX_SIZE) {
+        return TIKU_KITS_MATRIX_ERR_SIZE;
     }
 
     m->rows = rows;
     m->cols = cols;
     memset(m->data, 0, sizeof(m->data));
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_zero(struct tiku_matrix *m)
+int tiku_kits_matrix_zero(struct tiku_kits_matrix *m)
 {
     if (m == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
 
     memset(m->data, 0, sizeof(m->data));
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_identity(struct tiku_matrix *m, uint8_t n)
+int tiku_kits_matrix_identity(struct tiku_kits_matrix *m, uint8_t n)
 {
     uint8_t i;
 
     if (m == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
-    if (n == 0 || n > TIKU_MATRIX_MAX_SIZE) {
-        return TIKU_MATRIX_ERR_SIZE;
+    if (n == 0 || n > TIKU_KITS_MATRIX_MAX_SIZE) {
+        return TIKU_KITS_MATRIX_ERR_SIZE;
     }
 
     m->rows = n;
@@ -143,15 +143,15 @@ int tiku_matrix_identity(struct tiku_matrix *m, uint8_t n)
         m->data[i][i] = 1;
     }
 
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 /* ELEMENT ACCESS                                                            */
 /*---------------------------------------------------------------------------*/
 
-void tiku_matrix_set(struct tiku_matrix *m, uint8_t row, uint8_t col,
-                     tiku_matrix_elem_t val)
+void tiku_kits_matrix_set(struct tiku_kits_matrix *m, uint8_t row, uint8_t col,
+                     tiku_kits_matrix_elem_t val)
 {
     if (m != NULL && row < m->rows && col < m->cols) {
         m->data[row][col] = val;
@@ -160,7 +160,7 @@ void tiku_matrix_set(struct tiku_matrix *m, uint8_t row, uint8_t col,
 
 /*---------------------------------------------------------------------------*/
 
-tiku_matrix_elem_t tiku_matrix_get(const struct tiku_matrix *m,
+tiku_kits_matrix_elem_t tiku_kits_matrix_get(const struct tiku_kits_matrix *m,
                                    uint8_t row, uint8_t col)
 {
     if (m != NULL && row < m->rows && col < m->cols) {
@@ -173,23 +173,23 @@ tiku_matrix_elem_t tiku_matrix_get(const struct tiku_matrix *m,
 /* COPY AND COMPARISON                                                       */
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_copy(struct tiku_matrix *dst,
-                     const struct tiku_matrix *src)
+int tiku_kits_matrix_copy(struct tiku_kits_matrix *dst,
+                     const struct tiku_kits_matrix *src)
 {
     if (dst == NULL || src == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
 
     dst->rows = src->rows;
     dst->cols = src->cols;
     memcpy(dst->data, src->data, sizeof(dst->data));
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_equal(const struct tiku_matrix *a,
-                      const struct tiku_matrix *b)
+int tiku_kits_matrix_equal(const struct tiku_kits_matrix *a,
+                      const struct tiku_kits_matrix *b)
 {
     uint8_t r;
     uint8_t c;
@@ -216,18 +216,18 @@ int tiku_matrix_equal(const struct tiku_matrix *a,
 /* ARITHMETIC OPERATIONS                                                     */
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_add(struct tiku_matrix *result,
-                    const struct tiku_matrix *a,
-                    const struct tiku_matrix *b)
+int tiku_kits_matrix_add(struct tiku_kits_matrix *result,
+                    const struct tiku_kits_matrix *a,
+                    const struct tiku_kits_matrix *b)
 {
     uint8_t r;
     uint8_t c;
 
     if (result == NULL || a == NULL || b == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
     if (a->rows != b->rows || a->cols != b->cols) {
-        return TIKU_MATRIX_ERR_DIM;
+        return TIKU_KITS_MATRIX_ERR_DIM;
     }
 
     result->rows = a->rows;
@@ -239,23 +239,23 @@ int tiku_matrix_add(struct tiku_matrix *result,
         }
     }
 
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_sub(struct tiku_matrix *result,
-                    const struct tiku_matrix *a,
-                    const struct tiku_matrix *b)
+int tiku_kits_matrix_sub(struct tiku_kits_matrix *result,
+                    const struct tiku_kits_matrix *a,
+                    const struct tiku_kits_matrix *b)
 {
     uint8_t r;
     uint8_t c;
 
     if (result == NULL || a == NULL || b == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
     if (a->rows != b->rows || a->cols != b->cols) {
-        return TIKU_MATRIX_ERR_DIM;
+        return TIKU_KITS_MATRIX_ERR_DIM;
     }
 
     result->rows = a->rows;
@@ -267,29 +267,29 @@ int tiku_matrix_sub(struct tiku_matrix *result,
         }
     }
 
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_mul(struct tiku_matrix *result,
-                    const struct tiku_matrix *a,
-                    const struct tiku_matrix *b)
+int tiku_kits_matrix_mul(struct tiku_kits_matrix *result,
+                    const struct tiku_kits_matrix *a,
+                    const struct tiku_kits_matrix *b)
 {
     uint8_t r;
     uint8_t c;
     uint8_t k;
-    tiku_matrix_elem_t sum;
+    tiku_kits_matrix_elem_t sum;
 
     if (result == NULL || a == NULL || b == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
     if (a->cols != b->rows) {
-        return TIKU_MATRIX_ERR_DIM;
+        return TIKU_KITS_MATRIX_ERR_DIM;
     }
-    if (a->rows > TIKU_MATRIX_MAX_SIZE
-        || b->cols > TIKU_MATRIX_MAX_SIZE) {
-        return TIKU_MATRIX_ERR_SIZE;
+    if (a->rows > TIKU_KITS_MATRIX_MAX_SIZE
+        || b->cols > TIKU_KITS_MATRIX_MAX_SIZE) {
+        return TIKU_KITS_MATRIX_ERR_SIZE;
     }
 
     result->rows = a->rows;
@@ -305,20 +305,20 @@ int tiku_matrix_mul(struct tiku_matrix *result,
         }
     }
 
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_scale(struct tiku_matrix *result,
-                      const struct tiku_matrix *a,
-                      tiku_matrix_elem_t scalar)
+int tiku_kits_matrix_scale(struct tiku_kits_matrix *result,
+                      const struct tiku_kits_matrix *a,
+                      tiku_kits_matrix_elem_t scalar)
 {
     uint8_t r;
     uint8_t c;
 
     if (result == NULL || a == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
 
     result->rows = a->rows;
@@ -330,21 +330,21 @@ int tiku_matrix_scale(struct tiku_matrix *result,
         }
     }
 
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 /* MATRIX TRANSFORMS                                                         */
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_transpose(struct tiku_matrix *result,
-                          const struct tiku_matrix *a)
+int tiku_kits_matrix_transpose(struct tiku_kits_matrix *result,
+                          const struct tiku_kits_matrix *a)
 {
     uint8_t r;
     uint8_t c;
 
     if (result == NULL || a == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
 
     result->rows = a->cols;
@@ -356,24 +356,24 @@ int tiku_matrix_transpose(struct tiku_matrix *result,
         }
     }
 
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 /* SQUARE MATRIX OPERATIONS                                                  */
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_det(const struct tiku_matrix *m,
-                    tiku_matrix_elem_t *det)
+int tiku_kits_matrix_det(const struct tiku_kits_matrix *m,
+                    tiku_kits_matrix_elem_t *det)
 {
-    uint8_t idx[TIKU_MATRIX_MAX_SIZE];
+    uint8_t idx[TIKU_KITS_MATRIX_MAX_SIZE];
     uint8_t i;
 
     if (m == NULL || det == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
     if (m->rows != m->cols) {
-        return TIKU_MATRIX_ERR_DIM;
+        return TIKU_KITS_MATRIX_ERR_DIM;
     }
 
     /* Build identity index arrays */
@@ -382,22 +382,22 @@ int tiku_matrix_det(const struct tiku_matrix *m,
     }
 
     *det = det_recursive(m, idx, idx, m->rows);
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_trace(const struct tiku_matrix *m,
-                      tiku_matrix_elem_t *trace)
+int tiku_kits_matrix_trace(const struct tiku_kits_matrix *m,
+                      tiku_kits_matrix_elem_t *trace)
 {
     uint8_t i;
-    tiku_matrix_elem_t sum;
+    tiku_kits_matrix_elem_t sum;
 
     if (m == NULL || trace == NULL) {
-        return TIKU_MATRIX_ERR_NULL;
+        return TIKU_KITS_MATRIX_ERR_NULL;
     }
     if (m->rows != m->cols) {
-        return TIKU_MATRIX_ERR_DIM;
+        return TIKU_KITS_MATRIX_ERR_DIM;
     }
 
     sum = 0;
@@ -406,14 +406,14 @@ int tiku_matrix_trace(const struct tiku_matrix *m,
     }
 
     *trace = sum;
-    return TIKU_MATRIX_OK;
+    return TIKU_KITS_MATRIX_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
-uint8_t tiku_matrix_rows(const struct tiku_matrix *m)
+uint8_t tiku_kits_matrix_rows(const struct tiku_kits_matrix *m)
 {
     if (m == NULL) {
         return 0;
@@ -423,7 +423,7 @@ uint8_t tiku_matrix_rows(const struct tiku_matrix *m)
 
 /*---------------------------------------------------------------------------*/
 
-uint8_t tiku_matrix_cols(const struct tiku_matrix *m)
+uint8_t tiku_kits_matrix_cols(const struct tiku_kits_matrix *m)
 {
     if (m == NULL) {
         return 0;
@@ -433,7 +433,7 @@ uint8_t tiku_matrix_cols(const struct tiku_matrix *m)
 
 /*---------------------------------------------------------------------------*/
 
-int tiku_matrix_is_square(const struct tiku_matrix *m)
+int tiku_kits_matrix_is_square(const struct tiku_kits_matrix *m)
 {
     if (m == NULL) {
         return 0;
