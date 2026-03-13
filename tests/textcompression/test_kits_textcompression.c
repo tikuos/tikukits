@@ -35,7 +35,7 @@ void test_kits_textcomp_rle(void)
     uint16_t dec_len;
     int rc;
 
-    TEST_PRINT("\n--- Test: TextCompression RLE ---\n");
+    TEST_GROUP_BEGIN("TextCompression RLE");
 
     /* Encode "AAABBC" -> [3,'A', 2,'B', 1,'C'] = 6 bytes */
     {
@@ -109,6 +109,7 @@ void test_kits_textcomp_rle(void)
         TEST_ASSERT(rc == TIKU_KITS_TEXTCOMPRESSION_ERR_CORRUPT,
                     "rle decode zero count rejected");
     }
+    TEST_GROUP_END("TextCompression RLE");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -123,7 +124,7 @@ void test_kits_textcomp_bpe(void)
     uint16_t dec_len;
     int rc;
 
-    TEST_PRINT("\n--- Test: TextCompression BPE ---\n");
+    TEST_GROUP_BEGIN("TextCompression BPE");
 
     /* Repeating pattern should compress */
     {
@@ -182,6 +183,7 @@ void test_kits_textcomp_bpe(void)
         (const uint8_t *)"test", 4, enc, 1, &enc_len);
     TEST_ASSERT(rc == TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE,
                 "bpe encode buffer too small rejected");
+    TEST_GROUP_END("TextCompression BPE");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -196,7 +198,7 @@ void test_kits_textcomp_heatshrink(void)
     uint16_t dec_len;
     int rc;
 
-    TEST_PRINT("\n--- Test: TextCompression Heatshrink ---\n");
+    TEST_GROUP_BEGIN("TextCompression Heatshrink");
 
     /* Repeating pattern should compress well */
     {
@@ -266,6 +268,7 @@ void test_kits_textcomp_heatshrink(void)
         enc, 1, dec, sizeof(dec), &dec_len);
     TEST_ASSERT(rc != TIKU_KITS_TEXTCOMPRESSION_OK,
                 "heatshrink decode truncated header rejected");
+    TEST_GROUP_END("TextCompression Heatshrink");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -278,7 +281,7 @@ void test_kits_textcomp_null(void)
     uint16_t len;
     int rc;
 
-    TEST_PRINT("\n--- Test: TextCompression NULL Inputs ---\n");
+    TEST_GROUP_BEGIN("TextCompression NULL Inputs");
 
     /* RLE */
     rc = tiku_kits_textcompression_rle_encode(
@@ -322,4 +325,5 @@ void test_kits_textcomp_null(void)
         NULL, 4, buf, sizeof(buf), &len);
     TEST_ASSERT(rc == TIKU_KITS_TEXTCOMPRESSION_ERR_NULL,
                 "heatshrink decode NULL src rejected");
+    TEST_GROUP_END("TextCompression NULL Inputs");
 }

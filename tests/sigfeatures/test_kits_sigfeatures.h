@@ -24,9 +24,9 @@
 #ifndef TEST_KITS_SIGFEATURES_H_
 #define TEST_KITS_SIGFEATURES_H_
 
-#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include "tests/tiku_test_harness.h"
 #include "tikukits/sigfeatures/tiku_kits_sigfeatures.h"
 #include "tikukits/sigfeatures/peak/tiku_kits_sigfeatures_peak.h"
 #include "tikukits/sigfeatures/zcr/tiku_kits_sigfeatures_zcr.h"
@@ -35,33 +35,6 @@
 #include "tikukits/sigfeatures/goertzel/tiku_kits_sigfeatures_goertzel.h"
 #include "tikukits/sigfeatures/zscore/tiku_kits_sigfeatures_zscore.h"
 #include "tikukits/sigfeatures/scale/tiku_kits_sigfeatures_scale.h"
-
-/*---------------------------------------------------------------------------*/
-/* TEST HARNESS                                                              */
-/*---------------------------------------------------------------------------*/
-
-#ifdef PLATFORM_MSP430
-#include "tiku.h"
-#define TEST_PRINT(...) TIKU_PRINTF(__VA_ARGS__)
-#else
-#define TEST_PRINT(...) printf(__VA_ARGS__)
-#endif
-
-extern int tests_run;
-extern int tests_passed;
-extern int tests_failed;
-
-#define TEST_ASSERT(cond, msg)                                              \
-    do {                                                                    \
-        tests_run++;                                                        \
-        if (cond) {                                                         \
-            tests_passed++;                                                 \
-            TEST_PRINT("  PASS: %s\n", msg);                                \
-        } else {                                                            \
-            tests_failed++;                                                 \
-            TEST_PRINT("  FAIL: %s\n", msg);                                \
-        }                                                                   \
-    } while (0)
 
 /*---------------------------------------------------------------------------*/
 /* TEST DECLARATIONS                                                         */

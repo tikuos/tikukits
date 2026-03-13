@@ -32,7 +32,7 @@ void test_kits_matrix_init(void)
     struct tiku_kits_matrix m;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Init ---\n");
+    TEST_GROUP_BEGIN("Matrix Init");
 
     rc = tiku_kits_matrix_init(&m, 2, 3);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_OK, "init 2x3 returns OK");
@@ -69,6 +69,7 @@ void test_kits_matrix_init(void)
                 "element zeroed after zero()");
     TEST_ASSERT(tiku_kits_matrix_rows(&m) == 2,
                 "rows preserved after zero()");
+    TEST_GROUP_END("Matrix Init");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -80,7 +81,7 @@ void test_kits_matrix_identity(void)
     struct tiku_kits_matrix m;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Identity ---\n");
+    TEST_GROUP_BEGIN("Matrix Identity");
 
     rc = tiku_kits_matrix_identity(&m, 3);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_OK, "identity 3x3 returns OK");
@@ -104,6 +105,7 @@ void test_kits_matrix_identity(void)
 
     rc = tiku_kits_matrix_identity(&m, TIKU_KITS_MATRIX_MAX_SIZE + 1);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_SIZE, "identity oversized rejected");
+    TEST_GROUP_END("Matrix Identity");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -114,7 +116,7 @@ void test_kits_matrix_set_get(void)
 {
     struct tiku_kits_matrix m;
 
-    TEST_PRINT("\n--- Test: Matrix Set/Get ---\n");
+    TEST_GROUP_BEGIN("Matrix Set/Get");
 
     tiku_kits_matrix_init(&m, 3, 3);
 
@@ -140,6 +142,7 @@ void test_kits_matrix_set_get(void)
     /* NULL get returns 0 */
     TEST_ASSERT(tiku_kits_matrix_get(NULL, 0, 0) == 0,
                 "NULL get returns 0");
+    TEST_GROUP_END("Matrix Set/Get");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -151,7 +154,7 @@ void test_kits_matrix_copy_equal(void)
     struct tiku_kits_matrix a, b;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Copy/Equal ---\n");
+    TEST_GROUP_BEGIN("Matrix Copy/Equal");
 
     tiku_kits_matrix_init(&a, 2, 2);
     tiku_kits_matrix_set(&a, 0, 0, 1);
@@ -179,6 +182,7 @@ void test_kits_matrix_copy_equal(void)
                 "NULL a returns not equal");
     TEST_ASSERT(tiku_kits_matrix_equal(&a, NULL) == 0,
                 "NULL b returns not equal");
+    TEST_GROUP_END("Matrix Copy/Equal");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -190,7 +194,7 @@ void test_kits_matrix_add_sub(void)
     struct tiku_kits_matrix a, b, result;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Add/Sub ---\n");
+    TEST_GROUP_BEGIN("Matrix Add/Sub");
 
     /* a = [1 2; 3 4], b = [10 20; 30 40] */
     tiku_kits_matrix_init(&a, 2, 2);
@@ -231,6 +235,7 @@ void test_kits_matrix_add_sub(void)
     TEST_ASSERT(rc == TIKU_KITS_MATHS_OK, "in-place add returns OK");
     TEST_ASSERT(tiku_kits_matrix_get(&a, 0, 0) == 11,
                 "in-place add [0][0] == 11");
+    TEST_GROUP_END("Matrix Add/Sub");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -242,7 +247,7 @@ void test_kits_matrix_mul(void)
     struct tiku_kits_matrix a, b, result;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Mul ---\n");
+    TEST_GROUP_BEGIN("Matrix Mul");
 
     /*
      * a = [1 2; 3 4]  (2x2)
@@ -312,6 +317,7 @@ void test_kits_matrix_mul(void)
     tiku_kits_matrix_mul(&result, &a, &b);
     TEST_ASSERT(tiku_kits_matrix_equal(&result, &a) == 1,
                 "A * I == A");
+    TEST_GROUP_END("Matrix Mul");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -323,7 +329,7 @@ void test_kits_matrix_scale(void)
     struct tiku_kits_matrix a, result;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Scale ---\n");
+    TEST_GROUP_BEGIN("Matrix Scale");
 
     /* a = [2 -3; 4 0], scalar = 3 -> [6 -9; 12 0] */
     tiku_kits_matrix_init(&a, 2, 2);
@@ -360,6 +366,7 @@ void test_kits_matrix_scale(void)
                 "in-place scale [0][0] == 10");
     TEST_ASSERT(tiku_kits_matrix_get(&a, 1, 1) == 20,
                 "in-place scale [1][1] == 20");
+    TEST_GROUP_END("Matrix Scale");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -371,7 +378,7 @@ void test_kits_matrix_transpose(void)
     struct tiku_kits_matrix a, result;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Transpose ---\n");
+    TEST_GROUP_BEGIN("Matrix Transpose");
 
     /* a = [1 2 3; 4 5 6]  (2x3) -> result = [1 4; 2 5; 3 6]  (3x2) */
     tiku_kits_matrix_init(&a, 2, 3);
@@ -398,6 +405,7 @@ void test_kits_matrix_transpose(void)
                 "T[2][0] == 3");
     TEST_ASSERT(tiku_kits_matrix_get(&result, 2, 1) == 6,
                 "T[2][1] == 6");
+    TEST_GROUP_END("Matrix Transpose");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -410,7 +418,7 @@ void test_kits_matrix_det(void)
     tiku_kits_matrix_elem_t det;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Determinant ---\n");
+    TEST_GROUP_BEGIN("Matrix Determinant");
 
     /* 1x1: det([5]) = 5 */
     tiku_kits_matrix_init(&m, 1, 1);
@@ -467,6 +475,7 @@ void test_kits_matrix_det(void)
     tiku_kits_matrix_init(&m, 2, 3);
     rc = tiku_kits_matrix_det(&m, &det);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_DIM, "det non-square rejected");
+    TEST_GROUP_END("Matrix Determinant");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -479,7 +488,7 @@ void test_kits_matrix_trace(void)
     tiku_kits_matrix_elem_t tr;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Trace ---\n");
+    TEST_GROUP_BEGIN("Matrix Trace");
 
     /* trace([1 2; 3 4]) = 1 + 4 = 5 */
     tiku_kits_matrix_init(&m, 2, 2);
@@ -501,6 +510,7 @@ void test_kits_matrix_trace(void)
     tiku_kits_matrix_init(&m, 2, 3);
     rc = tiku_kits_matrix_trace(&m, &tr);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_DIM, "trace non-square rejected");
+    TEST_GROUP_END("Matrix Trace");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -512,7 +522,7 @@ void test_kits_matrix_dim_mismatch(void)
     struct tiku_kits_matrix a, b, result;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix Dimension Mismatch ---\n");
+    TEST_GROUP_BEGIN("Matrix Dimension Mismatch");
 
     tiku_kits_matrix_init(&a, 2, 2);
     tiku_kits_matrix_init(&b, 3, 3);
@@ -526,6 +536,7 @@ void test_kits_matrix_dim_mismatch(void)
     /* a(2x2) * b(3x3): a->cols(2) != b->rows(3) */
     rc = tiku_kits_matrix_mul(&result, &a, &b);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_DIM, "mul dim mismatch rejected");
+    TEST_GROUP_END("Matrix Dimension Mismatch");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -538,7 +549,7 @@ void test_kits_matrix_null_inputs(void)
     tiku_kits_matrix_elem_t val;
     int rc;
 
-    TEST_PRINT("\n--- Test: Matrix NULL Inputs ---\n");
+    TEST_GROUP_BEGIN("Matrix NULL Inputs");
 
     tiku_kits_matrix_init(&m, 2, 2);
 
@@ -588,4 +599,5 @@ void test_kits_matrix_null_inputs(void)
     TEST_ASSERT(tiku_kits_matrix_cols(NULL) == 0, "cols NULL returns 0");
     TEST_ASSERT(tiku_kits_matrix_is_square(NULL) == 0,
                 "is_square NULL returns 0");
+    TEST_GROUP_END("Matrix NULL Inputs");
 }

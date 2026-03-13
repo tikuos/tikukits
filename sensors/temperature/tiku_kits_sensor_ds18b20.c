@@ -27,6 +27,7 @@
 
 #include "tiku_kits_sensor_ds18b20.h"
 #include <interfaces/onewire/tiku_onewire.h>
+#include <stddef.h>
 
 /*---------------------------------------------------------------------------*/
 /* DS18B20 COMMAND DEFINITIONS                                               */

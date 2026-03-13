@@ -33,7 +33,7 @@ void test_kits_stats_windowed(void)
     tiku_kits_statistics_elem_t val;
     int rc;
 
-    TEST_PRINT("\n--- Test: Statistics Windowed ---\n");
+    TEST_GROUP_BEGIN("Statistics Windowed");
 
     rc = tiku_kits_statistics_init(&s, 4);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_OK, "windowed init OK");
@@ -91,6 +91,7 @@ void test_kits_stats_windowed(void)
     rc = tiku_kits_statistics_init(&s,
                                     TIKU_KITS_STATISTICS_MAX_WINDOW + 1);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_SIZE, "oversized window rejected");
+    TEST_GROUP_END("Statistics Windowed");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -102,7 +103,7 @@ void test_kits_stats_windowed_eviction(void)
     struct tiku_kits_statistics s;
     tiku_kits_statistics_elem_t val;
 
-    TEST_PRINT("\n--- Test: Statistics Windowed Eviction ---\n");
+    TEST_GROUP_BEGIN("Statistics Windowed Eviction");
 
     tiku_kits_statistics_init(&s, 3);
 
@@ -133,6 +134,7 @@ void test_kits_stats_windowed_eviction(void)
     tiku_kits_statistics_push(&s, 500);
     tiku_kits_statistics_mean(&s, &val);
     TEST_ASSERT(val == 400, "mean after second eviction == 400");
+    TEST_GROUP_END("Statistics Windowed Eviction");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -145,7 +147,7 @@ void test_kits_stats_welford(void)
     tiku_kits_statistics_elem_t val;
     int rc;
 
-    TEST_PRINT("\n--- Test: Statistics Welford ---\n");
+    TEST_GROUP_BEGIN("Statistics Welford");
 
     rc = tiku_kits_statistics_welford_init(&w);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_OK, "welford init OK");
@@ -192,6 +194,7 @@ void test_kits_stats_welford(void)
 
     tiku_kits_statistics_welford_variance(&w, &val);
     TEST_ASSERT(val == 0, "welford single sample variance == 0");
+    TEST_GROUP_END("Statistics Welford");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -204,7 +207,7 @@ void test_kits_stats_minmax(void)
     tiku_kits_statistics_elem_t val;
     int rc;
 
-    TEST_PRINT("\n--- Test: Statistics MinMax ---\n");
+    TEST_GROUP_BEGIN("Statistics MinMax");
 
     rc = tiku_kits_statistics_minmax_init(&mm, 3);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_OK, "minmax init OK");
@@ -266,6 +269,7 @@ void test_kits_stats_minmax(void)
     /* Invalid init */
     rc = tiku_kits_statistics_minmax_init(&mm, 0);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_SIZE, "minmax window=0 rejected");
+    TEST_GROUP_END("Statistics MinMax");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -278,7 +282,7 @@ void test_kits_stats_ewma(void)
     tiku_kits_statistics_elem_t val;
     int rc;
 
-    TEST_PRINT("\n--- Test: Statistics EWMA ---\n");
+    TEST_GROUP_BEGIN("Statistics EWMA");
 
     /* alpha=128, shift=8 -> 50% smoothing */
     rc = tiku_kits_statistics_ewma_init(&e, 128, 8);
@@ -317,6 +321,7 @@ void test_kits_stats_ewma(void)
     tiku_kits_statistics_ewma_push(&e, 200);
     tiku_kits_statistics_ewma_get(&e, &val);
     TEST_ASSERT(val == 200, "ewma full tracking == last sample");
+    TEST_GROUP_END("Statistics EWMA");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -329,7 +334,7 @@ void test_kits_stats_energy(void)
     tiku_kits_statistics_elem_t val;
     int rc;
 
-    TEST_PRINT("\n--- Test: Statistics Energy/RMS ---\n");
+    TEST_GROUP_BEGIN("Statistics Energy/RMS");
 
     rc = tiku_kits_statistics_energy_init(&e);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_OK, "energy init OK");
@@ -368,6 +373,7 @@ void test_kits_stats_energy(void)
     tiku_kits_statistics_energy_reset(&e);
     TEST_ASSERT(tiku_kits_statistics_energy_count(&e) == 0,
                 "energy count 0 after reset");
+    TEST_GROUP_END("Statistics Energy/RMS");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -376,7 +382,7 @@ void test_kits_stats_energy(void)
 
 void test_kits_stats_isqrt(void)
 {
-    TEST_PRINT("\n--- Test: Statistics isqrt ---\n");
+    TEST_GROUP_BEGIN("Statistics isqrt");
 
     TEST_ASSERT(tiku_kits_statistics_isqrt(0) == 0, "isqrt(0) == 0");
     TEST_ASSERT(tiku_kits_statistics_isqrt(1) == 1, "isqrt(1) == 1");
@@ -397,6 +403,7 @@ void test_kits_stats_isqrt(void)
     /* Negative input returns 0 */
     TEST_ASSERT(tiku_kits_statistics_isqrt(-1) == 0, "isqrt(-1) == 0");
     TEST_ASSERT(tiku_kits_statistics_isqrt(-100) == 0, "isqrt(-100) == 0");
+    TEST_GROUP_END("Statistics isqrt");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -413,7 +420,7 @@ void test_kits_stats_null_inputs(void)
     tiku_kits_statistics_elem_t val;
     int rc;
 
-    TEST_PRINT("\n--- Test: Statistics NULL Inputs ---\n");
+    TEST_GROUP_BEGIN("Statistics NULL Inputs");
 
     /* Windowed */
     rc = tiku_kits_statistics_init(NULL, 4);
@@ -478,4 +485,5 @@ void test_kits_stats_null_inputs(void)
 
     TEST_ASSERT(tiku_kits_statistics_energy_count(NULL) == 0,
                 "energy count NULL returns 0");
+    TEST_GROUP_END("Statistics NULL Inputs");
 }

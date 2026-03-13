@@ -33,7 +33,7 @@
 
 void test_kits_sensor_frac_conv(void)
 {
-    TEST_PRINT("\n--- Test: Sensor FRAC_TO_DEC ---\n");
+    TEST_GROUP_BEGIN("Sensor FRAC_TO_DEC");
 
     /*
      * The macro converts 1/16 C fractional units to two-digit decimal.
@@ -76,6 +76,7 @@ void test_kits_sensor_frac_conv(void)
         TEST_ASSERT(all_increasing,
                     "FRAC_TO_DEC monotonically increasing 0-15");
     }
+    TEST_GROUP_END("Sensor FRAC_TO_DEC");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -86,7 +87,7 @@ void test_kits_sensor_name(void)
 {
     const char *name;
 
-    TEST_PRINT("\n--- Test: Sensor Name ---\n");
+    TEST_GROUP_BEGIN("Sensor Name");
 
     name = tiku_kits_sensor_mcp9808_name();
     TEST_ASSERT(name != NULL, "MCP9808 name not NULL");
@@ -99,4 +100,5 @@ void test_kits_sensor_name(void)
     name = tiku_kits_sensor_ds18b20_name();
     TEST_ASSERT(name != NULL, "DS18B20 name not NULL");
     TEST_ASSERT(strcmp(name, "DS18B20") == 0, "DS18B20 name is 'DS18B20'");
+    TEST_GROUP_END("Sensor Name");
 }

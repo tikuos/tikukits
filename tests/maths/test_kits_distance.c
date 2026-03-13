@@ -35,7 +35,7 @@ void test_kits_distance_manhattan(void)
     int64_t result;
     int rc;
 
-    TEST_PRINT("\n--- Test: Distance Manhattan ---\n");
+    TEST_GROUP_BEGIN("Distance Manhattan");
 
     /* |1-4| + |2-0| + |3-5| = 3 + 2 + 2 = 7 */
     rc = tiku_kits_distance_manhattan(a, b, 3, &result);
@@ -68,6 +68,7 @@ void test_kits_distance_manhattan(void)
     /* len=0 rejected */
     rc = tiku_kits_distance_manhattan(a, b, 0, &result);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_SIZE, "manhattan len=0 rejected");
+    TEST_GROUP_END("Distance Manhattan");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -81,7 +82,7 @@ void test_kits_distance_euclidean_sq(void)
     int64_t result;
     int rc;
 
-    TEST_PRINT("\n--- Test: Distance Euclidean Squared ---\n");
+    TEST_GROUP_BEGIN("Distance Euclidean Squared");
 
     /* (1-4)^2 + (2-0)^2 + (3-5)^2 = 9 + 4 + 4 = 17 */
     rc = tiku_kits_distance_euclidean_sq(a, b, 3, &result);
@@ -105,6 +106,7 @@ void test_kits_distance_euclidean_sq(void)
     rc = tiku_kits_distance_euclidean_sq(a, b, 0, &result);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_SIZE,
                 "euclidean_sq len=0 rejected");
+    TEST_GROUP_END("Distance Euclidean Squared");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -118,7 +120,7 @@ void test_kits_distance_dot(void)
     int64_t result;
     int rc;
 
-    TEST_PRINT("\n--- Test: Distance Dot Product ---\n");
+    TEST_GROUP_BEGIN("Distance Dot Product");
 
     /* 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32 */
     rc = tiku_kits_distance_dot(a, b, 3, &result);
@@ -147,6 +149,7 @@ void test_kits_distance_dot(void)
     /* len=0 rejected */
     rc = tiku_kits_distance_dot(a, b, 0, &result);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_SIZE, "dot len=0 rejected");
+    TEST_GROUP_END("Distance Dot Product");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -160,7 +163,7 @@ void test_kits_distance_cosine_sq(void)
     int64_t dot_ab, dot_aa, dot_bb;
     int rc;
 
-    TEST_PRINT("\n--- Test: Distance Cosine Components ---\n");
+    TEST_GROUP_BEGIN("Distance Cosine Components");
 
     /* Identical vectors: cos^2 = 1 */
     rc = tiku_kits_distance_cosine_sq(a, b, 2, &dot_ab, &dot_aa, &dot_bb);
@@ -198,6 +201,7 @@ void test_kits_distance_cosine_sq(void)
     /* len=0 rejected */
     rc = tiku_kits_distance_cosine_sq(a, b, 0, &dot_ab, &dot_aa, &dot_bb);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_SIZE, "cosine_sq len=0 rejected");
+    TEST_GROUP_END("Distance Cosine Components");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -209,7 +213,7 @@ void test_kits_distance_hamming(void)
     uint32_t result;
     int rc;
 
-    TEST_PRINT("\n--- Test: Distance Hamming ---\n");
+    TEST_GROUP_BEGIN("Distance Hamming");
 
     /* 0xFF ^ 0x0F = 0xF0 -> 4 bits, 0x00 ^ 0x00 = 0, 0xAA ^ 0x55 = 0xFF -> 8 */
     {
@@ -257,6 +261,7 @@ void test_kits_distance_hamming(void)
         TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_SIZE,
                     "hamming len=0 rejected");
     }
+    TEST_GROUP_END("Distance Hamming");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -274,7 +279,7 @@ void test_kits_distance_null_inputs(void)
     uint8_t hb[] = {0x00};
     int rc;
 
-    TEST_PRINT("\n--- Test: Distance NULL Inputs ---\n");
+    TEST_GROUP_BEGIN("Distance NULL Inputs");
 
     /* Manhattan */
     rc = tiku_kits_distance_manhattan(NULL, b, 2, &result);
@@ -319,4 +324,5 @@ void test_kits_distance_null_inputs(void)
     rc = tiku_kits_distance_hamming(ha, hb, 1, NULL);
     TEST_ASSERT(rc == TIKU_KITS_MATHS_ERR_NULL,
                 "hamming NULL result rejected");
+    TEST_GROUP_END("Distance NULL Inputs");
 }

@@ -34,7 +34,7 @@ void test_kits_sigfeatures_peak(void)
     uint16_t idx;
     int rc;
 
-    TEST_PRINT("\n--- Test: SigFeatures Peak ---\n");
+    TEST_GROUP_BEGIN("SigFeatures Peak");
 
     rc = tiku_kits_sigfeatures_peak_init(&p, 10);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_OK, "peak init OK");
@@ -85,6 +85,7 @@ void test_kits_sigfeatures_peak(void)
     rc = tiku_kits_sigfeatures_peak_init(&p, 0);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_ERR_PARAM,
                 "peak hysteresis=0 rejected");
+    TEST_GROUP_END("SigFeatures Peak");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -96,7 +97,7 @@ void test_kits_sigfeatures_zcr(void)
     struct tiku_kits_sigfeatures_zcr z;
     int rc;
 
-    TEST_PRINT("\n--- Test: SigFeatures ZCR ---\n");
+    TEST_GROUP_BEGIN("SigFeatures ZCR");
 
     rc = tiku_kits_sigfeatures_zcr_init(&z, 8);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_OK, "zcr init OK");
@@ -146,6 +147,7 @@ void test_kits_sigfeatures_zcr(void)
     rc = tiku_kits_sigfeatures_zcr_init(&z, 1);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_ERR_SIZE,
                 "zcr window=1 rejected");
+    TEST_GROUP_END("SigFeatures ZCR");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -158,7 +160,7 @@ void test_kits_sigfeatures_histogram(void)
     uint8_t mode;
     int rc;
 
-    TEST_PRINT("\n--- Test: SigFeatures Histogram ---\n");
+    TEST_GROUP_BEGIN("SigFeatures Histogram");
 
     /* 4 bins: [0,10), [10,20), [20,30), [30,40) */
     rc = tiku_kits_sigfeatures_histogram_init(&h, 4, 0, 10);
@@ -224,6 +226,7 @@ void test_kits_sigfeatures_histogram(void)
     rc = tiku_kits_sigfeatures_histogram_mode_bin(&h, &mode);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_ERR_NODATA,
                 "mode_bin on empty rejected");
+    TEST_GROUP_END("SigFeatures Histogram");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -236,7 +239,7 @@ void test_kits_sigfeatures_delta(void)
     tiku_kits_sigfeatures_elem_t val;
     int rc;
 
-    TEST_PRINT("\n--- Test: SigFeatures Delta ---\n");
+    TEST_GROUP_BEGIN("SigFeatures Delta");
 
     rc = tiku_kits_sigfeatures_delta_init(&d);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_OK, "delta init OK");
@@ -280,6 +283,7 @@ void test_kits_sigfeatures_delta(void)
     rc = tiku_kits_sigfeatures_delta_get(&d, &val);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_ERR_NODATA,
                 "delta get after reset rejected");
+    TEST_GROUP_END("SigFeatures Delta");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -292,7 +296,7 @@ void test_kits_sigfeatures_goertzel(void)
     int64_t mag;
     int rc;
 
-    TEST_PRINT("\n--- Test: SigFeatures Goertzel ---\n");
+    TEST_GROUP_BEGIN("SigFeatures Goertzel");
 
     /*
      * N=4, k=1 -> coeff = 2*cos(2*pi*1/4) = 2*cos(pi/2) = 0
@@ -344,6 +348,7 @@ void test_kits_sigfeatures_goertzel(void)
     rc = tiku_kits_sigfeatures_goertzel_init(&g, 0, 0);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_ERR_PARAM,
                 "goertzel block_size=0 rejected");
+    TEST_GROUP_END("SigFeatures Goertzel");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -356,7 +361,7 @@ void test_kits_sigfeatures_zscore(void)
     int32_t result;
     int rc;
 
-    TEST_PRINT("\n--- Test: SigFeatures Z-Score ---\n");
+    TEST_GROUP_BEGIN("SigFeatures Z-Score");
 
     /* mean=100, stddev=10, shift=16 -> inv = 65536/10 = 6553 */
     rc = tiku_kits_sigfeatures_zscore_init(&z, 100, 10, 16);
@@ -401,6 +406,7 @@ void test_kits_sigfeatures_zscore(void)
     rc = tiku_kits_sigfeatures_zscore_init(&z, 0, 10, 0);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_ERR_PARAM,
                 "zscore shift=0 rejected");
+    TEST_GROUP_END("SigFeatures Z-Score");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -413,7 +419,7 @@ void test_kits_sigfeatures_scale(void)
     int32_t result;
     int rc;
 
-    TEST_PRINT("\n--- Test: SigFeatures Scale ---\n");
+    TEST_GROUP_BEGIN("SigFeatures Scale");
 
     /* Scale [0, 100] -> [0, 255] */
     rc = tiku_kits_sigfeatures_scale_init(&s, 0, 100, 255, 16);
@@ -464,6 +470,7 @@ void test_kits_sigfeatures_scale(void)
     rc = tiku_kits_sigfeatures_scale_init(&s, 100, 50, 255, 16);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_ERR_PARAM,
                 "scale in_max<in_min rejected");
+    TEST_GROUP_END("SigFeatures Scale");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -479,7 +486,7 @@ void test_kits_sigfeatures_null(void)
     uint8_t bin;
     int rc;
 
-    TEST_PRINT("\n--- Test: SigFeatures NULL Inputs ---\n");
+    TEST_GROUP_BEGIN("SigFeatures NULL Inputs");
 
     /* Peak */
     rc = tiku_kits_sigfeatures_peak_init(NULL, 10);
@@ -535,4 +542,5 @@ void test_kits_sigfeatures_null(void)
     rc = tiku_kits_sigfeatures_scale_init(NULL, 0, 100, 255, 16);
     TEST_ASSERT(rc == TIKU_KITS_SIGFEATURES_ERR_NULL,
                 "scale init NULL rejected");
+    TEST_GROUP_END("SigFeatures NULL Inputs");
 }

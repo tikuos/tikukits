@@ -24,40 +24,13 @@
 #ifndef TEST_KITS_TEXTCOMPRESSION_H_
 #define TEST_KITS_TEXTCOMPRESSION_H_
 
-#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include "tests/tiku_test_harness.h"
 #include "tikukits/textcompression/tiku_kits_textcompression.h"
 #include "tikukits/textcompression/rle/tiku_kits_textcompression_rle.h"
 #include "tikukits/textcompression/bpe/tiku_kits_textcompression_bpe.h"
 #include "tikukits/textcompression/heatshrink/tiku_kits_textcompression_heatshrink.h"
-
-/*---------------------------------------------------------------------------*/
-/* TEST HARNESS                                                              */
-/*---------------------------------------------------------------------------*/
-
-#ifdef PLATFORM_MSP430
-#include "tiku.h"
-#define TEST_PRINT(...) TIKU_PRINTF(__VA_ARGS__)
-#else
-#define TEST_PRINT(...) printf(__VA_ARGS__)
-#endif
-
-extern int tests_run;
-extern int tests_passed;
-extern int tests_failed;
-
-#define TEST_ASSERT(cond, msg)                                              \
-    do {                                                                    \
-        tests_run++;                                                        \
-        if (cond) {                                                         \
-            tests_passed++;                                                 \
-            TEST_PRINT("  PASS: %s\n", msg);                                \
-        } else {                                                            \
-            tests_failed++;                                                 \
-            TEST_PRINT("  FAIL: %s\n", msg);                                \
-        }                                                                   \
-    } while (0)
 
 /*---------------------------------------------------------------------------*/
 /* TEST DECLARATIONS                                                         */

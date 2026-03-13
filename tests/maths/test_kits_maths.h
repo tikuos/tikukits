@@ -24,40 +24,13 @@
 #ifndef TEST_KITS_MATHS_H_
 #define TEST_KITS_MATHS_H_
 
-#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include "tests/tiku_test_harness.h"
 #include "tikukits/maths/tiku_kits_maths.h"
 #include "tikukits/maths/linear_algebra/tiku_kits_matrix.h"
 #include "tikukits/maths/statistics/tiku_kits_statistics.h"
 #include "tikukits/maths/distance/tiku_kits_distance.h"
-
-/*---------------------------------------------------------------------------*/
-/* TEST HARNESS                                                              */
-/*---------------------------------------------------------------------------*/
-
-#ifdef PLATFORM_MSP430
-#include "tiku.h"
-#define TEST_PRINT(...) TIKU_PRINTF(__VA_ARGS__)
-#else
-#define TEST_PRINT(...) printf(__VA_ARGS__)
-#endif
-
-extern int tests_run;
-extern int tests_passed;
-extern int tests_failed;
-
-#define TEST_ASSERT(cond, msg)                                              \
-    do {                                                                    \
-        tests_run++;                                                        \
-        if (cond) {                                                         \
-            tests_passed++;                                                 \
-            TEST_PRINT("  PASS: %s\n", msg);                                \
-        } else {                                                            \
-            tests_failed++;                                                 \
-            TEST_PRINT("  FAIL: %s\n", msg);                                \
-        }                                                                   \
-    } while (0)
 
 /*---------------------------------------------------------------------------*/
 /* MATRIX TESTS                                                              */

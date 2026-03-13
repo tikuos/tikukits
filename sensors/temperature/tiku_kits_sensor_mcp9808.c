@@ -27,6 +27,7 @@
 
 #include "tiku_kits_sensor_mcp9808.h"
 #include <interfaces/bus/tiku_i2c_bus.h>
+#include <stddef.h>
 
 /*---------------------------------------------------------------------------*/
 /* REGISTER DEFINITIONS                                                      */
