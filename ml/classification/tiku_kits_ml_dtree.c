@@ -36,21 +36,29 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Check if a node is a leaf
- * @param node Pointer to node
- * @return 1 if leaf, 0 if internal
+ * @brief Check whether a node is a leaf (has no children)
+ *
+ * A node is a leaf when both child indices equal the sentinel
+ * TIKU_KITS_ML_DTREE_LEAF (0xFF).  This convention avoids needing
+ * a separate node-type flag.
  */
 static int is_leaf(const struct tiku_kits_ml_dtree_node *node)
 {
+    /* Both children must be the sentinel for a leaf */
     return (node->left == TIKU_KITS_ML_DTREE_LEAF
             && node->right == TIKU_KITS_ML_DTREE_LEAF);
 }
 
 /**
- * @brief Traverse the tree and return the leaf node index
- * @param dt Model with loaded tree
- * @param x  Feature vector
- * @return Leaf node index, or -1 on error
+ * @brief Traverse the tree from root to leaf and return the leaf index
+ *
+ * Walks from node 0 downward, branching left or right at each
+ * internal node based on the axis-aligned split condition
+ * x[feature_index] <= threshold.  A loop guard limits iterations
+ * to n_nodes to prevent infinite loops in malformed trees where
+ * child indices form a cycle.
+ *
+ * O(depth) time, O(1) extra space.
  */
 static int traverse(const struct tiku_kits_ml_dtree *dt,
                     const tiku_kits_ml_elem_t *x)
@@ -59,7 +67,9 @@ static int traverse(const struct tiku_kits_ml_dtree *dt,
     const struct tiku_kits_ml_dtree_node *node;
     uint8_t guard;
 
-    /* Guard against infinite loops in malformed trees */
+    /* Guard counter bounds the walk to at most n_nodes steps,
+     * which is the maximum possible depth of any tree with
+     * n_nodes nodes. */
     for (guard = 0; guard < dt->n_nodes; guard++) {
         node = &dt->nodes[idx];
 
@@ -67,24 +77,33 @@ static int traverse(const struct tiku_kits_ml_dtree *dt,
             return (int)idx;
         }
 
+        /* Axis-aligned split: go left when feature <= threshold */
         if (x[node->feature_index] <= node->threshold) {
             idx = node->left;
         } else {
             idx = node->right;
         }
 
+        /* Bounds-check the child index against the loaded tree */
         if (idx >= dt->n_nodes) {
             return -1;
         }
     }
 
-    return -1;
+    return -1;  /* Exhausted guard -- likely a cyclic tree */
 }
 
 /*---------------------------------------------------------------------------*/
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a decision tree model
+ *
+ * Zeros the entire node buffer so that uninitialised reads return
+ * deterministic values, validates the feature count and shift
+ * parameters, and sets n_nodes to 0 (no tree loaded yet).
+ */
 int tiku_kits_ml_dtree_init(struct tiku_kits_ml_dtree *dt,
                              uint8_t n_features,
                              uint8_t shift)
@@ -100,6 +119,8 @@ int tiku_kits_ml_dtree_init(struct tiku_kits_ml_dtree *dt,
         return TIKU_KITS_ML_ERR_PARAM;
     }
 
+    /* Zero the full static buffer so the struct is in a clean state
+     * regardless of prior contents. */
     memset(dt->nodes, 0, sizeof(dt->nodes));
     dt->n_nodes = 0;
     dt->n_features = n_features;
@@ -110,6 +131,12 @@ int tiku_kits_ml_dtree_init(struct tiku_kits_ml_dtree *dt,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset the tree, clearing all loaded nodes
+ *
+ * Zeros the node buffer and resets n_nodes to 0 while preserving
+ * the configured n_features and shift values.
+ */
 int tiku_kits_ml_dtree_reset(struct tiku_kits_ml_dtree *dt)
 {
     if (dt == NULL) {
@@ -126,6 +153,17 @@ int tiku_kits_ml_dtree_reset(struct tiku_kits_ml_dtree *dt)
 /* TREE LOADING                                                              */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Load a pre-built decision tree from a node descriptor array
+ *
+ * Performs a full validation pass before copying: for every internal
+ * node, child indices must point to valid nodes (< n_nodes) or be
+ * the LEAF sentinel, and the feature_index must be within the
+ * configured n_features.  Leaf nodes are skipped during validation
+ * because their feature_index field is unused.
+ *
+ * O(n_nodes) validation + O(n_nodes) memcpy.
+ */
 int tiku_kits_ml_dtree_set_tree(
     struct tiku_kits_ml_dtree *dt,
     const struct tiku_kits_ml_dtree_node *nodes,
@@ -141,15 +179,16 @@ int tiku_kits_ml_dtree_set_tree(
         return TIKU_KITS_ML_ERR_PARAM;
     }
 
-    /* Validate node structure */
+    /* Validate every node before committing the copy so that
+     * a partially-valid tree never overwrites the model. */
     for (i = 0; i < n_nodes; i++) {
         node = &nodes[i];
 
         if (is_leaf(node)) {
-            continue;
+            continue;  /* Leaf nodes have no children to validate */
         }
 
-        /* Internal node: validate child indices */
+        /* Internal node: child must be a valid index or sentinel */
         if (node->left != TIKU_KITS_ML_DTREE_LEAF
             && node->left >= n_nodes) {
             return TIKU_KITS_ML_ERR_PARAM;
@@ -159,13 +198,13 @@ int tiku_kits_ml_dtree_set_tree(
             return TIKU_KITS_ML_ERR_PARAM;
         }
 
-        /* Validate feature index */
+        /* Feature index must be within the model's dimensionality */
         if (node->feature_index >= dt->n_features) {
             return TIKU_KITS_ML_ERR_PARAM;
         }
     }
 
-    /* Copy tree */
+    /* Copy only the valid nodes, not the full MAX_NODES buffer */
     memcpy(dt->nodes, nodes,
            (size_t)n_nodes * sizeof(struct tiku_kits_ml_dtree_node));
     dt->n_nodes = n_nodes;
@@ -175,6 +214,13 @@ int tiku_kits_ml_dtree_set_tree(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Read back the loaded tree into a caller-supplied buffer
+ *
+ * Copies exactly n_nodes entries from the model's internal array
+ * and writes the count to *n_nodes.  The caller must ensure the
+ * output buffer has space for at least MAX_NODES entries.
+ */
 int tiku_kits_ml_dtree_get_tree(
     const struct tiku_kits_ml_dtree *dt,
     struct tiku_kits_ml_dtree_node *nodes,
@@ -195,6 +241,13 @@ int tiku_kits_ml_dtree_get_tree(
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Classify a feature vector by traversing the decision tree
+ *
+ * Delegates to traverse() and extracts the class_label from the
+ * reached leaf node.  Returns ERR_SIZE if no tree has been loaded,
+ * and ERR_PARAM if the traversal fails (malformed tree).
+ */
 int tiku_kits_ml_dtree_predict(
     const struct tiku_kits_ml_dtree *dt,
     const tiku_kits_ml_elem_t *x,
@@ -220,6 +273,15 @@ int tiku_kits_ml_dtree_predict(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the confidence of the prediction as fixed-point
+ *
+ * Traverses the tree identically to predict() but reads the leaf's
+ * threshold field as a Q(shift) confidence value rather than the
+ * class_label.  A threshold of 0 is treated as "no confidence
+ * stored" and full confidence (1 << shift) is returned as a
+ * sensible default.
+ */
 int tiku_kits_ml_dtree_predict_proba(
     const struct tiku_kits_ml_dtree *dt,
     const tiku_kits_ml_elem_t *x,
@@ -242,7 +304,8 @@ int tiku_kits_ml_dtree_predict_proba(
 
     conf = dt->nodes[leaf_idx].threshold;
     if (conf == 0) {
-        /* No confidence stored: assume full confidence */
+        /* No confidence was stored in this leaf; default to 1.0
+         * in Q(shift) to indicate full certainty. */
         conf = (int32_t)(1 << dt->shift);
     }
 
@@ -254,6 +317,13 @@ int tiku_kits_ml_dtree_predict_proba(
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the number of nodes in the loaded tree
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.  Returns the loaded node count, not the
+ * compile-time MAX_NODES capacity.
+ */
 uint8_t tiku_kits_ml_dtree_node_count(
     const struct tiku_kits_ml_dtree *dt)
 {
@@ -265,6 +335,18 @@ uint8_t tiku_kits_ml_dtree_node_count(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the maximum depth of the loaded tree
+ *
+ * Uses an explicit stack-based iterative DFS to avoid recursion
+ * (important on stack-constrained embedded targets).  Each stack
+ * frame stores a node index and its depth.  The right child is
+ * pushed before the left so that left is visited first (matches
+ * natural DFS order), though for depth measurement the visit
+ * order is irrelevant -- we just need the maximum.
+ *
+ * O(n_nodes) time, O(n_nodes) stack space (two uint8_t arrays).
+ */
 uint8_t tiku_kits_ml_dtree_depth(
     const struct tiku_kits_ml_dtree *dt)
 {
@@ -280,6 +362,7 @@ uint8_t tiku_kits_ml_dtree_depth(
         return 0;
     }
 
+    /* Seed the stack with the root at depth 1 */
     stack_idx[0] = 0;
     stack_dep[0] = 1;
     sp = 1;
@@ -294,6 +377,7 @@ uint8_t tiku_kits_ml_dtree_depth(
             max_depth = d;
         }
 
+        /* Push right child first so left is popped (visited) first */
         if (n->right != TIKU_KITS_ML_DTREE_LEAF
             && n->right < dt->n_nodes && sp < TIKU_KITS_ML_DTREE_MAX_NODES) {
             stack_idx[sp] = n->right;

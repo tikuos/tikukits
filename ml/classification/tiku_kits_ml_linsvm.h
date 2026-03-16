@@ -63,27 +63,53 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * Element type for feature values.
- * Defaults to int32_t for integer-only targets (no FPU).
- * Must match the type defined in sibling ML modules.
+ * @brief Element type for feature values.
+ *
+ * Defaults to int32_t for integer-only targets (no FPU required).
+ * All ML sub-modules share this type so that feature vectors can be
+ * passed between classifiers without casting.
+ *
+ * Override before including this header to change the type:
+ * @code
+ *   #define TIKU_KITS_ML_ELEM_TYPE int16_t
+ *   #include "tiku_kits_ml_linsvm.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_ML_ELEM_TYPE
 #define TIKU_KITS_ML_ELEM_TYPE int32_t
 #endif
 
 /**
- * Maximum number of input features.
- * The weight vector has (MAX_FEATURES + 1) entries to include the bias.
- * Override before including this header to change the limit.
+ * @brief Maximum number of input features.
+ *
+ * The weight vector has (MAX_FEATURES + 1) entries: weights[0] is
+ * the bias and weights[1..n] are the feature weights.  Total static
+ * memory for weights is (MAX_FEATURES + 1) * sizeof(int32_t) bytes.
+ *
+ * Override before including this header to change the limit:
+ * @code
+ *   #define TIKU_KITS_ML_LINSVM_MAX_FEATURES 16
+ *   #include "tiku_kits_ml_linsvm.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_ML_LINSVM_MAX_FEATURES
 #define TIKU_KITS_ML_LINSVM_MAX_FEATURES 8
 #endif
 
 /**
- * Default number of fractional bits for fixed-point weights and
- * margin outputs. With shift=8, the resolution is ~0.004.
- * Override before including this header to change the default.
+ * @brief Default number of fractional bits for fixed-point weights
+ *        and margin outputs.
+ *
+ * With shift=8 the resolution is ~0.004 (1/256).  Larger shift
+ * gives finer weight precision but reduces the representable
+ * integer range before overflow.  Weights, learning rate, lambda,
+ * and margin outputs all use this Q format.
+ *
+ * Override before including this header to change the default:
+ * @code
+ *   #define TIKU_KITS_ML_LINSVM_SHIFT 10
+ *   #include "tiku_kits_ml_linsvm.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_ML_LINSVM_SHIFT
 #define TIKU_KITS_ML_LINSVM_SHIFT 8
@@ -102,11 +128,26 @@ typedef TIKU_KITS_ML_ELEM_TYPE tiku_kits_ml_elem_t;
  * @struct tiku_kits_ml_linsvm
  * @brief Online binary linear SVM classifier
  *
- * Fits y = sign(w . x + bias) using stochastic sub-gradient
- * descent on the hinge loss with L2 regularization.
+ * Fits y = sign(w . x + bias) using Pegasos-style stochastic
+ * sub-gradient descent on the hinge loss with L2 regularization.
+ * All arithmetic is integer / fixed-point with int64_t intermediates
+ * to prevent overflow.
  *
- * weights[0] is the bias term. weights[1..n_features] correspond to
- * each input feature. All weights are stored in Q(shift) fixed-point.
+ * The weight vector layout is:
+ *   - @c weights[0] -- bias term (intercept)
+ *   - @c weights[1..n_features] -- one weight per input feature
+ *
+ * All weights, the learning rate, and lambda are stored in Q(shift)
+ * fixed-point.  To recover a real-valued weight, divide by
+ * (1 << shift).
+ *
+ * Training is online: samples are fed one at a time and weights are
+ * updated in-place.  Pre-trained weights can also be loaded directly
+ * via set_weights() for inference-only deployment.
+ *
+ * @note Because all storage lives inside the struct, no heap
+ *       allocation is needed -- just declare the model as a static
+ *       or local variable.
  *
  * Example:
  * @code
@@ -130,12 +171,19 @@ typedef TIKU_KITS_ML_ELEM_TYPE tiku_kits_ml_elem_t;
  */
 struct tiku_kits_ml_linsvm {
     int32_t weights[TIKU_KITS_ML_LINSVM_MAX_FEATURES + 1];
-        /**< Weight vector: [0]=bias, [1..n]=feature weights (Q shift) */
-    uint8_t n_features;    /**< Number of input features */
-    uint8_t shift;         /**< Fixed-point fractional bits */
-    int32_t learning_rate; /**< SGD learning rate (Q shift) */
-    int32_t lambda;        /**< L2 regularization strength (Q shift) */
-    uint16_t n;            /**< Number of training samples seen */
+        /**< Weight vector in Q(shift) fixed-point:
+             [0] = bias, [1..n_features] = feature weights */
+    uint8_t n_features;    /**< Dimensionality of input feature
+                                vectors (set at init time) */
+    uint8_t shift;         /**< Fixed-point fractional bits for all
+                                Q-format values in this model */
+    int32_t learning_rate; /**< SGD step size in Q(shift) (must be > 0);
+                                default ~0.1 */
+    int32_t lambda;        /**< L2 regularization strength in Q(shift)
+                                (>= 0); higher values widen the margin
+                                but may underfit */
+    uint16_t n;            /**< Total number of train() calls seen
+                                (monotonically increasing) */
 };
 
 /*---------------------------------------------------------------------------*/
@@ -144,14 +192,20 @@ struct tiku_kits_ml_linsvm {
 
 /**
  * @brief Initialize a linear SVM model
- * @param svm        Model to initialize
- * @param n_features Number of input features (1..MAX_FEATURES)
- * @param shift      Number of fixed-point fractional bits (1..30)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL, or
- *         TIKU_KITS_ML_ERR_PARAM (invalid n_features or shift)
  *
- * All weights are zeroed. Learning rate defaults to ~0.1 in Q(shift),
- * lambda defaults to ~0.01 in Q(shift).
+ * Zeros the weight vector, sets the feature dimensionality and
+ * fixed-point shift, and applies default hyperparameters:
+ * learning rate ~0.1 and lambda ~0.01 in Q(shift).  A model must
+ * be trained (or have weights loaded) before prediction is useful.
+ *
+ * @param svm        Model to initialize (must not be NULL)
+ * @param n_features Number of input features
+ *                   (1..TIKU_KITS_ML_LINSVM_MAX_FEATURES)
+ * @param shift      Number of fixed-point fractional bits (1..30)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if svm is NULL,
+ *         TIKU_KITS_ML_ERR_PARAM if n_features is 0 or exceeds
+ *         MAX_FEATURES, or shift is out of range
  */
 int tiku_kits_ml_linsvm_init(struct tiku_kits_ml_linsvm *svm,
                                uint8_t n_features,
@@ -159,10 +213,14 @@ int tiku_kits_ml_linsvm_init(struct tiku_kits_ml_linsvm *svm,
 
 /**
  * @brief Reset all weights and training count to zero
- * @param svm Model to reset
- * @return TIKU_KITS_ML_OK or TIKU_KITS_ML_ERR_NULL
  *
- * Preserves n_features, shift, learning_rate, and lambda.
+ * Zeros the weight vector (bias + features) and resets the training
+ * count to 0.  Preserves n_features, shift, learning_rate, and
+ * lambda so the model can be retrained with the same configuration.
+ *
+ * @param svm Model to reset (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if svm is NULL
  */
 int tiku_kits_ml_linsvm_reset(struct tiku_kits_ml_linsvm *svm);
 
@@ -172,25 +230,33 @@ int tiku_kits_ml_linsvm_reset(struct tiku_kits_ml_linsvm *svm);
 
 /**
  * @brief Set the SGD learning rate
- * @param svm           Model
- * @param learning_rate Learning rate in Q(shift) fixed-point (must be > 0)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL, or
- *         TIKU_KITS_ML_ERR_PARAM (learning_rate <= 0)
  *
- * A typical value for shift=8 is 26 (~0.1) or 3 (~0.01).
+ * Controls the step size for each weight update.  Can be changed
+ * between training calls to implement a learning-rate schedule.
+ *
+ * @param svm           Model (must not be NULL)
+ * @param learning_rate Learning rate in Q(shift) fixed-point
+ *                      (must be > 0; typical Q8 values: 26 for ~0.1,
+ *                      3 for ~0.01)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if svm is NULL,
+ *         TIKU_KITS_ML_ERR_PARAM if learning_rate <= 0
  */
 int tiku_kits_ml_linsvm_set_lr(struct tiku_kits_ml_linsvm *svm,
                                  int32_t learning_rate);
 
 /**
  * @brief Set the L2 regularization strength
- * @param svm    Model
- * @param lambda Regularization parameter in Q(shift) (must be >= 0)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL, or
- *         TIKU_KITS_ML_ERR_PARAM (lambda < 0)
  *
- * Higher lambda produces a wider margin but may underfit.
- * Set to 0 to disable regularization. Typical: 3 (~0.01 in Q8).
+ * Higher lambda produces a wider margin but may underfit the
+ * training data.  Set to 0 to disable regularization entirely.
+ *
+ * @param svm    Model (must not be NULL)
+ * @param lambda Regularization parameter in Q(shift) fixed-point
+ *               (must be >= 0; typical Q8 value: 3 for ~0.01)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if svm is NULL,
+ *         TIKU_KITS_ML_ERR_PARAM if lambda < 0
  */
 int tiku_kits_ml_linsvm_set_lambda(struct tiku_kits_ml_linsvm *svm,
                                      int32_t lambda);
@@ -200,18 +266,20 @@ int tiku_kits_ml_linsvm_set_lambda(struct tiku_kits_ml_linsvm *svm,
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Train the model with one sample using SGD
- * @param svm Model
- * @param x   Feature vector of length n_features
- * @param y   Label: +1 or -1
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL, or
- *         TIKU_KITS_ML_ERR_PARAM (y not +1 or -1)
+ * @brief Train the model with one sample using SGD on the hinge loss
  *
- * Performs one step of sub-gradient descent on the hinge loss:
- *   if y * f(x) < (1 << shift):
- *       w_j += lr * (y * x_j - lambda * w_j)   [margin violation]
- *   else:
- *       w_j -= lr * lambda * w_j                [regularization only]
+ * Performs one step of Pegasos-style sub-gradient descent.  If the
+ * sample violates the margin (y * f(x) < 1 in Q(shift)), weights
+ * are updated towards the correct side while also applying L2
+ * regularization.  If the margin is satisfied, only regularization
+ * is applied.  O(n_features) per call.
+ *
+ * @param svm Model (must not be NULL)
+ * @param x   Feature vector of length n_features (must not be NULL)
+ * @param y   Label: +1 or -1 (other values are rejected)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if svm or x is NULL,
+ *         TIKU_KITS_ML_ERR_PARAM if y is not +1 or -1
  */
 int tiku_kits_ml_linsvm_train(struct tiku_kits_ml_linsvm *svm,
                                 const tiku_kits_ml_elem_t *x,
@@ -223,14 +291,19 @@ int tiku_kits_ml_linsvm_train(struct tiku_kits_ml_linsvm *svm,
 
 /**
  * @brief Compute the decision function f(x) = w . x + bias
- * @param svm    Model
- * @param x      Feature vector of length n_features
- * @param result Output: f(x) in Q(shift) fixed-point (signed margin)
- * @return TIKU_KITS_ML_OK or TIKU_KITS_ML_ERR_NULL
  *
- * Positive result indicates class +1, negative indicates class -1.
+ * Returns the signed margin in Q(shift) fixed-point.  A positive
+ * result indicates class +1, a negative result indicates class -1.
  * The magnitude is proportional to the distance from the decision
- * boundary.
+ * boundary (modulo ||w||).  O(n_features) for the dot product.
+ *
+ * @param svm    Model (must not be NULL)
+ * @param x      Feature vector of length n_features
+ *               (must not be NULL)
+ * @param result Output pointer where f(x) in Q(shift) is written
+ *               (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if svm, x, or result is NULL
  */
 int tiku_kits_ml_linsvm_decision(
     const struct tiku_kits_ml_linsvm *svm,
@@ -239,10 +312,17 @@ int tiku_kits_ml_linsvm_decision(
 
 /**
  * @brief Predict the binary class label (+1 or -1)
- * @param svm    Model
+ *
+ * Evaluates the decision function and thresholds at zero:
+ * f(x) >= 0 yields +1, otherwise -1.  O(n_features).
+ *
+ * @param svm    Model (must not be NULL)
  * @param x      Feature vector of length n_features
- * @param result Output: +1 if f(x) >= 0, else -1
- * @return TIKU_KITS_ML_OK or TIKU_KITS_ML_ERR_NULL
+ *               (must not be NULL)
+ * @param result Output pointer where +1 or -1 is written
+ *               (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if svm, x, or result is NULL
  */
 int tiku_kits_ml_linsvm_predict(
     const struct tiku_kits_ml_linsvm *svm,
@@ -255,9 +335,15 @@ int tiku_kits_ml_linsvm_predict(
 
 /**
  * @brief Get the weight vector (bias + feature weights)
- * @param svm     Model
- * @param weights Output array of length (n_features + 1)
- * @return TIKU_KITS_ML_OK or TIKU_KITS_ML_ERR_NULL
+ *
+ * Copies (n_features + 1) Q(shift) values into the caller's buffer.
+ * weights[0] is the bias, weights[1..n] are feature weights.
+ *
+ * @param svm     Model (must not be NULL)
+ * @param weights Output array; caller must provide space for at least
+ *                (n_features + 1) int32_t entries (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if svm or weights is NULL
  */
 int tiku_kits_ml_linsvm_get_weights(
     const struct tiku_kits_ml_linsvm *svm,
@@ -265,9 +351,17 @@ int tiku_kits_ml_linsvm_get_weights(
 
 /**
  * @brief Set the weight vector (for pre-trained model deployment)
- * @param svm     Model (must be initialized)
+ *
+ * Loads externally computed weights so the model can be used for
+ * inference without on-device training.  weights[0] must be the
+ * bias and weights[1..n] the feature weights, all in Q(shift)
+ * matching the model's configured shift.
+ *
+ * @param svm     Model (must be initialized; must not be NULL)
  * @param weights Input array of length (n_features + 1)
- * @return TIKU_KITS_ML_OK or TIKU_KITS_ML_ERR_NULL
+ *                (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if svm or weights is NULL
  */
 int tiku_kits_ml_linsvm_set_weights(
     struct tiku_kits_ml_linsvm *svm,
@@ -279,8 +373,12 @@ int tiku_kits_ml_linsvm_set_weights(
 
 /**
  * @brief Get the number of training samples seen
- * @param svm Model
- * @return Number of training samples, or 0 if svm is NULL
+ *
+ * Returns the total number of train() calls.  Safe to call with a
+ * NULL pointer -- returns 0.
+ *
+ * @param svm Model, or NULL
+ * @return Number of training samples seen, or 0 if svm is NULL
  */
 uint16_t tiku_kits_ml_linsvm_count(
     const struct tiku_kits_ml_linsvm *svm);

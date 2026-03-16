@@ -57,7 +57,20 @@
 /* CONSTANTS                                                                 */
 /*---------------------------------------------------------------------------*/
 
-/** Default I2C address (A0=A1=GND) */
+/**
+ * @brief Default 7-bit I2C address for the ADT7410.
+ *
+ * The ADT7410 base address is 0x48.  Two address pins (A0, A1)
+ * allow up to four sensors on the same bus at addresses 0x48-0x4B.
+ * This constant assumes both pins are tied to GND, giving address
+ * 0x48.
+ *
+ * Override at the call site to use a different pin configuration:
+ * @code
+ *   // A0 = VCC, A1 = GND  ->  address 0x49
+ *   tiku_kits_sensor_adt7410_init(0x49);
+ * @endcode
+ */
 #define TIKU_KITS_SENSOR_ADT7410_ADDR_DEFAULT    0x48
 
 /*---------------------------------------------------------------------------*/
@@ -67,34 +80,57 @@
 /**
  * @brief Initialize and verify the ADT7410 sensor
  *
- * Reads the ID register (0x0B) and checks the upper 5 bits
- * for the Analog Devices manufacturer code. The I2C bus must
- * already be initialized.
+ * Reads the 8-bit ID register (0x0B) and checks the upper 5 bits
+ * against the Analog Devices manufacturer code (0xC8 masked with
+ * 0xF8).  The lower 3 bits contain the silicon revision and are
+ * ignored during verification.
  *
- * @param addr 7-bit I2C address (use TIKU_KITS_SENSOR_ADT7410_ADDR_DEFAULT)
+ * The validated address is stored internally so that subsequent
+ * read calls do not require re-specifying it.  The I2C bus must
+ * already be initialized before calling this function.
+ *
+ * @param addr 7-bit I2C address of the ADT7410.  Use
+ *             TIKU_KITS_SENSOR_ADT7410_ADDR_DEFAULT (0x48) for
+ *             default pin configuration, or 0x48-0x4B for custom
+ *             A0/A1 settings.
  * @return TIKU_KITS_SENSOR_OK on success,
- *         TIKU_KITS_SENSOR_ERR_BUS on I2C failure,
- *         TIKU_KITS_SENSOR_ERR_ID if ID mismatch
+ *         TIKU_KITS_SENSOR_ERR_BUS if the I2C transaction fails
+ *             (NACK, bus timeout, etc.),
+ *         TIKU_KITS_SENSOR_ERR_ID if the upper 5 bits of the ID
+ *             register do not match the Analog Devices code
  */
 int tiku_kits_sensor_adt7410_init(uint8_t addr);
 
 /**
- * @brief Read the ambient temperature
+ * @brief Read the ambient temperature from the ADT7410
  *
- * Reads the 13-bit temperature register (default mode) and
- * converts it to integer + fractional form. Handles negative
- * temperatures via two's complement.
+ * Reads the 16-bit temperature register (0x00) and extracts the
+ * 13-bit value (bits [15:3]) in the default resolution mode.
+ * The ADT7410 uses standard two's complement encoding, so
+ * negative temperatures are handled by complementing the raw
+ * value and splitting the magnitude into integer and fractional
+ * parts.  Resolution is 0.0625 C per LSB (1/16 C), matching the
+ * common tiku_kits_sensor_temp_t fractional encoding.
  *
- * @param temp Output: temperature reading
+ * The sensor must have been initialized via
+ * tiku_kits_sensor_adt7410_init() before calling this function.
+ *
+ * @param temp Pointer to a caller-allocated temperature structure
+ *             where the result is written.  Must not be NULL.
  * @return TIKU_KITS_SENSOR_OK on success,
- *         TIKU_KITS_SENSOR_ERR_BUS on I2C failure,
- *         TIKU_KITS_SENSOR_ERR_PARAM if temp is NULL
+ *         TIKU_KITS_SENSOR_ERR_BUS if the I2C read fails,
+ *         TIKU_KITS_SENSOR_ERR_PARAM if @p temp is NULL
  */
 int tiku_kits_sensor_adt7410_read(tiku_kits_sensor_temp_t *temp);
 
 /**
- * @brief Get the sensor name string
- * @return "ADT7410"
+ * @brief Get the human-readable sensor name string
+ *
+ * Returns a pointer to a static, null-terminated string identifying
+ * this sensor model.  Useful for diagnostic output or building a
+ * sensor registry table at runtime.
+ *
+ * @return Pointer to the constant string "ADT7410" (never NULL)
  */
 const char *tiku_kits_sensor_adt7410_name(void);
 

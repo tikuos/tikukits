@@ -38,13 +38,18 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Initialize a single node to empty state
- * @param node Node to initialize
+ * @brief Initialize a single node to empty state.
+ *
+ * Sets all child slots to TRIE_NONE and clears the terminal flag
+ * and value.  Called by alloc_node() each time a new node is
+ * taken from the pool.
  */
 static void init_node(struct tiku_kits_ds_trie_node *node)
 {
     uint16_t i;
 
+    /* Fill every child slot with the "absent" sentinel so that
+     * traversal can distinguish allocated children from empty ones. */
     for (i = 0; i < TIKU_KITS_DS_TRIE_ALPHABET_SIZE; i++) {
         node->children[i] = TIKU_KITS_DS_TRIE_NONE;
     }
@@ -55,9 +60,12 @@ static void init_node(struct tiku_kits_ds_trie_node *node)
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Allocate a new node from the static pool
- * @param trie Trie
- * @return Node index, or TIKU_KITS_DS_TRIE_NONE if pool full
+ * @brief Allocate a new node from the static pool.
+ *
+ * Uses a simple bump allocator: the next free node is always at
+ * nodes[pool_used].  After allocation pool_used is incremented.
+ * The newly allocated node is initialized to empty state via
+ * init_node().  Returns TRIE_NONE if the pool is exhausted.
  */
 static uint16_t alloc_node(struct tiku_kits_ds_trie *trie)
 {
@@ -78,9 +86,10 @@ static uint16_t alloc_node(struct tiku_kits_ds_trie *trie)
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Extract the high nibble (bits 7..4) of a byte
- * @param b Input byte
- * @return High nibble (0..15)
+ * @brief Extract the high nibble (bits 7..4) of a byte.
+ *
+ * Shifts right by 4 and masks to isolate the upper nibble.
+ * Used as the first of two trie-level indices per key byte.
  */
 static uint8_t high_nibble(uint8_t b)
 {
@@ -90,9 +99,10 @@ static uint8_t high_nibble(uint8_t b)
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Extract the low nibble (bits 3..0) of a byte
- * @param b Input byte
- * @return Low nibble (0..15)
+ * @brief Extract the low nibble (bits 3..0) of a byte.
+ *
+ * Masks to isolate the lower nibble.  Used as the second of two
+ * trie-level indices per key byte.
  */
 static uint8_t low_nibble(uint8_t b)
 {
@@ -103,6 +113,14 @@ static uint8_t low_nibble(uint8_t b)
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a trie to empty state.
+ *
+ * Zeros the entire node pool for deterministic state, resets the
+ * bump allocator and key counter, then allocates the root node
+ * (index 0).  The root is always present so that insert/search
+ * can assume node 0 exists without an extra check.
+ */
 int tiku_kits_ds_trie_init(struct tiku_kits_ds_trie *trie)
 {
     if (trie == NULL) {
@@ -113,7 +131,9 @@ int tiku_kits_ds_trie_init(struct tiku_kits_ds_trie *trie)
     trie->pool_used = 0;
     trie->num_keys = 0;
 
-    /* Allocate root node (always index 0) */
+    /* Allocate root node (always index 0) -- this consumes one
+     * pool slot so the effective capacity for user keys is
+     * MAX_NODES - 1 worth of internal nodes. */
     alloc_node(trie);
 
     return TIKU_KITS_DS_OK;
@@ -123,6 +143,19 @@ int tiku_kits_ds_trie_init(struct tiku_kits_ds_trie *trie)
 /* INSERT / SEARCH / REMOVE                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Insert a key-value pair into the trie.
+ *
+ * O(key_len) -- for each key byte, two nibble lookups and
+ * potential node allocations are performed.  Existing path nodes
+ * are reused (prefix sharing), so keys with common prefixes are
+ * stored efficiently.  If the key already exists the value is
+ * overwritten and the key count is not incremented.
+ *
+ * Note: if the pool is exhausted mid-insert, the partially
+ * created path remains in the trie.  This is harmless because
+ * the terminal flag is only set after the full path succeeds.
+ */
 int tiku_kits_ds_trie_insert(struct tiku_kits_ds_trie *trie,
                               const uint8_t *key,
                               uint16_t key_len,
@@ -145,7 +178,7 @@ int tiku_kits_ds_trie_insert(struct tiku_kits_ds_trie *trie,
     cur = 0;
 
     for (i = 0; i < key_len; i++) {
-        /* High nibble first */
+        /* High nibble first -- descend or allocate */
         nibble = high_nibble(key[i]);
         child = trie->nodes[cur].children[nibble];
         if (child == TIKU_KITS_DS_TRIE_NONE) {
@@ -157,7 +190,7 @@ int tiku_kits_ds_trie_insert(struct tiku_kits_ds_trie *trie,
         }
         cur = child;
 
-        /* Low nibble second */
+        /* Low nibble second -- descend or allocate */
         nibble = low_nibble(key[i]);
         child = trie->nodes[cur].children[nibble];
         if (child == TIKU_KITS_DS_TRIE_NONE) {
@@ -170,7 +203,8 @@ int tiku_kits_ds_trie_insert(struct tiku_kits_ds_trie *trie,
         cur = child;
     }
 
-    /* Mark terminal and store value */
+    /* Only increment the key count for genuinely new keys;
+     * overwriting an existing key does not change the count. */
     if (!trie->nodes[cur].is_terminal) {
         trie->num_keys++;
     }
@@ -182,6 +216,15 @@ int tiku_kits_ds_trie_insert(struct tiku_kits_ds_trie *trie,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Search for a key and retrieve its value.
+ *
+ * O(key_len) -- walks the nibble path from root to leaf.  Returns
+ * NOTFOUND as soon as a missing child is encountered, so searches
+ * for absent keys terminate early when prefixes diverge.  The
+ * value is copied out through @p value so the caller owns its own
+ * copy.
+ */
 int tiku_kits_ds_trie_search(
     const struct tiku_kits_ds_trie *trie,
     const uint8_t *key,
@@ -205,7 +248,7 @@ int tiku_kits_ds_trie_search(
     cur = 0;
 
     for (i = 0; i < key_len; i++) {
-        /* High nibble */
+        /* High nibble -- early exit if path breaks */
         nibble = high_nibble(key[i]);
         child = trie->nodes[cur].children[nibble];
         if (child == TIKU_KITS_DS_TRIE_NONE) {
@@ -213,7 +256,7 @@ int tiku_kits_ds_trie_search(
         }
         cur = child;
 
-        /* Low nibble */
+        /* Low nibble -- early exit if path breaks */
         nibble = low_nibble(key[i]);
         child = trie->nodes[cur].children[nibble];
         if (child == TIKU_KITS_DS_TRIE_NONE) {
@@ -222,6 +265,8 @@ int tiku_kits_ds_trie_search(
         cur = child;
     }
 
+    /* The full path exists but may be a prefix of a longer key
+     * rather than a stored key itself. */
     if (!trie->nodes[cur].is_terminal) {
         return TIKU_KITS_DS_ERR_NOTFOUND;
     }
@@ -232,6 +277,13 @@ int tiku_kits_ds_trie_search(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check whether a key exists in the trie.
+ *
+ * O(key_len) -- same traversal as search() but without copying
+ * the value.  Returns 0 on any invalid input rather than an error
+ * code, so the function can be used directly in conditionals.
+ */
 int tiku_kits_ds_trie_contains(
     const struct tiku_kits_ds_trie *trie,
     const uint8_t *key,
@@ -250,7 +302,7 @@ int tiku_kits_ds_trie_contains(
     cur = 0;
 
     for (i = 0; i < key_len; i++) {
-        /* High nibble */
+        /* High nibble -- early exit if path breaks */
         nibble = high_nibble(key[i]);
         child = trie->nodes[cur].children[nibble];
         if (child == TIKU_KITS_DS_TRIE_NONE) {
@@ -258,7 +310,7 @@ int tiku_kits_ds_trie_contains(
         }
         cur = child;
 
-        /* Low nibble */
+        /* Low nibble -- early exit if path breaks */
         nibble = low_nibble(key[i]);
         child = trie->nodes[cur].children[nibble];
         if (child == TIKU_KITS_DS_TRIE_NONE) {
@@ -272,6 +324,15 @@ int tiku_kits_ds_trie_contains(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Remove a key from the trie (lazy deletion).
+ *
+ * O(key_len) -- walks the nibble path to locate the terminal node
+ * and clears its is_terminal flag.  The node itself is not freed
+ * back to the pool because the bump allocator does not support
+ * deallocation.  This keeps the implementation simple at the cost
+ * of not reclaiming memory for deleted keys.
+ */
 int tiku_kits_ds_trie_remove(struct tiku_kits_ds_trie *trie,
                               const uint8_t *key,
                               uint16_t key_len)
@@ -293,7 +354,7 @@ int tiku_kits_ds_trie_remove(struct tiku_kits_ds_trie *trie,
     cur = 0;
 
     for (i = 0; i < key_len; i++) {
-        /* High nibble */
+        /* High nibble -- early exit if path breaks */
         nibble = high_nibble(key[i]);
         child = trie->nodes[cur].children[nibble];
         if (child == TIKU_KITS_DS_TRIE_NONE) {
@@ -301,7 +362,7 @@ int tiku_kits_ds_trie_remove(struct tiku_kits_ds_trie *trie,
         }
         cur = child;
 
-        /* Low nibble */
+        /* Low nibble -- early exit if path breaks */
         nibble = low_nibble(key[i]);
         child = trie->nodes[cur].children[nibble];
         if (child == TIKU_KITS_DS_TRIE_NONE) {
@@ -314,7 +375,8 @@ int tiku_kits_ds_trie_remove(struct tiku_kits_ds_trie *trie,
         return TIKU_KITS_DS_ERR_NOTFOUND;
     }
 
-    /* Lazy deletion: unmark terminal, decrement count */
+    /* Lazy deletion: unmark terminal, decrement count.
+     * The node and its path remain allocated in the pool. */
     trie->nodes[cur].is_terminal = 0;
     trie->num_keys--;
 
@@ -325,6 +387,13 @@ int tiku_kits_ds_trie_remove(struct tiku_kits_ds_trie *trie,
 /* QUERY                                                                     */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the number of keys stored in the trie.
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.  Returns the terminal key count, not the number
+ * of allocated pool nodes.
+ */
 uint16_t tiku_kits_ds_trie_count(
     const struct tiku_kits_ds_trie *trie)
 {
@@ -339,6 +408,14 @@ uint16_t tiku_kits_ds_trie_count(
 /* CLEAR                                                                     */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset the trie to empty state.
+ *
+ * Zeros the entire node pool, resets the bump allocator and key
+ * counter, and re-allocates the root node.  This restores the
+ * full pool capacity, unlike lazy deletion which cannot reclaim
+ * nodes.
+ */
 int tiku_kits_ds_trie_clear(struct tiku_kits_ds_trie *trie)
 {
     if (trie == NULL) {
@@ -349,7 +426,8 @@ int tiku_kits_ds_trie_clear(struct tiku_kits_ds_trie *trie)
     trie->pool_used = 0;
     trie->num_keys = 0;
 
-    /* Re-allocate root node (index 0) */
+    /* Re-allocate root node (index 0) so that subsequent
+     * insert/search calls can assume it exists. */
     alloc_node(trie);
 
     return TIKU_KITS_DS_OK;

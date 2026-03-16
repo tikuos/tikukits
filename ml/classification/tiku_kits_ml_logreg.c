@@ -38,13 +38,10 @@
 
 /**
  * @brief Compute the linear combination z = w0 + w1*x1 + ... + wn*xn
- * @param lg Model with current weights
- * @param x  Feature vector of length n_features
- * @return z in Q(shift) fixed-point
  *
  * Weights are Q(shift) and features are plain integers, so each
- * product w_j * x_j is Q(shift). The sum is accumulated in int64_t
- * to prevent overflow, then truncated to int32_t.
+ * product w_j * x_j is Q(shift).  The sum is accumulated in int64_t
+ * to prevent overflow, then truncated to int32_t for the caller.
  */
 static int32_t dot_product(const struct tiku_kits_ml_logreg *lg,
                            const tiku_kits_ml_elem_t *x)
@@ -61,19 +58,16 @@ static int32_t dot_product(const struct tiku_kits_ml_logreg *lg,
 
 /**
  * @brief Piecewise-linear sigmoid approximation in fixed-point
- * @param z_q  Input in Q(shift) fixed-point
- * @param shift Number of fractional bits
- * @return sigmoid(z) in Q(shift), range [0, 1 << shift]
  *
- * Three-segment approximation:
- *   z <= -4:  0
- *   -4 < z < 4:  z/8 + 0.5
- *   z >= 4:  1
+ * Three-segment approximation that avoids exp() entirely:
+ *   - z <= -4:  return 0   (deep negative saturation)
+ *   - -4 < z < 4:  return z/8 + 0.5   (linear region)
+ *   - z >= 4:  return 1   (deep positive saturation)
  *
- * In Q(shift) arithmetic:
- *   z_q <= -(4 << shift):  0
- *   otherwise:            (z_q >> 3) + (1 << (shift - 1))
- *   z_q >= (4 << shift):  (1 << shift)
+ * In Q(shift) arithmetic the boundaries become -(4 << shift) and
+ * +(4 << shift), the slope becomes >> 3, and 0.5 becomes
+ * (1 << (shift-1)).  A final clamp guards against rounding
+ * overshoots at the segment boundaries.
  */
 static int32_t sigmoid_approx(int32_t z_q, uint8_t shift)
 {
@@ -108,6 +102,13 @@ static int32_t sigmoid_approx(int32_t z_q, uint8_t shift)
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a logistic regression model
+ *
+ * Validates parameters, zeros the weight vector, and sets the
+ * default learning rate to ~0.1 in Q(shift).  The default is
+ * clamped to a minimum of 1 quantum.
+ */
 int tiku_kits_ml_logreg_init(struct tiku_kits_ml_logreg *lg,
                               uint8_t n_features,
                               uint8_t shift)
@@ -145,6 +146,11 @@ int tiku_kits_ml_logreg_init(struct tiku_kits_ml_logreg *lg,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset all weights and training count to zero
+ *
+ * Preserves n_features, shift, and learning_rate.
+ */
 int tiku_kits_ml_logreg_reset(struct tiku_kits_ml_logreg *lg)
 {
     uint8_t i;
@@ -165,6 +171,11 @@ int tiku_kits_ml_logreg_reset(struct tiku_kits_ml_logreg *lg)
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Set the SGD learning rate
+ *
+ * Stores the new learning rate for subsequent train() calls.
+ */
 int tiku_kits_ml_logreg_set_lr(struct tiku_kits_ml_logreg *lg,
                                 int32_t learning_rate)
 {
@@ -183,6 +194,15 @@ int tiku_kits_ml_logreg_set_lr(struct tiku_kits_ml_logreg *lg,
 /* TRAINING                                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Train the model with one sample using SGD
+ *
+ * Computes the forward pass (dot product + sigmoid), then performs
+ * one gradient step.  The error is computed as y_scaled - sigmoid(z)
+ * in Q(shift), then scaled by the learning rate.  Bias update uses
+ * implicit x=1; feature weight updates multiply lr_error by x[j].
+ * All intermediate products use int64_t to prevent overflow.
+ */
 int tiku_kits_ml_logreg_train(struct tiku_kits_ml_logreg *lg,
                                const tiku_kits_ml_elem_t *x,
                                uint8_t y)
@@ -240,6 +260,12 @@ int tiku_kits_ml_logreg_train(struct tiku_kits_ml_logreg *lg,
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Predict the probability P(y=1|x) as fixed-point
+ *
+ * Computes the dot product and applies the piecewise-linear
+ * sigmoid.  Result is in [0, 1 << shift].
+ */
 int tiku_kits_ml_logreg_predict_proba(
     const struct tiku_kits_ml_logreg *lg,
     const tiku_kits_ml_elem_t *x,
@@ -259,6 +285,12 @@ int tiku_kits_ml_logreg_predict_proba(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Predict the binary class label (0 or 1)
+ *
+ * Evaluates predict_proba and thresholds at the midpoint
+ * (1 << (shift-1)), which represents 0.5.
+ */
 int tiku_kits_ml_logreg_predict(
     const struct tiku_kits_ml_logreg *lg,
     const tiku_kits_ml_elem_t *x,
@@ -285,6 +317,11 @@ int tiku_kits_ml_logreg_predict(
 /* WEIGHT ACCESS                                                             */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the weight vector (bias + feature weights)
+ *
+ * Copies (n_features + 1) entries into the caller's buffer.
+ */
 int tiku_kits_ml_logreg_get_weights(
     const struct tiku_kits_ml_logreg *lg,
     int32_t *weights)
@@ -304,6 +341,11 @@ int tiku_kits_ml_logreg_get_weights(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Set the weight vector (for pre-trained model deployment)
+ *
+ * Copies (n_features + 1) entries from the caller's buffer.
+ */
 int tiku_kits_ml_logreg_set_weights(
     struct tiku_kits_ml_logreg *lg,
     const int32_t *weights)
@@ -325,6 +367,12 @@ int tiku_kits_ml_logreg_set_weights(
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the number of training samples seen
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.
+ */
 uint16_t tiku_kits_ml_logreg_count(
     const struct tiku_kits_ml_logreg *lg)
 {

@@ -39,9 +39,12 @@
 /**
  * @brief Initialize hidden weights with small alternating values
  *
- * Sets w_hidden[j][i] to approximately ±1/n_input in Q(shift),
+ * Sets w_hidden[j][i] to approximately +/-1/n_input in Q(shift),
  * alternating sign based on (j + i) & 1 to break symmetry.
- * Biases are set to zero. Output weights are all zeroed.
+ * Without this alternation every hidden neuron would start
+ * identical and learn the same function.  Biases are set to zero.
+ * Output weights are all zeroed so the network starts with no
+ * class preference.  Scratch buffers h[] and o[] are also cleared.
  */
 static void init_weights(struct tiku_kits_ml_tnn *tnn)
 {
@@ -81,10 +84,16 @@ static void init_weights(struct tiku_kits_ml_tnn *tnn)
 /**
  * @brief Compute forward pass through the network
  *
- * Hidden layer: h[j] = ReLU( w_hidden[j][0] + sum_i(w[j][i+1]*x[i]) )
- * Output layer: o[k] = w_output[k][0] + sum_j(w[k][j+1]*h[j]) >> shift
+ * Two-stage computation:
+ *   Hidden: h[j] = ReLU( bias + sum_i(w_hidden[j][i+1] * x[i]) )
+ *   Output: o[k] = bias + sum_j( (w_output[k][j+1] * h[j]) >> shift )
  *
- * Results stored in tnn->h[] and tnn->o[].
+ * The output-layer products are right-shifted by @c shift because
+ * both w_output and h are Q(shift), so their product is Q(2*shift).
+ * The shift brings the result back to Q(shift).  int64_t
+ * accumulators prevent intermediate overflow.
+ *
+ * Results are stored in tnn->h[] and tnn->o[] (scratch buffers).
  */
 static void compute_forward(struct tiku_kits_ml_tnn *tnn,
                             const tiku_kits_ml_elem_t *x)
@@ -117,6 +126,12 @@ static void compute_forward(struct tiku_kits_ml_tnn *tnn,
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a tiny neural network
+ *
+ * Validates architecture parameters, sets the default learning rate
+ * to ~0.05 in Q(shift), and initializes weights via init_weights().
+ */
 int tiku_kits_ml_tnn_init(struct tiku_kits_ml_tnn *tnn,
                             uint8_t n_input,
                             uint8_t n_hidden,
@@ -161,6 +176,12 @@ int tiku_kits_ml_tnn_init(struct tiku_kits_ml_tnn *tnn,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset all weights and training count
+ *
+ * Re-runs init_weights() and resets the training counter.
+ * Preserves architecture and learning rate.
+ */
 int tiku_kits_ml_tnn_reset(struct tiku_kits_ml_tnn *tnn)
 {
     if (tnn == NULL) {
@@ -177,6 +198,11 @@ int tiku_kits_ml_tnn_reset(struct tiku_kits_ml_tnn *tnn)
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Set the SGD learning rate
+ *
+ * Stores the new learning rate for subsequent train() calls.
+ */
 int tiku_kits_ml_tnn_set_lr(struct tiku_kits_ml_tnn *tnn,
                               int32_t learning_rate)
 {
@@ -195,6 +221,23 @@ int tiku_kits_ml_tnn_set_lr(struct tiku_kits_ml_tnn *tnn,
 /* TRAINING                                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Train the network with one sample using backpropagation
+ *
+ * Forward pass computes hidden and output activations.  Backward
+ * pass updates hidden weights FIRST (before output weights change)
+ * so that error back-propagation uses the original output weights.
+ *
+ * Hidden layer gradient:
+ *   err_h[j] = sum_k( w_output[k][j+1] * delta_o[k] ) >> shift
+ *   delta_h[j] = (h[j] > 0) ? err_h[j] : 0   (ReLU gate)
+ *
+ * Output layer gradient:
+ *   delta_o[k] = o[k] - target[k]
+ *   target[k] = one_q if k == y, else 0
+ *
+ * All intermediate products use int64_t to prevent overflow.
+ */
 int tiku_kits_ml_tnn_train(struct tiku_kits_ml_tnn *tnn,
                              const tiku_kits_ml_elem_t *x,
                              uint8_t y)
@@ -295,6 +338,12 @@ int tiku_kits_ml_tnn_train(struct tiku_kits_ml_tnn *tnn,
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Compute raw output scores (forward pass only)
+ *
+ * Runs compute_forward() and copies the output activations into
+ * the caller's buffer.
+ */
 int tiku_kits_ml_tnn_forward(
     struct tiku_kits_ml_tnn *tnn,
     const tiku_kits_ml_elem_t *x,
@@ -317,6 +366,12 @@ int tiku_kits_ml_tnn_forward(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Predict the class label (argmax of output layer)
+ *
+ * Runs the forward pass, then scans the output activations to find
+ * the neuron with the highest value.
+ */
 int tiku_kits_ml_tnn_predict(
     struct tiku_kits_ml_tnn *tnn,
     const tiku_kits_ml_elem_t *x,
@@ -349,6 +404,12 @@ int tiku_kits_ml_tnn_predict(
 /* WEIGHT ACCESS                                                             */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get weights for a layer
+ *
+ * Copies the weight matrix row-by-row into the caller's flat array.
+ * The layout is: [neuron_0_bias, neuron_0_w1, ..., neuron_1_bias, ...].
+ */
 int tiku_kits_ml_tnn_get_weights(
     const struct tiku_kits_ml_tnn *tnn,
     uint8_t layer,
@@ -388,6 +449,12 @@ int tiku_kits_ml_tnn_get_weights(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Set weights for a layer (for pre-trained deployment)
+ *
+ * Copies the caller's flat array into the weight matrix row-by-row.
+ * The layout must match get_weights: bias first in each row.
+ */
 int tiku_kits_ml_tnn_set_weights(
     struct tiku_kits_ml_tnn *tnn,
     uint8_t layer,
@@ -429,6 +496,12 @@ int tiku_kits_ml_tnn_set_weights(
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the number of training samples seen
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.
+ */
 uint16_t tiku_kits_ml_tnn_count(
     const struct tiku_kits_ml_tnn *tnn)
 {

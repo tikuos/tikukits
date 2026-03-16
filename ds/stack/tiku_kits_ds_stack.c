@@ -35,6 +35,14 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a stack with the given capacity.
+ *
+ * Zeros the entire backing buffer so that any subsequent reads of
+ * unpopulated slots return a deterministic value.  The runtime
+ * capacity is clamped to TIKU_KITS_DS_STACK_MAX_SIZE at compile
+ * time so that the static buffer is never overrun.
+ */
 int tiku_kits_ds_stack_init(struct tiku_kits_ds_stack *stk,
                             uint16_t capacity)
 {
@@ -47,6 +55,9 @@ int tiku_kits_ds_stack_init(struct tiku_kits_ds_stack *stk,
 
     stk->top = 0;
     stk->capacity = capacity;
+
+    /* Zero the full static buffer, not just `capacity` slots, so
+     * the struct is in a clean state regardless of prior contents. */
     memset(stk->data, 0, sizeof(stk->data));
     return TIKU_KITS_DS_OK;
 }
@@ -55,6 +66,12 @@ int tiku_kits_ds_stack_init(struct tiku_kits_ds_stack *stk,
 /* PUSH / POP / PEEK                                                         */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push an element onto the stack.
+ *
+ * O(1) -- simply writes into the next free slot (data[top]) and
+ * bumps the top counter.  No element shifting required.
+ */
 int tiku_kits_ds_stack_push(struct tiku_kits_ds_stack *stk,
                             tiku_kits_ds_elem_t value)
 {
@@ -72,6 +89,14 @@ int tiku_kits_ds_stack_push(struct tiku_kits_ds_stack *stk,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Pop the top element from the stack.
+ *
+ * O(1) -- decrements top first, then copies the value out through
+ * @p value.  The element's memory slot is not cleared; it becomes
+ * inaccessible via the public API because all access functions
+ * check against top.
+ */
 int tiku_kits_ds_stack_pop(struct tiku_kits_ds_stack *stk,
                            tiku_kits_ds_elem_t *value)
 {
@@ -89,6 +114,13 @@ int tiku_kits_ds_stack_pop(struct tiku_kits_ds_stack *stk,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Read the top element without removing it.
+ *
+ * O(1) -- copies the value at data[top-1] out through @p value
+ * without modifying the stack.  The caller owns the copy; the
+ * stack contents remain untouched.
+ */
 int tiku_kits_ds_stack_peek(const struct tiku_kits_ds_stack *stk,
                             tiku_kits_ds_elem_t *value)
 {
@@ -107,6 +139,14 @@ int tiku_kits_ds_stack_peek(const struct tiku_kits_ds_stack *stk,
 /* STATE OPERATIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Clear the stack by resetting top to zero.
+ *
+ * Logically removes all elements without zeroing the backing
+ * buffer.  Old values remain in memory but are inaccessible
+ * through the public API because all access functions bounds-check
+ * against top.
+ */
 int tiku_kits_ds_stack_clear(struct tiku_kits_ds_stack *stk)
 {
     if (stk == NULL) {
@@ -121,6 +161,12 @@ int tiku_kits_ds_stack_clear(struct tiku_kits_ds_stack *stk)
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the current number of elements in the stack.
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.  Returns the logical size (top), not the capacity.
+ */
 uint16_t tiku_kits_ds_stack_size(const struct tiku_kits_ds_stack *stk)
 {
     if (stk == NULL) {
@@ -131,6 +177,12 @@ uint16_t tiku_kits_ds_stack_size(const struct tiku_kits_ds_stack *stk)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check if the stack is full.
+ *
+ * Returns 1 when top has reached capacity.  Safe to call with a
+ * NULL pointer -- returns 0.
+ */
 int tiku_kits_ds_stack_full(const struct tiku_kits_ds_stack *stk)
 {
     if (stk == NULL) {
@@ -141,6 +193,12 @@ int tiku_kits_ds_stack_full(const struct tiku_kits_ds_stack *stk)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check if the stack is empty.
+ *
+ * Returns 1 when top is 0.  Safe to call with a NULL pointer --
+ * returns 0.
+ */
 int tiku_kits_ds_stack_empty(const struct tiku_kits_ds_stack *stk)
 {
     if (stk == NULL) {

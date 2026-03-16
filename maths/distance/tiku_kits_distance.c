@@ -40,6 +40,8 @@
  * @brief Nibble popcount lookup table (16 bytes in flash)
  *
  * nibble_popcount[x] = number of 1-bits in the 4-bit value x.
+ * Using a 16-entry table avoids the multi-shift-and-mask popcount
+ * sequence and is faster on targets without a popcount instruction.
  */
 static const uint8_t nibble_popcount[16] = {
     0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4
@@ -47,6 +49,10 @@ static const uint8_t nibble_popcount[16] = {
 
 /**
  * @brief Count the number of 1-bits in a byte
+ *
+ * Splits the byte into two nibbles and sums their popcount via the
+ * lookup table.  O(1) with no branches.
+ *
  * @param x Byte value
  * @return Number of set bits (0..8)
  */
@@ -61,6 +67,13 @@ static uint8_t popcount8(uint8_t x)
 /*                                                                           */
 /*===========================================================================*/
 
+/**
+ * @brief Compute the Manhattan (L1) distance between two vectors
+ *
+ * O(n) single pass.  Each difference is widened to int64_t before
+ * taking the absolute value so that no intermediate overflow can
+ * occur, even for int32_t elements.
+ */
 int tiku_kits_distance_manhattan(
     const tiku_kits_distance_elem_t *a,
     const tiku_kits_distance_elem_t *b,
@@ -80,7 +93,9 @@ int tiku_kits_distance_manhattan(
 
     sum = 0;
     for (i = 0; i < len; i++) {
+        /* Widen to int64_t before subtraction to prevent overflow */
         diff = (int64_t)a[i] - (int64_t)b[i];
+        /* Branchless-style absolute value via ternary */
         sum += (diff >= 0) ? diff : -diff;
     }
 
@@ -94,6 +109,14 @@ int tiku_kits_distance_manhattan(
 /*                                                                           */
 /*===========================================================================*/
 
+/**
+ * @brief Compute the squared Euclidean distance between two vectors
+ *
+ * O(n) single pass.  Each difference is widened to int64_t before
+ * squaring, so the product fits in 64 bits even for full-range
+ * int32_t inputs.  The square root is intentionally omitted because
+ * comparing squared distances preserves ordering.
+ */
 int tiku_kits_distance_euclidean_sq(
     const tiku_kits_distance_elem_t *a,
     const tiku_kits_distance_elem_t *b,
@@ -113,6 +136,7 @@ int tiku_kits_distance_euclidean_sq(
 
     sum = 0;
     for (i = 0; i < len; i++) {
+        /* Widen before subtract+square to keep everything in int64_t */
         diff = (int64_t)a[i] - (int64_t)b[i];
         sum += diff * diff;
     }
@@ -127,6 +151,14 @@ int tiku_kits_distance_euclidean_sq(
 /*                                                                           */
 /*===========================================================================*/
 
+/**
+ * @brief Compute the dot product of two vectors
+ *
+ * Simple multiply-accumulate (MAC) loop.  Each product is widened
+ * to int64_t before accumulation to prevent overflow on 16-bit
+ * targets.  When both vectors are pre-normalized to unit length
+ * the result equals cosine similarity.
+ */
 int tiku_kits_distance_dot(
     const tiku_kits_distance_elem_t *a,
     const tiku_kits_distance_elem_t *b,
@@ -145,6 +177,7 @@ int tiku_kits_distance_dot(
 
     sum = 0;
     for (i = 0; i < len; i++) {
+        /* Widen both operands to int64_t before multiply */
         sum += (int64_t)a[i] * (int64_t)b[i];
     }
 
@@ -154,6 +187,15 @@ int tiku_kits_distance_dot(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Compute cosine similarity components for raw vectors
+ *
+ * Single-pass computation of dot(a,b), dot(a,a), and dot(b,b).
+ * Performing all three MACs in one loop avoids three separate
+ * traversals of the input arrays -- important for cache-less
+ * embedded targets.  The caller can derive cosine similarity or
+ * cos^2(theta) from the outputs without sqrt or division.
+ */
 int tiku_kits_distance_cosine_sq(
     const tiku_kits_distance_elem_t *a,
     const tiku_kits_distance_elem_t *b,
@@ -179,6 +221,8 @@ int tiku_kits_distance_cosine_sq(
     aa = 0;
     bb = 0;
 
+    /* Fused three-MAC loop: compute all dot products in one pass
+     * to avoid redundant memory traversals on cache-less targets. */
     for (i = 0; i < len; i++) {
         ab += (int64_t)a[i] * (int64_t)b[i];
         aa += (int64_t)a[i] * (int64_t)a[i];
@@ -197,6 +241,13 @@ int tiku_kits_distance_cosine_sq(
 /*                                                                           */
 /*===========================================================================*/
 
+/**
+ * @brief Compute the bitwise Hamming distance between two byte arrays
+ *
+ * XOR each byte pair to isolate differing bits, then accumulate the
+ * popcount via the nibble lookup table.  O(n) with no multiplications
+ * -- extremely cheap on any target.
+ */
 int tiku_kits_distance_hamming(
     const uint8_t *a,
     const uint8_t *b,
@@ -215,6 +266,7 @@ int tiku_kits_distance_hamming(
 
     dist = 0;
     for (i = 0; i < len; i++) {
+        /* XOR isolates differing bits; popcount8 counts them */
         dist += popcount8(a[i] ^ b[i]);
     }
 

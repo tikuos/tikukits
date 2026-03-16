@@ -33,6 +33,12 @@
 /* STREAMING -- INITIALIZATION                                               */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a delta tracker to its empty state
+ *
+ * Zeros prev, last_delta, and the ready flag so the tracker
+ * is prepared to accept its first sample via push().
+ */
 int tiku_kits_sigfeatures_delta_init(
     struct tiku_kits_sigfeatures_delta *d)
 {
@@ -48,6 +54,12 @@ int tiku_kits_sigfeatures_delta_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset a delta tracker, returning it to the pre-first-push state
+ *
+ * Functionally identical to init().  Clears prev, last_delta, and
+ * the ready flag so the next push() will seed a fresh sequence.
+ */
 int tiku_kits_sigfeatures_delta_reset(
     struct tiku_kits_sigfeatures_delta *d)
 {
@@ -65,6 +77,13 @@ int tiku_kits_sigfeatures_delta_reset(
 /* STREAMING -- SAMPLE INPUT                                                 */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a new sample and compute the first-order difference
+ *
+ * On the first call, the sample is stored in prev and ready is set
+ * to 1 but no delta is computed.  On every subsequent call,
+ * last_delta = value - prev.  O(1) per call.
+ */
 int tiku_kits_sigfeatures_delta_push(
     struct tiku_kits_sigfeatures_delta *d,
     tiku_kits_sigfeatures_elem_t value)
@@ -74,9 +93,11 @@ int tiku_kits_sigfeatures_delta_push(
     }
 
     if (d->ready) {
+        /* Compute the discrete derivative: x[n] - x[n-1] */
         d->last_delta = value - d->prev;
     } else {
-        /* First sample: seed prev, delta not yet valid */
+        /* First sample: seed prev only -- no predecessor exists
+         * so no meaningful delta can be produced yet. */
         d->last_delta = 0;
         d->ready = 1;
     }
@@ -89,6 +110,12 @@ int tiku_kits_sigfeatures_delta_push(
 /* STREAMING -- QUERIES                                                      */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Retrieve the most recently computed delta value
+ *
+ * Copies last_delta into *result.  Returns ERR_NODATA if fewer
+ * than two samples have been pushed (the ready flag is still 0).
+ */
 int tiku_kits_sigfeatures_delta_get(
     const struct tiku_kits_sigfeatures_delta *d,
     tiku_kits_sigfeatures_elem_t *result)
@@ -108,6 +135,13 @@ int tiku_kits_sigfeatures_delta_get(
 /* BATCH OPERATION                                                           */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Compute first-order differences for an entire buffer
+ *
+ * Iterates from index 0 to src_len-2 computing dst[i] = src[i+1] -
+ * src[i].  O(n) where n is src_len.  The loop runs forward through
+ * both buffers so cache / FRAM prefetch is sequential.
+ */
 int tiku_kits_sigfeatures_delta_compute(
     const tiku_kits_sigfeatures_elem_t *src, uint16_t src_len,
     tiku_kits_sigfeatures_elem_t *dst)

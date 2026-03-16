@@ -36,9 +36,12 @@
 
 /**
  * @brief Check whether two values have different signs
- * @return 1 if signs differ (zero crossing), 0 otherwise
  *
- * Zero is treated as non-negative.
+ * Returns 1 if exactly one of a, b is negative (a zero crossing).
+ * Zero is treated as non-negative, so (0, 5) is not a crossing
+ * but (-1, 0) is.
+ *
+ * @return 1 if signs differ (zero crossing), 0 otherwise
  */
 static int is_crossing(tiku_kits_sigfeatures_elem_t a,
                        tiku_kits_sigfeatures_elem_t b)
@@ -50,6 +53,13 @@ static int is_crossing(tiku_kits_sigfeatures_elem_t a,
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a zero-crossing rate tracker
+ *
+ * Validates the window size, stores the capacity, zeros the full
+ * circular buffer via memset, and resets head, count, and
+ * crossings to 0.
+ */
 int tiku_kits_sigfeatures_zcr_init(
     struct tiku_kits_sigfeatures_zcr *z,
     uint16_t window)
@@ -72,6 +82,12 @@ int tiku_kits_sigfeatures_zcr_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset a ZCR tracker, clearing all samples and crossings
+ *
+ * Zeros the circular buffer and resets head, count, and crossings.
+ * Preserves the window capacity from init().
+ */
 int tiku_kits_sigfeatures_zcr_reset(
     struct tiku_kits_sigfeatures_zcr *z)
 {
@@ -90,6 +106,17 @@ int tiku_kits_sigfeatures_zcr_reset(
 /* SAMPLE INPUT                                                              */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a new sample into the ZCR tracker
+ *
+ * Handles three phases in O(1):
+ *   1. If the window is full, evict the oldest sample and subtract
+ *      the crossing between it and its successor.
+ *   2. Check the crossing between the current newest sample and the
+ *      incoming value; increment crossings if a sign change occurred.
+ *   3. Write the new sample into the circular buffer and advance
+ *      the head pointer.
+ */
 int tiku_kits_sigfeatures_zcr_push(
     struct tiku_kits_sigfeatures_zcr *z,
     tiku_kits_sigfeatures_elem_t value)
@@ -139,6 +166,12 @@ int tiku_kits_sigfeatures_zcr_push(
 /* QUERIES                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the current zero-crossing count within the window
+ *
+ * Returns the incrementally maintained crossing count.  Returns 0
+ * if z is NULL.
+ */
 uint16_t tiku_kits_sigfeatures_zcr_crossings(
     const struct tiku_kits_sigfeatures_zcr *z)
 {
@@ -150,6 +183,12 @@ uint16_t tiku_kits_sigfeatures_zcr_crossings(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the current number of samples in the window
+ *
+ * Returns the logical count (always <= capacity).  Returns 0 if z
+ * is NULL.
+ */
 uint16_t tiku_kits_sigfeatures_zcr_count(
     const struct tiku_kits_sigfeatures_zcr *z)
 {
@@ -161,6 +200,11 @@ uint16_t tiku_kits_sigfeatures_zcr_count(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check if the sliding window is full
+ *
+ * Returns 1 when count >= capacity, 0 otherwise (including NULL).
+ */
 int tiku_kits_sigfeatures_zcr_full(
     const struct tiku_kits_sigfeatures_zcr *z)
 {

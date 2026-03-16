@@ -33,6 +33,13 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a histogram with the given bin configuration
+ *
+ * Validates parameters, stores the binning configuration, and
+ * zeros all counters including the full static bins[] array via
+ * memset so that unused trailing slots are deterministic.
+ */
 int tiku_kits_sigfeatures_histogram_init(
     struct tiku_kits_sigfeatures_histogram *h,
     uint8_t num_bins,
@@ -62,6 +69,12 @@ int tiku_kits_sigfeatures_histogram_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset a histogram, clearing all counts but keeping bin config
+ *
+ * Zeros total, underflow, overflow, and the full bins[] array.
+ * Preserves num_bins, bin_min, and bin_width from the last init().
+ */
 int tiku_kits_sigfeatures_histogram_reset(
     struct tiku_kits_sigfeatures_histogram *h)
 {
@@ -80,6 +93,14 @@ int tiku_kits_sigfeatures_histogram_reset(
 /* SAMPLE INPUT                                                              */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a sample into the histogram
+ *
+ * Computes the target bin via integer division of the offset by
+ * bin_width.  O(1) per call.  Underflow and overflow are handled
+ * before and after the division respectively to avoid unnecessary
+ * computation on out-of-range samples.
+ */
 int tiku_kits_sigfeatures_histogram_push(
     struct tiku_kits_sigfeatures_histogram *h,
     tiku_kits_sigfeatures_elem_t value)
@@ -93,11 +114,13 @@ int tiku_kits_sigfeatures_histogram_push(
 
     h->total++;
 
+    /* Fast path for underflow -- skip the division entirely */
     if (value < h->bin_min) {
         h->underflow++;
         return TIKU_KITS_SIGFEATURES_OK;
     }
 
+    /* Integer division to find the bin index */
     offset = value - h->bin_min;
     bin_idx = (uint16_t)(offset / h->bin_width);
 
@@ -114,6 +137,13 @@ int tiku_kits_sigfeatures_histogram_push(
 /* QUERIES                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the count for a specific bin
+ *
+ * Returns the count at bin_idx, or 0 if h is NULL or the index
+ * is out of range.  No error code -- the zero return doubles as
+ * a safe fallback.
+ */
 uint16_t tiku_kits_sigfeatures_histogram_get_bin(
     const struct tiku_kits_sigfeatures_histogram *h,
     uint8_t bin_idx)
@@ -126,6 +156,12 @@ uint16_t tiku_kits_sigfeatures_histogram_get_bin(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the total number of samples pushed
+ *
+ * Returns the aggregate count of all pushes (bins + underflow +
+ * overflow).  Returns 0 if h is NULL.
+ */
 uint16_t tiku_kits_sigfeatures_histogram_total(
     const struct tiku_kits_sigfeatures_histogram *h)
 {
@@ -137,6 +173,12 @@ uint16_t tiku_kits_sigfeatures_histogram_total(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the underflow count (samples below bin_min)
+ *
+ * Returns the number of samples that were strictly less than
+ * bin_min.  Returns 0 if h is NULL.
+ */
 uint16_t tiku_kits_sigfeatures_histogram_underflow(
     const struct tiku_kits_sigfeatures_histogram *h)
 {
@@ -148,6 +190,12 @@ uint16_t tiku_kits_sigfeatures_histogram_underflow(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the overflow count (samples at or above upper bound)
+ *
+ * Returns the number of samples that were >= bin_min + bin_width *
+ * num_bins.  Returns 0 if h is NULL.
+ */
 uint16_t tiku_kits_sigfeatures_histogram_overflow(
     const struct tiku_kits_sigfeatures_histogram *h)
 {
@@ -159,6 +207,13 @@ uint16_t tiku_kits_sigfeatures_histogram_overflow(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Find the bin with the highest count (the mode bin)
+ *
+ * Linear scan over all active bins tracking the running maximum.
+ * O(num_bins).  Ties are broken in favour of the lowest index
+ * because the comparison uses strict greater-than.
+ */
 int tiku_kits_sigfeatures_histogram_mode_bin(
     const struct tiku_kits_sigfeatures_histogram *h,
     uint8_t *bin_idx)
@@ -177,6 +232,7 @@ int tiku_kits_sigfeatures_histogram_mode_bin(
     best = 0;
     best_count = h->bins[0];
 
+    /* Forward scan -- first maximum wins (stable tie-break) */
     for (i = 1; i < h->num_bins; i++) {
         if (h->bins[i] > best_count) {
             best_count = h->bins[i];

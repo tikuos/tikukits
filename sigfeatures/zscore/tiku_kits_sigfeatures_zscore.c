@@ -35,6 +35,14 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a z-score normalizer
+ *
+ * Stores the mean and shift, then precomputes the fixed-point
+ * reciprocal of stddev: inv_stddev_q = (1 << shift) / stddev.
+ * The numerator is widened to int64_t to support large shift
+ * values without overflow.
+ */
 int tiku_kits_sigfeatures_zscore_init(
     struct tiku_kits_sigfeatures_zscore *z,
     tiku_kits_sigfeatures_elem_t mean,
@@ -65,6 +73,13 @@ int tiku_kits_sigfeatures_zscore_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Update the mean and stddev, recomputing the reciprocal
+ *
+ * Replaces the stored mean and recomputes inv_stddev_q using the
+ * shift value preserved from init().  Cheaper than a full re-init
+ * when only the statistics have changed.
+ */
 int tiku_kits_sigfeatures_zscore_update(
     struct tiku_kits_sigfeatures_zscore *z,
     tiku_kits_sigfeatures_elem_t mean,
@@ -87,6 +102,13 @@ int tiku_kits_sigfeatures_zscore_update(
 /* NORMALIZATION                                                             */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Normalize a single value to its z-score
+ *
+ * Computes (value - mean) * inv_stddev_q in int64_t, then
+ * truncates to int32_t.  The result is a signed Q(shift)
+ * fixed-point integer representing the z-score.
+ */
 int tiku_kits_sigfeatures_zscore_normalize(
     const struct tiku_kits_sigfeatures_zscore *z,
     tiku_kits_sigfeatures_elem_t value,
@@ -113,6 +135,14 @@ int tiku_kits_sigfeatures_zscore_normalize(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Normalize an entire buffer to z-scores
+ *
+ * Applies (src[i] - mean) * inv_stddev_q for each element.  The
+ * subtraction is widened to int64_t before the multiply to prevent
+ * overflow.  O(len); forward iteration for sequential memory
+ * access.
+ */
 int tiku_kits_sigfeatures_zscore_normalize_batch(
     const struct tiku_kits_sigfeatures_zscore *z,
     const tiku_kits_sigfeatures_elem_t *src,
@@ -127,6 +157,8 @@ int tiku_kits_sigfeatures_zscore_normalize_batch(
     }
 
     for (i = 0; i < len; i++) {
+        /* Widen to int64_t before multiply to prevent overflow on
+         * 16-bit targets. */
         diff = (int64_t)src[i] - (int64_t)z->mean;
         dst[i] = (int32_t)(diff * z->inv_stddev_q);
     }

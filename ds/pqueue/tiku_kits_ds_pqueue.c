@@ -36,6 +36,14 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a priority queue
+ *
+ * Resets all ring-buffer state (head, tail, count) for each active
+ * level and zeroes the backing data arrays.  Unused level slots
+ * beyond @p n_levels are also zeroed so the struct is in a clean
+ * state regardless of prior contents.
+ */
 int tiku_kits_ds_pqueue_init(struct tiku_kits_ds_pqueue *pq,
                              uint8_t n_levels,
                              uint8_t per_level)
@@ -54,6 +62,8 @@ int tiku_kits_ds_pqueue_init(struct tiku_kits_ds_pqueue *pq,
 
     pq->n_levels = n_levels;
 
+    /* Initialize each active level's ring-buffer metadata and zero
+     * the data array for deterministic uninitialised reads. */
     for (i = 0; i < n_levels; i++) {
         pq->levels[i].head = 0;
         pq->levels[i].tail = 0;
@@ -62,7 +72,8 @@ int tiku_kits_ds_pqueue_init(struct tiku_kits_ds_pqueue *pq,
         memset(pq->levels[i].data, 0, sizeof(pq->levels[i].data));
     }
 
-    /* Zero out unused levels */
+    /* Zero out unused levels so the struct is clean regardless of
+     * prior contents -- prevents stale data from leaking. */
     for (i = n_levels; i < TIKU_KITS_DS_PQUEUE_MAX_LEVELS; i++) {
         memset(&pq->levels[i], 0, sizeof(pq->levels[i]));
     }
@@ -74,6 +85,14 @@ int tiku_kits_ds_pqueue_init(struct tiku_kits_ds_pqueue *pq,
 /* ENQUEUE / DEQUEUE                                                         */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Enqueue an element at a given priority level
+ *
+ * O(1) -- writes the value at the tail position of the target
+ * level's ring buffer and advances the tail index with wrap-around.
+ * No element shifting is required because the ring buffer uses
+ * modular arithmetic.
+ */
 int tiku_kits_ds_pqueue_enqueue(struct tiku_kits_ds_pqueue *pq,
                                 tiku_kits_ds_elem_t value,
                                 uint8_t priority)
@@ -94,6 +113,8 @@ int tiku_kits_ds_pqueue_enqueue(struct tiku_kits_ds_pqueue *pq,
     }
 
     lvl->data[lvl->tail] = value;
+    /* Advance tail with wrap-around so the ring buffer cycles
+     * through the static array without shifting elements. */
     lvl->tail = (lvl->tail + 1) % lvl->capacity;
     lvl->count++;
     return TIKU_KITS_DS_OK;
@@ -101,6 +122,15 @@ int tiku_kits_ds_pqueue_enqueue(struct tiku_kits_ds_pqueue *pq,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Dequeue the highest-priority element
+ *
+ * Scans from level 0 (highest priority) to n_levels-1 (lowest) and
+ * removes the front element from the first non-empty level.  The
+ * scan ensures strict priority ordering; within a single tier,
+ * elements come out in FIFO order.  The removal itself is O(1)
+ * (ring-buffer head advance).
+ */
 int tiku_kits_ds_pqueue_dequeue(struct tiku_kits_ds_pqueue *pq,
                                 tiku_kits_ds_elem_t *value)
 {
@@ -111,11 +141,13 @@ int tiku_kits_ds_pqueue_dequeue(struct tiku_kits_ds_pqueue *pq,
         return TIKU_KITS_DS_ERR_NULL;
     }
 
-    /* Scan from highest priority (level 0) to lowest */
+    /* Scan from highest priority (level 0) to lowest -- the first
+     * non-empty level wins, enforcing strict priority ordering. */
     for (i = 0; i < pq->n_levels; i++) {
         lvl = &pq->levels[i];
         if (lvl->count > 0) {
             *value = lvl->data[lvl->head];
+            /* Advance head with wrap-around to consume the element */
             lvl->head = (lvl->head + 1) % lvl->capacity;
             lvl->count--;
             return TIKU_KITS_DS_OK;
@@ -127,6 +159,13 @@ int tiku_kits_ds_pqueue_dequeue(struct tiku_kits_ds_pqueue *pq,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Peek at the highest-priority element without removing it
+ *
+ * Same level scan as dequeue, but the head index is not advanced
+ * so the element remains in place.  Useful for inspecting the next
+ * element without committing to a removal.
+ */
 int tiku_kits_ds_pqueue_peek(const struct tiku_kits_ds_pqueue *pq,
                              tiku_kits_ds_elem_t *value)
 {
@@ -137,7 +176,8 @@ int tiku_kits_ds_pqueue_peek(const struct tiku_kits_ds_pqueue *pq,
         return TIKU_KITS_DS_ERR_NULL;
     }
 
-    /* Scan from highest priority (level 0) to lowest */
+    /* Scan from highest priority (level 0) to lowest -- same as
+     * dequeue but without advancing the head pointer. */
     for (i = 0; i < pq->n_levels; i++) {
         lvl = &pq->levels[i];
         if (lvl->count > 0) {
@@ -153,6 +193,14 @@ int tiku_kits_ds_pqueue_peek(const struct tiku_kits_ds_pqueue *pq,
 /* CLEAR                                                                     */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Clear all levels of the priority queue
+ *
+ * Resets head, tail, and count for each active level.  The backing
+ * data arrays are not zeroed for efficiency -- old values remain
+ * in memory but are inaccessible through the public API since all
+ * access functions check against count.
+ */
 int tiku_kits_ds_pqueue_clear(struct tiku_kits_ds_pqueue *pq)
 {
     uint8_t i;
@@ -161,6 +209,8 @@ int tiku_kits_ds_pqueue_clear(struct tiku_kits_ds_pqueue *pq)
         return TIKU_KITS_DS_ERR_NULL;
     }
 
+    /* Reset ring-buffer state without zeroing data -- the count
+     * check in enqueue/dequeue/peek makes stale data unreachable. */
     for (i = 0; i < pq->n_levels; i++) {
         pq->levels[i].head = 0;
         pq->levels[i].tail = 0;
@@ -174,6 +224,13 @@ int tiku_kits_ds_pqueue_clear(struct tiku_kits_ds_pqueue *pq)
 /* QUERY                                                                     */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the total number of elements across all levels
+ *
+ * Sums the count fields of all active levels.  O(n_levels).  Safe
+ * to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.
+ */
 uint16_t tiku_kits_ds_pqueue_size(const struct tiku_kits_ds_pqueue *pq)
 {
     uint8_t i;
@@ -193,6 +250,13 @@ uint16_t tiku_kits_ds_pqueue_size(const struct tiku_kits_ds_pqueue *pq)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check whether all levels are empty
+ *
+ * Short-circuits as soon as any level with a non-zero count is
+ * found, so the best case is O(1).  A NULL pointer is treated as
+ * empty (returns 1) to be safe for defensive callers.
+ */
 int tiku_kits_ds_pqueue_empty(const struct tiku_kits_ds_pqueue *pq)
 {
     uint8_t i;

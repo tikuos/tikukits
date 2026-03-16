@@ -35,8 +35,13 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Set all transitions to undefined (NO_TRANSITION, NULL)
- * @param sm State machine
+ * @brief Set all transitions to undefined (NO_TRANSITION, NULL).
+ *
+ * Iterates over the full compile-time table dimensions (MAX_STATES
+ * x MAX_EVENTS), not just the runtime dimensions, to ensure no
+ * stale entries remain from a previous configuration.  This is a
+ * deliberate choice to keep the struct in a clean state regardless
+ * of prior contents.
  */
 static void clear_table(struct tiku_kits_ds_sm *sm)
 {
@@ -56,6 +61,14 @@ static void clear_table(struct tiku_kits_ds_sm *sm)
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a state machine with the given dimensions.
+ *
+ * Validates the runtime dimensions against the compile-time limits,
+ * stores them, resets current_state to 0, and fills every table
+ * cell with SM_NO_TRANSITION / NULL so that undefined transitions
+ * are safely rejected.
+ */
 int tiku_kits_ds_sm_init(struct tiku_kits_ds_sm *sm,
                           uint8_t n_states,
                           uint8_t n_events)
@@ -80,6 +93,13 @@ int tiku_kits_ds_sm_init(struct tiku_kits_ds_sm *sm,
 /* TRANSITION CONFIGURATION                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Define a transition in the state machine table.
+ *
+ * O(1) -- a direct array write into table[state][event].  All
+ * three indices (state, event, next_state) are bounds-checked
+ * against the runtime dimensions to prevent out-of-range writes.
+ */
 int tiku_kits_ds_sm_set_transition(struct tiku_kits_ds_sm *sm,
                                     uint8_t state,
                                     uint8_t event,
@@ -104,6 +124,15 @@ int tiku_kits_ds_sm_set_transition(struct tiku_kits_ds_sm *sm,
 /* EVENT PROCESSING                                                          */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Process an event: look up transition and execute.
+ *
+ * O(1) lookup into table[current_state][event].  The action
+ * callback is invoked *before* current_state is updated so that
+ * the callback can inspect the source state if needed.  If the
+ * cell holds SM_NO_TRANSITION, the machine state is left unchanged
+ * and ERR_PARAM is returned.
+ */
 int tiku_kits_ds_sm_process(struct tiku_kits_ds_sm *sm,
                              uint8_t event)
 {
@@ -122,7 +151,8 @@ int tiku_kits_ds_sm_process(struct tiku_kits_ds_sm *sm,
         return TIKU_KITS_DS_ERR_PARAM;
     }
 
-    /* Execute action callback if defined */
+    /* Execute action callback before state change so the callback
+     * can still query the source state if needed. */
     if (tr->action != NULL) {
         tr->action();
     }
@@ -137,6 +167,12 @@ int tiku_kits_ds_sm_process(struct tiku_kits_ds_sm *sm,
 /* STATE ACCESS                                                              */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the current state.
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.  Returns the raw state index.
+ */
 uint8_t tiku_kits_ds_sm_get_state(
     const struct tiku_kits_ds_sm *sm)
 {
@@ -148,6 +184,13 @@ uint8_t tiku_kits_ds_sm_get_state(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Force the current state to a given value.
+ *
+ * Directly overwrites current_state without invoking any
+ * transition action.  The new state is bounds-checked against
+ * n_states to prevent an invalid index.
+ */
 int tiku_kits_ds_sm_set_state(struct tiku_kits_ds_sm *sm,
                                uint8_t state)
 {
@@ -164,6 +207,12 @@ int tiku_kits_ds_sm_set_state(struct tiku_kits_ds_sm *sm,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset current state to 0 (initial state).
+ *
+ * Leaves the transition table untouched -- only the current_state
+ * field is set to 0.  No action callback is invoked.
+ */
 int tiku_kits_ds_sm_reset(struct tiku_kits_ds_sm *sm)
 {
     if (sm == NULL) {
@@ -178,6 +227,14 @@ int tiku_kits_ds_sm_reset(struct tiku_kits_ds_sm *sm)
 /* CLEAR                                                                     */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Clear all transitions and reset current state to 0.
+ *
+ * Resets current_state and fills every table cell with
+ * SM_NO_TRANSITION / NULL.  The runtime dimensions (n_states,
+ * n_events) are preserved so the caller can reconfigure
+ * transitions without calling init again.
+ */
 int tiku_kits_ds_sm_clear(struct tiku_kits_ds_sm *sm)
 {
     if (sm == NULL) {

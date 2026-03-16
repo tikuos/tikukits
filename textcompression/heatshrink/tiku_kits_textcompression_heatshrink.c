@@ -53,17 +53,30 @@
 /*---------------------------------------------------------------------------*/
 
 /**
+ * @struct hs_bit_writer
  * @brief Bit-level output stream packed MSB-first into a byte buffer
+ *
+ * Allows the LZSS encoder to emit individual bits (flags, offsets,
+ * lengths) into a contiguous byte buffer.  Bits are packed from the
+ * most-significant bit toward the least-significant bit within each
+ * byte.  When bit_pos reaches 8 the writer advances to the next byte
+ * and pre-clears it so that subsequent OR operations start from zero.
+ *
+ * @note The writer does not own its buffer; the caller is responsible
+ *       for providing a sufficiently large buffer via bw_init().
  */
 struct hs_bit_writer {
-    uint8_t *buf;
-    uint16_t cap;
-    uint16_t byte_pos;
+    uint8_t *buf;       /**< Destination byte buffer (not owned) */
+    uint16_t cap;       /**< Capacity of buf in bytes */
+    uint16_t byte_pos;  /**< Current byte index in buf */
     uint8_t  bit_pos;   /**< Next bit index within current byte (0..7) */
 };
 
 /**
- * @brief Initialize a bit writer
+ * @brief Initialize a bit writer to the start of a byte buffer
+ *
+ * Resets all internal cursors and pre-clears the first byte so that
+ * subsequent bw_write_bits() calls can OR bits into it directly.
  */
 static void bw_init(struct hs_bit_writer *bw, uint8_t *buf, uint16_t cap)
 {
@@ -72,13 +85,23 @@ static void bw_init(struct hs_bit_writer *bw, uint8_t *buf, uint16_t cap)
     bw->byte_pos = 0;
     bw->bit_pos = 0;
     if (cap > 0) {
-        buf[0] = 0;
+        buf[0] = 0;  /* Pre-clear so OR-ing individual bits works */
     }
 }
 
 /**
- * @brief Write nbits from val (MSB first)
- * @return 0 on success, -1 if buffer full
+ * @brief Write @p nbits from @p val into the bit stream (MSB first)
+ *
+ * Iterates from the most-significant requested bit down to bit 0.
+ * Each '1' bit is OR-ed into the current output byte at the correct
+ * position; '0' bits are already zero thanks to the pre-clear in
+ * bw_init / the rollover clear below.  When a byte is full the
+ * writer advances and pre-clears the next byte.
+ *
+ * @param bw    Bit writer state
+ * @param val   Value whose lower @p nbits bits are written
+ * @param nbits Number of bits to write (1..16)
+ * @return 0 on success, -1 if the output buffer is full
  */
 static int bw_write_bits(struct hs_bit_writer *bw, uint16_t val, uint8_t nbits)
 {
@@ -95,6 +118,7 @@ static int bw_write_bits(struct hs_bit_writer *bw, uint16_t val, uint8_t nbits)
         if (bw->bit_pos == 8) {
             bw->bit_pos = 0;
             bw->byte_pos++;
+            /* Pre-clear next byte for subsequent OR operations */
             if (bw->byte_pos < bw->cap) {
                 bw->buf[bw->byte_pos] = 0;
             }
@@ -104,7 +128,11 @@ static int bw_write_bits(struct hs_bit_writer *bw, uint16_t val, uint8_t nbits)
 }
 
 /**
- * @brief Total bytes used (including partial last byte)
+ * @brief Return total bytes consumed (including a partially-filled last byte)
+ *
+ * If any bits have been written into the current byte (bit_pos > 0),
+ * that byte counts as used even though its remaining bits are zero-
+ * padded.
  */
 static uint16_t bw_size(const struct hs_bit_writer *bw)
 {
@@ -116,17 +144,26 @@ static uint16_t bw_size(const struct hs_bit_writer *bw)
 /*---------------------------------------------------------------------------*/
 
 /**
+ * @struct hs_bit_reader
  * @brief Bit-level input stream, MSB-first
+ *
+ * Mirror image of hs_bit_writer for the decoder side.  Reads
+ * individual bits from a contiguous byte buffer, tracking the current
+ * byte and bit position.  Returns an error when the stream is
+ * exhausted before the requested number of bits have been read.
  */
 struct hs_bit_reader {
-    const uint8_t *buf;
-    uint16_t len;
-    uint16_t byte_pos;
-    uint8_t  bit_pos;
+    const uint8_t *buf; /**< Source byte buffer (not owned) */
+    uint16_t len;       /**< Length of buf in bytes */
+    uint16_t byte_pos;  /**< Current byte index in buf */
+    uint8_t  bit_pos;   /**< Next bit index within current byte (0..7) */
 };
 
 /**
- * @brief Initialize a bit reader
+ * @brief Initialize a bit reader to the start of a byte buffer
+ *
+ * Resets all cursors so that the first br_read_bits() call starts
+ * reading from the MSB of buf[0].
  */
 static void br_init(struct hs_bit_reader *br, const uint8_t *buf, uint16_t len)
 {
@@ -137,8 +174,17 @@ static void br_init(struct hs_bit_reader *br, const uint8_t *buf, uint16_t len)
 }
 
 /**
- * @brief Read nbits into val (MSB first)
- * @return 0 on success, -1 if not enough data
+ * @brief Read @p nbits from the bit stream into @p val (MSB first)
+ *
+ * Shifts bits into @p val one at a time, MSB first, advancing the
+ * internal cursor.  Returns -1 if the stream is exhausted before all
+ * requested bits have been read, leaving @p val in a partially-
+ * populated state (callers should treat this as a corrupt-data error).
+ *
+ * @param br    Bit reader state
+ * @param nbits Number of bits to read (1..16)
+ * @param val   Output: assembled value with the read bits right-aligned
+ * @return 0 on success, -1 if not enough data remains
  */
 static int br_read_bits(struct hs_bit_reader *br, uint8_t nbits, uint16_t *val)
 {
@@ -166,6 +212,19 @@ static int br_read_bits(struct hs_bit_reader *br, uint8_t nbits, uint16_t *val)
 /* ENCODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Compress a byte buffer using LZSS (heatshrink-style)
+ *
+ * Writes a 2-byte little-endian original-size header, then encodes
+ * the input as a bit-packed LZSS stream.  For each input position the
+ * algorithm performs a brute-force search over the sliding window
+ * (up to HS_WINDOW_SIZE bytes back) to find the longest matching
+ * byte sequence.  If the best match meets the MIN_MATCH threshold, a
+ * back-reference is emitted; otherwise a literal byte is written.
+ *
+ * Time complexity: O(N * W * M) where N = input length, W = window
+ * size, M = max match length.  All state is stack-local.
+ */
 int tiku_kits_textcompression_heatshrink_encode(
     const uint8_t *src, uint16_t src_len,
     uint8_t *dst, uint16_t dst_cap,
@@ -184,12 +243,13 @@ int tiku_kits_textcompression_heatshrink_encode(
         return TIKU_KITS_TEXTCOMPRESSION_ERR_NULL;
     }
 
-    /* Need at least 2 bytes for the original-size header */
+    /* The output always begins with a 2-byte original-size header */
     if (dst_cap < 2) {
         return TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE;
     }
 
-    /* Write original size as little-endian uint16_t header */
+    /* Store original size as little-endian uint16_t so the decoder
+     * knows when to stop reading bits. */
     dst[0] = (uint8_t)(src_len & 0xFF);
     dst[1] = (uint8_t)((src_len >> 8) & 0xFF);
 
@@ -198,15 +258,17 @@ int tiku_kits_textcompression_heatshrink_encode(
         return TIKU_KITS_TEXTCOMPRESSION_OK;
     }
 
+    /* Bit stream starts immediately after the 2-byte header */
     bw_init(&bw, dst + 2, dst_cap - 2);
 
     i = 0;
     while (i < src_len) {
-        /* Find longest match in the sliding window */
+        /* Brute-force search for the longest match in the window */
         best_offset = 0;
         best_len = 0;
         search_start = (i > HS_WINDOW_SIZE) ? (i - HS_WINDOW_SIZE) : 0;
 
+        /* Clamp max match to remaining input or HS_MAX_MATCH */
         max_match = (uint8_t)((src_len - i < HS_MAX_MATCH)
                               ? (src_len - i) : HS_MAX_MATCH);
 
@@ -221,13 +283,15 @@ int tiku_kits_textcompression_heatshrink_encode(
                 best_len = match_len;
                 best_offset = i - j;
                 if (match_len == max_match) {
-                    break;
+                    break;  /* Can't do better -- stop searching */
                 }
             }
         }
 
         if (best_len >= HS_MIN_MATCH) {
-            /* Back-reference: flag(0) + offset + length */
+            /* Emit back-reference: flag(0) + offset + length.
+             * Offset is stored as (offset - 1) to use the full bit
+             * range; length is stored as (length - MIN_MATCH). */
             if (bw_write_bits(&bw, 0, 1) < 0
                 || bw_write_bits(&bw, best_offset - 1, HS_WINDOW_BITS) < 0
                 || bw_write_bits(&bw, best_len - HS_MIN_MATCH,
@@ -236,7 +300,7 @@ int tiku_kits_textcompression_heatshrink_encode(
             }
             i += best_len;
         } else {
-            /* Literal: flag(1) + byte */
+            /* Emit literal: flag(1) + 8-bit byte value */
             if (bw_write_bits(&bw, 1, 1) < 0
                 || bw_write_bits(&bw, src[i], 8) < 0) {
                 return TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE;
@@ -253,6 +317,21 @@ int tiku_kits_textcompression_heatshrink_encode(
 /* DECODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Decompress LZSS (heatshrink-style) compressed data
+ *
+ * Reads the 2-byte little-endian original-size header, then walks the
+ * bit stream until @c orig_size output bytes have been produced.  Each
+ * item is decoded by reading a 1-bit flag first:
+ *   - Flag 1 (literal): read 8 bits and append to output.
+ *   - Flag 0 (back-ref): read WINDOW_BITS offset and LOOKAHEAD_BITS
+ *     length, then copy the referenced bytes from the already-decoded
+ *     output.
+ *
+ * The back-reference copy is deliberately byte-by-byte (not memcpy)
+ * so that overlapping matches, where the source and destination
+ * regions overlap, produce the correct repeating pattern.
+ */
 int tiku_kits_textcompression_heatshrink_decode(
     const uint8_t *src, uint16_t src_len,
     uint8_t *dst, uint16_t dst_cap,
@@ -272,11 +351,12 @@ int tiku_kits_textcompression_heatshrink_decode(
         return TIKU_KITS_TEXTCOMPRESSION_ERR_NULL;
     }
 
+    /* Minimum valid stream is the 2-byte header */
     if (src_len < 2) {
         return TIKU_KITS_TEXTCOMPRESSION_ERR_CORRUPT;
     }
 
-    /* Read original size from little-endian header */
+    /* Reconstruct original size from little-endian header */
     orig_size = (uint16_t)src[0] | ((uint16_t)src[1] << 8);
 
     if (orig_size == 0) {
@@ -288,6 +368,7 @@ int tiku_kits_textcompression_heatshrink_decode(
         return TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE;
     }
 
+    /* Bit stream starts immediately after the 2-byte header */
     br_init(&br, src + 2, src_len - 2);
     di = 0;
 
@@ -297,28 +378,31 @@ int tiku_kits_textcompression_heatshrink_decode(
         }
 
         if (flag) {
-            /* Literal byte */
+            /* Literal: next 8 bits are a raw byte value */
             if (br_read_bits(&br, 8, &literal) < 0) {
                 return TIKU_KITS_TEXTCOMPRESSION_ERR_CORRUPT;
             }
             dst[di++] = (uint8_t)literal;
         } else {
-            /* Back-reference */
+            /* Back-reference: decode offset and length fields */
             if (br_read_bits(&br, HS_WINDOW_BITS, &offset) < 0
                 || br_read_bits(&br, HS_LOOKAHEAD_BITS, &length) < 0) {
                 return TIKU_KITS_TEXTCOMPRESSION_ERR_CORRUPT;
             }
 
-            offset += 1;       /* stored as offset-1 */
+            offset += 1;       /* Stored as offset-1 during encoding */
             length += HS_MIN_MATCH;
 
+            /* Offset must not reach before the start of output */
             if (offset > di) {
                 return TIKU_KITS_TEXTCOMPRESSION_ERR_CORRUPT;
             }
 
             ref_pos = di - offset;
 
-            /* Copy byte-by-byte to support overlapping matches */
+            /* Byte-by-byte copy so overlapping matches (where
+             * offset < length) correctly generate repeating patterns
+             * rather than reading stale data via a bulk memcpy. */
             for (k = 0; k < length; k++) {
                 if (di >= dst_cap) {
                     return TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE;

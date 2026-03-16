@@ -52,18 +52,36 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * Element type for x and y sample values.
- * Defaults to int32_t for integer-only targets (no FPU).
- * Define as int16_t before including if memory is very tight.
+ * @brief Element type for x and y sample values.
+ *
+ * Defaults to int32_t for integer-only targets (no FPU required).
+ * All ML sub-modules share this type.  Define as int16_t before
+ * including if memory is very tight on a 16-bit target.
+ *
+ * Override before including this header to change the type:
+ * @code
+ *   #define TIKU_KITS_ML_ELEM_TYPE int16_t
+ *   #include "tiku_kits_ml_linreg.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_ML_ELEM_TYPE
 #define TIKU_KITS_ML_ELEM_TYPE int32_t
 #endif
 
 /**
- * Default number of fractional bits for fixed-point slope/intercept.
- * With shift=8, the resolution is ~0.004 per step.
- * Override before including this header to change the default.
+ * @brief Default number of fractional bits for fixed-point
+ *        slope and intercept outputs.
+ *
+ * With shift=8 the resolution is ~0.004 (1/256).  Slope and
+ * intercept are returned as value * (1 << shift); divide by
+ * (1 << shift) to recover the real value.  Larger shift gives
+ * finer resolution but reduces the representable range.
+ *
+ * Override before including this header to change the default:
+ * @code
+ *   #define TIKU_KITS_ML_LINREG_SHIFT 10
+ *   #include "tiku_kits_ml_linreg.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_ML_LINREG_SHIFT
 #define TIKU_KITS_ML_LINREG_SHIFT 8
@@ -80,14 +98,24 @@ typedef TIKU_KITS_ML_ELEM_TYPE tiku_kits_ml_elem_t;
 
 /**
  * @struct tiku_kits_ml_linreg
- * @brief Streaming simple linear regression model
+ * @brief Streaming simple linear regression model (OLS)
  *
- * Fits y = slope * x + intercept by maintaining running sums of
- * x, y, x*x, x*y, and y*y. These accumulators use int64_t to
- * prevent overflow for typical embedded value ranges.
+ * Fits y = slope * x + intercept using ordinary least squares by
+ * maintaining five running accumulators: sum_x, sum_y, sum_xx,
+ * sum_xy, and sum_yy.  These use int64_t to prevent overflow for
+ * typical embedded int32_t sample values.  No sample buffer is
+ * needed -- each push() is O(1) and fitted parameters are computed
+ * on demand from the accumulators.
  *
  * At least two data points with distinct x values are required
  * before slope, intercept, predict, or R-squared can be queried.
+ * If all x values are identical the denominator is zero and
+ * ERR_SINGULAR is returned.
+ *
+ * @note Because all storage lives inside the struct, no heap
+ *       allocation is needed -- just declare the model as a static
+ *       or local variable.  Total struct size is 5 * 8 + 2 + 1 =
+ *       43 bytes (plus padding).
  *
  * Example:
  * @code
@@ -100,20 +128,22 @@ typedef TIKU_KITS_ML_ELEM_TYPE tiku_kits_ml_elem_t;
  *   tiku_kits_ml_linreg_push(&lr, 10, 300);
  *   tiku_kits_ml_linreg_push(&lr, 20, 500);
  *
- *   tiku_kits_ml_linreg_slope(&lr, &slope_q);      // 20.0 in Q8
- *   tiku_kits_ml_linreg_intercept(&lr, &intercept_q); // 100.0 in Q8
- *   tiku_kits_ml_linreg_predict(&lr, 15, &y_pred);  // y_pred = 400
- *   tiku_kits_ml_linreg_r2(&lr, &r2_q);             // 256 = 1.0 in Q8
+ *   tiku_kits_ml_linreg_slope(&lr, &slope_q);        // 5120 = 20.0 in Q8
+ *   tiku_kits_ml_linreg_intercept(&lr, &intercept_q); // 25600 = 100.0 in Q8
+ *   tiku_kits_ml_linreg_predict(&lr, 15, &y_pred);   // y_pred = 400
+ *   tiku_kits_ml_linreg_r2(&lr, &r2_q);              // 256 = 1.0 in Q8
  * @endcode
  */
 struct tiku_kits_ml_linreg {
-    int64_t sum_x;     /**< Running sum of x values */
-    int64_t sum_y;     /**< Running sum of y values */
-    int64_t sum_xx;    /**< Running sum of x*x */
-    int64_t sum_xy;    /**< Running sum of x*y */
-    int64_t sum_yy;    /**< Running sum of y*y (for R-squared) */
-    uint16_t n;        /**< Number of data points pushed */
-    uint8_t shift;     /**< Fixed-point fractional bits */
+    int64_t sum_x;     /**< Running sum of x values (Sx) */
+    int64_t sum_y;     /**< Running sum of y values (Sy) */
+    int64_t sum_xx;    /**< Running sum of x*x (Sxx) */
+    int64_t sum_xy;    /**< Running sum of x*y (Sxy) */
+    int64_t sum_yy;    /**< Running sum of y*y (Syy, used for
+                            R-squared computation) */
+    uint16_t n;        /**< Number of data points pushed so far */
+    uint8_t shift;     /**< Fixed-point fractional bits for slope,
+                            intercept, and R-squared outputs */
 };
 
 /*---------------------------------------------------------------------------*/
@@ -122,24 +152,31 @@ struct tiku_kits_ml_linreg {
 
 /**
  * @brief Initialize a linear regression model
- * @param lr    Model to initialize
- * @param shift Number of fixed-point fractional bits (0..30)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL, or
- *         TIKU_KITS_ML_ERR_PARAM (shift > 30)
  *
- * All accumulators are zeroed. The shift parameter controls the
- * precision of slope and intercept outputs: larger shift gives
- * finer resolution but reduces the representable range.
+ * Zeros all five accumulators and the sample count.  The shift
+ * parameter controls the precision of slope and intercept outputs:
+ * larger shift gives finer resolution but reduces the representable
+ * integer range before overflow.
+ *
+ * @param lr    Model to initialize (must not be NULL)
+ * @param shift Number of fixed-point fractional bits (0..30)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if lr is NULL,
+ *         TIKU_KITS_ML_ERR_PARAM if shift > 30
  */
 int tiku_kits_ml_linreg_init(struct tiku_kits_ml_linreg *lr,
                               uint8_t shift);
 
 /**
  * @brief Reset a model, clearing all data points
- * @param lr Model to reset
- * @return TIKU_KITS_ML_OK or TIKU_KITS_ML_ERR_NULL
  *
- * Preserves the configured shift value.
+ * Zeros all accumulators and the sample count.  Preserves the
+ * configured shift value so the model can be reused without
+ * reinitialization.
+ *
+ * @param lr Model to reset (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if lr is NULL
  */
 int tiku_kits_ml_linreg_reset(struct tiku_kits_ml_linreg *lr);
 
@@ -149,13 +186,17 @@ int tiku_kits_ml_linreg_reset(struct tiku_kits_ml_linreg *lr);
 
 /**
  * @brief Push a data point (x, y) into the model
- * @param lr Model
+ *
+ * Updates all five running accumulators (sum_x, sum_y, sum_xx,
+ * sum_xy, sum_yy) and increments the sample count in O(1).
+ * Intermediate products are computed in int64_t to prevent
+ * overflow for int32_t inputs.
+ *
+ * @param lr Model (must not be NULL)
  * @param x  Independent variable value
  * @param y  Dependent variable value
- * @return TIKU_KITS_ML_OK or TIKU_KITS_ML_ERR_NULL
- *
- * Updates all running accumulators in O(1). Intermediate products
- * are computed in int64_t to prevent overflow for int32_t inputs.
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if lr is NULL
  */
 int tiku_kits_ml_linreg_push(struct tiku_kits_ml_linreg *lr,
                               tiku_kits_ml_elem_t x,
@@ -167,14 +208,21 @@ int tiku_kits_ml_linreg_push(struct tiku_kits_ml_linreg *lr,
 
 /**
  * @brief Get the fitted slope as a fixed-point value
- * @param lr     Model (must have >= 2 points with distinct x)
- * @param result Output: slope * (1 << shift)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL,
- *         TIKU_KITS_ML_ERR_SIZE (< 2 points), or
- *         TIKU_KITS_ML_ERR_SINGULAR (all x values identical)
  *
- * The returned value is the OLS slope scaled by 2^shift.
+ * Computes the OLS slope from the running accumulators:
+ *   slope = (n * Sxy - Sx * Sy) / (n * Sxx - Sx^2)
+ * and scales the result by (1 << shift) for fixed-point output.
  * To recover the real value: slope_real = result / (1 << shift).
+ *
+ * @param lr     Model with >= 2 points that have distinct x values
+ *               (must not be NULL)
+ * @param result Output pointer where slope * (1 << shift) is
+ *               written (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if lr or result is NULL,
+ *         TIKU_KITS_ML_ERR_SIZE if fewer than 2 points have been
+ *         pushed,
+ *         TIKU_KITS_ML_ERR_SINGULAR if all x values are identical
  */
 int tiku_kits_ml_linreg_slope(
     const struct tiku_kits_ml_linreg *lr,
@@ -182,13 +230,21 @@ int tiku_kits_ml_linreg_slope(
 
 /**
  * @brief Get the fitted intercept as a fixed-point value
- * @param lr     Model (must have >= 2 points with distinct x)
- * @param result Output: intercept * (1 << shift)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL,
- *         TIKU_KITS_ML_ERR_SIZE (< 2 points), or
- *         TIKU_KITS_ML_ERR_SINGULAR (all x values identical)
  *
- * The returned value is the OLS intercept scaled by 2^shift.
+ * Computes the OLS intercept from the running accumulators:
+ *   intercept = (Sy * den - num * Sx) / (n * den)
+ * where num and den are the slope numerator and denominator.
+ * The result is scaled by (1 << shift).
+ *
+ * @param lr     Model with >= 2 points that have distinct x values
+ *               (must not be NULL)
+ * @param result Output pointer where intercept * (1 << shift) is
+ *               written (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if lr or result is NULL,
+ *         TIKU_KITS_ML_ERR_SIZE if fewer than 2 points have been
+ *         pushed,
+ *         TIKU_KITS_ML_ERR_SINGULAR if all x values are identical
  */
 int tiku_kits_ml_linreg_intercept(
     const struct tiku_kits_ml_linreg *lr,
@@ -200,16 +256,22 @@ int tiku_kits_ml_linreg_intercept(
 
 /**
  * @brief Predict y for a given x value
- * @param lr     Model (must have >= 2 points with distinct x)
- * @param x      Input x value
- * @param result Output: predicted y (in original scale, not Q-format)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL,
- *         TIKU_KITS_ML_ERR_SIZE (< 2 points), or
- *         TIKU_KITS_ML_ERR_SINGULAR (all x values identical)
  *
  * Computes y = slope * x + intercept using the running accumulators
- * directly. The result is in the original (unscaled) integer domain,
- * truncated by integer division.
+ * directly (no intermediate slope/intercept extraction needed).
+ * The result is in the original (unscaled) integer domain, truncated
+ * by integer division.  O(1).
+ *
+ * @param lr     Model with >= 2 points that have distinct x values
+ *               (must not be NULL)
+ * @param x      Input x value (independent variable)
+ * @param result Output pointer where the predicted y is written in
+ *               the original scale, not Q-format (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if lr or result is NULL,
+ *         TIKU_KITS_ML_ERR_SIZE if fewer than 2 points have been
+ *         pushed,
+ *         TIKU_KITS_ML_ERR_SINGULAR if all x values are identical
  */
 int tiku_kits_ml_linreg_predict(
     const struct tiku_kits_ml_linreg *lr,
@@ -222,17 +284,28 @@ int tiku_kits_ml_linreg_predict(
 
 /**
  * @brief Get the R-squared (coefficient of determination)
- * @param lr     Model (must have >= 2 points with distinct x)
- * @param result Output: R-squared * (1 << shift), range [0, 1<<shift]
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL,
- *         TIKU_KITS_ML_ERR_SIZE (< 2 points), or
- *         TIKU_KITS_ML_ERR_SINGULAR (all x or y values identical)
  *
  * R-squared measures how well the linear model fits the data.
  * A value of (1 << shift) indicates a perfect fit; 0 indicates
- * no linear relationship.
+ * no linear relationship.  The result is clamped to [0, 1 << shift]
+ * to guard against rounding overshoot.
  *
- * Computed as: R2 = (n*Sxy - Sx*Sy)^2 / ((n*Sxx - Sx^2) * (n*Syy - Sy^2))
+ * Computed as:
+ *   R2 = (n*Sxy - Sx*Sy)^2 / ((n*Sxx - Sx^2) * (n*Syy - Sy^2))
+ *
+ * If all y values are identical (SSyy == 0), returns ERR_SINGULAR
+ * and writes 0 to *result.
+ *
+ * @param lr     Model with >= 2 points that have distinct x values
+ *               (must not be NULL)
+ * @param result Output pointer where R2 * (1 << shift) is written,
+ *               clamped to [0, 1 << shift] (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if lr or result is NULL,
+ *         TIKU_KITS_ML_ERR_SIZE if fewer than 2 points have been
+ *         pushed,
+ *         TIKU_KITS_ML_ERR_SINGULAR if all x or y values are
+ *         identical
  */
 int tiku_kits_ml_linreg_r2(
     const struct tiku_kits_ml_linreg *lr,
@@ -244,8 +317,12 @@ int tiku_kits_ml_linreg_r2(
 
 /**
  * @brief Get the number of data points pushed
- * @param lr Model
- * @return Number of data points, or 0 if lr is NULL
+ *
+ * Returns the total number of push() calls.  Safe to call with a
+ * NULL pointer -- returns 0.
+ *
+ * @param lr Model, or NULL
+ * @return Number of data points pushed, or 0 if lr is NULL
  */
 uint16_t tiku_kits_ml_linreg_count(
     const struct tiku_kits_ml_linreg *lr);

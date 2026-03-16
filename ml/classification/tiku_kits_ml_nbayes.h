@@ -55,35 +55,68 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * Maximum number of distinct class labels (0..MAX_CLASSES-1).
- * Override before including this header to change the limit.
+ * @brief Maximum number of distinct class labels (0..MAX_CLASSES-1).
+ *
+ * Controls the first dimension of the frequency table and the size
+ * of the class_count array.  Total static memory for frequency
+ * tables is MAX_CLASSES * MAX_FEATURES * MAX_BINS * sizeof(uint16_t).
+ *
+ * Override before including this header to change the limit:
+ * @code
+ *   #define TIKU_KITS_ML_NBAYES_MAX_CLASSES 8
+ *   #include "tiku_kits_ml_nbayes.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_ML_NBAYES_MAX_CLASSES
 #define TIKU_KITS_ML_NBAYES_MAX_CLASSES 4
 #endif
 
 /**
- * Maximum number of input features.
- * Override before including this header to change the limit.
+ * @brief Maximum number of input features.
+ *
+ * Controls the second dimension of the frequency table.  Each
+ * feature must be a discrete value in [0, n_bins).
+ *
+ * Override before including this header to change the limit:
+ * @code
+ *   #define TIKU_KITS_ML_NBAYES_MAX_FEATURES 8
+ *   #include "tiku_kits_ml_nbayes.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_ML_NBAYES_MAX_FEATURES
 #define TIKU_KITS_ML_NBAYES_MAX_FEATURES 4
 #endif
 
 /**
- * Maximum number of discrete bins per feature.
- * Each feature value must be in [0, n_bins). Continuous sensor
- * readings should be quantized into bins before use.
- * Override before including this header to change the limit.
+ * @brief Maximum number of discrete bins per feature.
+ *
+ * Each feature value must be an integer in [0, n_bins).  Continuous
+ * sensor readings should be quantized into bins before training or
+ * prediction.  Controls the third dimension of the frequency table.
+ *
+ * Override before including this header to change the limit:
+ * @code
+ *   #define TIKU_KITS_ML_NBAYES_MAX_BINS 32
+ *   #include "tiku_kits_ml_nbayes.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_ML_NBAYES_MAX_BINS
 #define TIKU_KITS_ML_NBAYES_MAX_BINS 16
 #endif
 
 /**
- * Default number of fractional bits for fixed-point log-likelihood
- * scores. With shift=8, log2 resolution is ~0.004.
- * Override before including this header to change the default.
+ * @brief Default number of fractional bits for fixed-point
+ *        log-likelihood scores.
+ *
+ * With shift=8 the log2 resolution is ~0.004 (1/256).  Scores are
+ * returned in Q(shift) format; higher shift gives finer resolution
+ * but narrower representable range.
+ *
+ * Override before including this header to change the default:
+ * @code
+ *   #define TIKU_KITS_ML_NBAYES_SHIFT 10
+ *   #include "tiku_kits_ml_nbayes.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_ML_NBAYES_SHIFT
 #define TIKU_KITS_ML_NBAYES_SHIFT 8
@@ -95,11 +128,31 @@
 
 /**
  * @struct tiku_kits_ml_nbayes
- * @brief Categorical Naive Bayes classifier
+ * @brief Categorical Naive Bayes classifier with Laplace smoothing
  *
- * Stores per-class per-feature frequency tables and classifies
- * new samples by computing log-likelihood scores with Laplace
- * smoothing.
+ * Stores per-class per-feature frequency tables in a 3-D static
+ * array and classifies new samples by computing log-likelihood
+ * scores in fixed-point.  Training is O(1) per sample (just
+ * increment counters); prediction is O(n_classes * n_features).
+ *
+ * The scoring formula with Laplace (add-1) smoothing is:
+ *
+ *     score(c) = log2(count_c + 1)
+ *              + sum_j log2(freq[c][j][x_j] + 1)
+ *              - n_features * log2(count_c + n_bins)
+ *
+ * Log-space scoring avoids the probability-product underflow that
+ * would occur with raw probability multiplication on integer-only
+ * targets.
+ *
+ * @note Feature values are discrete integers in [0, n_bins).  The
+ *       user is responsible for quantizing continuous sensor
+ *       readings before training or prediction.
+ *
+ * @note Because all storage lives inside the struct, no heap
+ *       allocation is needed.  Memory usage is dominated by the
+ *       freq table: MAX_CLASSES * MAX_FEATURES * MAX_BINS *
+ *       sizeof(uint16_t) bytes.
  *
  * Example:
  * @code
@@ -124,14 +177,22 @@ struct tiku_kits_ml_nbayes {
     uint16_t freq[TIKU_KITS_ML_NBAYES_MAX_CLASSES]
                  [TIKU_KITS_ML_NBAYES_MAX_FEATURES]
                  [TIKU_KITS_ML_NBAYES_MAX_BINS];
-            /**< Frequency table: freq[class][feature][bin] */
+            /**< Frequency table: freq[class][feature][bin] counts
+                 how many training samples of the given class had
+                 the given bin value for that feature */
     uint16_t class_count[TIKU_KITS_ML_NBAYES_MAX_CLASSES];
-            /**< Number of training samples per class */
-    uint16_t n_total;      /**< Total training samples seen */
-    uint8_t n_features;    /**< Number of input features */
-    uint8_t n_bins;        /**< Number of discrete bins per feature */
-    uint8_t n_classes;     /**< Number of class labels */
-    uint8_t shift;         /**< Fixed-point fractional bits for scores */
+            /**< Per-class training sample count (sum of all bin
+                 increments for that class) */
+    uint16_t n_total;      /**< Total training samples seen across
+                                all classes */
+    uint8_t n_features;    /**< Dimensionality of input vectors
+                                (set at init time) */
+    uint8_t n_bins;        /**< Number of discrete bins per feature
+                                (set at init time) */
+    uint8_t n_classes;     /**< Number of class labels
+                                (set at init time) */
+    uint8_t shift;         /**< Fixed-point fractional bits for
+                                log-likelihood scores */
 };
 
 /*---------------------------------------------------------------------------*/
@@ -140,15 +201,22 @@ struct tiku_kits_ml_nbayes {
 
 /**
  * @brief Initialize a Naive Bayes model
- * @param nb         Model to initialize
- * @param n_features Number of input features (1..MAX_FEATURES)
- * @param n_bins     Number of bins per feature (2..MAX_BINS)
- * @param n_classes  Number of class labels (2..MAX_CLASSES)
- * @param shift      Fixed-point fractional bits (1..30)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL, or
- *         TIKU_KITS_ML_ERR_PARAM
  *
- * All frequency counters are zeroed.
+ * Validates all configuration parameters, zeros the frequency table
+ * and class counters, and records the model dimensions.  Samples
+ * must be added via train() before prediction is possible.
+ *
+ * @param nb         Model to initialize (must not be NULL)
+ * @param n_features Number of input features
+ *                   (1..TIKU_KITS_ML_NBAYES_MAX_FEATURES)
+ * @param n_bins     Number of discrete bins per feature
+ *                   (2..TIKU_KITS_ML_NBAYES_MAX_BINS)
+ * @param n_classes  Number of class labels
+ *                   (2..TIKU_KITS_ML_NBAYES_MAX_CLASSES)
+ * @param shift      Fixed-point fractional bits for scores (1..30)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if nb is NULL,
+ *         TIKU_KITS_ML_ERR_PARAM if any dimension is out of range
  */
 int tiku_kits_ml_nbayes_init(struct tiku_kits_ml_nbayes *nb,
                                uint8_t n_features,
@@ -157,11 +225,15 @@ int tiku_kits_ml_nbayes_init(struct tiku_kits_ml_nbayes *nb,
                                uint8_t shift);
 
 /**
- * @brief Reset all frequency counters
- * @param nb Model to reset
- * @return TIKU_KITS_ML_OK or TIKU_KITS_ML_ERR_NULL
+ * @brief Reset all frequency counters without changing configuration
  *
- * Preserves n_features, n_bins, n_classes, and shift.
+ * Zeros the frequency table and class counters, and resets n_total
+ * to 0.  Preserves n_features, n_bins, n_classes, and shift so
+ * the model can be retrained from scratch.
+ *
+ * @param nb Model to reset (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if nb is NULL
  */
 int tiku_kits_ml_nbayes_reset(struct tiku_kits_ml_nbayes *nb);
 
@@ -171,14 +243,20 @@ int tiku_kits_ml_nbayes_reset(struct tiku_kits_ml_nbayes *nb);
 
 /**
  * @brief Train the model with one sample
- * @param nb    Model
- * @param x     Feature vector of length n_features (each in [0, n_bins))
- * @param label Class label (0..n_classes-1)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL, or
- *         TIKU_KITS_ML_ERR_PARAM (label or bin value out of range)
  *
- * Increments freq[label][j][x[j]] for each feature j, and
- * class_count[label].
+ * Validates the label and all bin values first (no partial update
+ * on error), then increments freq[label][j][x[j]] for each feature
+ * j and bumps class_count[label] and n_total.  O(n_features) per
+ * call.
+ *
+ * @param nb    Model (must not be NULL)
+ * @param x     Feature vector of length n_features; each element
+ *              must be in [0, n_bins) (must not be NULL)
+ * @param label Class label (0..n_classes - 1)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if nb or x is NULL,
+ *         TIKU_KITS_ML_ERR_PARAM if label >= n_classes or any
+ *         x[j] >= n_bins
  */
 int tiku_kits_ml_nbayes_train(struct tiku_kits_ml_nbayes *nb,
                                 const uint8_t *x,
@@ -189,15 +267,21 @@ int tiku_kits_ml_nbayes_train(struct tiku_kits_ml_nbayes *nb,
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Classify a feature vector
- * @param nb     Model (must have at least 1 training sample)
- * @param x      Feature vector of length n_features (each in [0, n_bins))
- * @param result Output: predicted class label
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL, or
- *         TIKU_KITS_ML_ERR_SIZE (no training data)
+ * @brief Classify a feature vector using Naive Bayes
  *
- * Computes log-likelihood scores for each class using Laplace
- * smoothing and returns the class with the highest score.
+ * Computes log-likelihood scores for every class via
+ * predict_log_proba() and returns the class with the highest
+ * score.  O(n_classes * n_features).
+ *
+ * @param nb     Model with at least 1 training sample
+ *               (must not be NULL)
+ * @param x      Feature vector of length n_features; each element
+ *               must be in [0, n_bins) (must not be NULL)
+ * @param result Output pointer where the predicted class label is
+ *               written (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if nb, x, or result is NULL,
+ *         TIKU_KITS_ML_ERR_SIZE if no training data has been added
  */
 int tiku_kits_ml_nbayes_predict(const struct tiku_kits_ml_nbayes *nb,
                                   const uint8_t *x,
@@ -205,14 +289,25 @@ int tiku_kits_ml_nbayes_predict(const struct tiku_kits_ml_nbayes *nb,
 
 /**
  * @brief Get log-likelihood scores for all classes
- * @param nb     Model (must have at least 1 training sample)
- * @param x      Feature vector of length n_features
- * @param scores Output array of length n_classes (Q shift fixed-point)
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_NULL, or
- *         TIKU_KITS_ML_ERR_SIZE (no training data)
  *
- * scores[c] = log2(P(c)) + sum_j log2(P(x_j|c)) in Q(shift).
- * Higher score = more likely class.
+ * For each class c, computes:
+ *
+ *     scores[c] = log2(class_count[c] + 1)
+ *               + sum_j log2(freq[c][j][x_j] + 1)
+ *               - n_features * log2(class_count[c] + n_bins)
+ *
+ * All log2 values are in Q(shift) fixed-point.  Higher score means
+ * more likely class.  O(n_classes * n_features).
+ *
+ * @param nb     Model with at least 1 training sample
+ *               (must not be NULL)
+ * @param x      Feature vector of length n_features
+ *               (must not be NULL)
+ * @param scores Output array; caller must provide space for at least
+ *               n_classes int32_t entries (must not be NULL)
+ * @return TIKU_KITS_ML_OK on success,
+ *         TIKU_KITS_ML_ERR_NULL if nb, x, or scores is NULL,
+ *         TIKU_KITS_ML_ERR_SIZE if no training data has been added
  */
 int tiku_kits_ml_nbayes_predict_log_proba(
     const struct tiku_kits_ml_nbayes *nb,
@@ -225,7 +320,11 @@ int tiku_kits_ml_nbayes_predict_log_proba(
 
 /**
  * @brief Get the total number of training samples
- * @param nb Model
+ *
+ * Returns the total sample count across all classes.  Safe to call
+ * with a NULL pointer -- returns 0.
+ *
+ * @param nb Model, or NULL
  * @return Total sample count, or 0 if nb is NULL
  */
 uint16_t tiku_kits_ml_nbayes_count(
@@ -233,8 +332,12 @@ uint16_t tiku_kits_ml_nbayes_count(
 
 /**
  * @brief Get the number of training samples for a specific class
- * @param nb  Model
- * @param cls Class label
+ *
+ * Returns the per-class sample count.  Safe to call with a NULL
+ * pointer or out-of-range class -- returns 0 in both cases.
+ *
+ * @param nb  Model, or NULL
+ * @param cls Class label (0..n_classes - 1)
  * @return Sample count for that class, or 0 if nb is NULL or cls
  *         is out of range
  */

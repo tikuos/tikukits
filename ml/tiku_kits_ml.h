@@ -39,14 +39,29 @@
 /* RETURN CODES                                                              */
 /*---------------------------------------------------------------------------*/
 
-/** @defgroup TIKU_KITS_ML_STATUS ML Status Codes
- * @{ */
+/**
+ * @defgroup TIKU_KITS_ML_STATUS ML Status Codes
+ * @brief Return codes shared by all ML sub-modules.
+ *
+ * Every public ML function returns one of these codes.  Success is
+ * always 0; errors are negative so that a simple @c if(rc) test
+ * catches any failure.  Sub-modules do NOT define their own return
+ * codes -- they reuse these values for consistency.
+ *
+ * @{
+ */
 #define TIKU_KITS_ML_OK              0   /**< Operation succeeded */
 #define TIKU_KITS_ML_ERR_NULL      (-1)  /**< NULL pointer argument */
-#define TIKU_KITS_ML_ERR_SIZE      (-2)  /**< Insufficient data */
-#define TIKU_KITS_ML_ERR_PARAM     (-3)  /**< Invalid parameter */
-#define TIKU_KITS_ML_ERR_SINGULAR  (-4)  /**< Degenerate / singular data */
-#define TIKU_KITS_ML_ERR_OVERFLOW  (-5)  /**< Arithmetic overflow */
+#define TIKU_KITS_ML_ERR_SIZE      (-2)  /**< Insufficient data (e.g. no
+                                              training samples) */
+#define TIKU_KITS_ML_ERR_PARAM     (-3)  /**< Invalid parameter value
+                                              (e.g. zero features, label
+                                              out of range) */
+#define TIKU_KITS_ML_ERR_SINGULAR  (-4)  /**< Degenerate / singular data
+                                              (e.g. all x values identical
+                                              in linear regression) */
+#define TIKU_KITS_ML_ERR_OVERFLOW  (-5)  /**< Arithmetic overflow detected
+                                              during computation */
 /** @} */
 
 #endif /* TIKU_KITS_ML_H_ */

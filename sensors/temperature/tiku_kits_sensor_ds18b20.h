@@ -57,44 +57,75 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Initialize and verify a DS18B20 is present
+ * @brief Initialize and verify a DS18B20 is present on the bus
  *
- * Issues a 1-Wire reset and checks for a presence pulse.
- * The 1-Wire bus must already be initialized.
+ * Issues a 1-Wire reset pulse and listens for the presence pulse
+ * that every 1-Wire slave must transmit in response.  This
+ * confirms at least one device is connected but does not verify
+ * the specific device family (any 1-Wire slave will respond).
  *
- * @return TIKU_KITS_SENSOR_OK on success,
- *         TIKU_KITS_SENSOR_ERR_NO_DEVICE if no presence detected
+ * The 1-Wire bus must already be initialized via
+ * tiku_onewire_init() before calling this function.
+ *
+ * @return TIKU_KITS_SENSOR_OK if a presence pulse was detected,
+ *         TIKU_KITS_SENSOR_ERR_NO_DEVICE if the bus remained
+ *             idle (no slave pulled the line low)
  */
 int tiku_kits_sensor_ds18b20_init(void);
 
 /**
- * @brief Start a temperature conversion
+ * @brief Start a temperature conversion on the DS18B20
  *
- * Issues Skip ROM + Convert T command. The caller must wait
- * at least 750 ms before calling tiku_kits_sensor_ds18b20_read().
+ * Issues a 1-Wire reset followed by the Skip ROM command (0xCC)
+ * and the Convert T command (0x44).  Skip ROM addresses all
+ * slaves on the bus simultaneously, so this function assumes a
+ * single DS18B20 is connected (multi-drop requires Match ROM).
  *
- * @return TIKU_KITS_SENSOR_OK on success,
- *         TIKU_KITS_SENSOR_ERR_BUS on 1-Wire error
+ * The conversion takes up to 750 ms in the default 12-bit
+ * resolution mode.  The caller must wait at least this long
+ * before calling tiku_kits_sensor_ds18b20_read() to retrieve
+ * the result.  Reading before conversion completes will return
+ * stale data from the previous conversion (power-on default is
+ * +85 C).
+ *
+ * @return TIKU_KITS_SENSOR_OK if the commands were sent
+ *             successfully,
+ *         TIKU_KITS_SENSOR_ERR_BUS if the 1-Wire reset failed
+ *             (no presence pulse detected)
  */
 int tiku_kits_sensor_ds18b20_start_conversion(void);
 
 /**
- * @brief Read the temperature result from the scratchpad
+ * @brief Read the temperature result from the DS18B20 scratchpad
  *
- * Must be called after conversion is complete (>= 750 ms after
- * start_conversion). Reads the 9-byte scratchpad and extracts
- * the 12-bit temperature value.
+ * Must be called after a conversion has completed (at least 750 ms
+ * after tiku_kits_sensor_ds18b20_start_conversion() for 12-bit
+ * resolution).  Issues Skip ROM + Read Scratchpad (0xBE), reads
+ * all 9 scratchpad bytes, then extracts the 12-bit signed
+ * temperature from bytes 0-1.
  *
- * @param temp Output: temperature reading
+ * The DS18B20 stores temperature as a 16-bit signed two's
+ * complement value with 4 fractional bits (1/16 C per LSB),
+ * which maps directly to the common tiku_kits_sensor_temp_t
+ * representation.
+ *
+ * @param temp Pointer to a caller-allocated temperature structure
+ *             where the result is written.  Must not be NULL.
  * @return TIKU_KITS_SENSOR_OK on success,
- *         TIKU_KITS_SENSOR_ERR_BUS on 1-Wire error,
- *         TIKU_KITS_SENSOR_ERR_PARAM if temp is NULL
+ *         TIKU_KITS_SENSOR_ERR_BUS if the 1-Wire reset or read
+ *             fails,
+ *         TIKU_KITS_SENSOR_ERR_PARAM if @p temp is NULL
  */
 int tiku_kits_sensor_ds18b20_read(tiku_kits_sensor_temp_t *temp);
 
 /**
- * @brief Get the sensor name string
- * @return "DS18B20"
+ * @brief Get the human-readable sensor name string
+ *
+ * Returns a pointer to a static, null-terminated string identifying
+ * this sensor model.  Useful for diagnostic output or building a
+ * sensor registry table at runtime.
+ *
+ * @return Pointer to the constant string "DS18B20" (never NULL)
  */
 const char *tiku_kits_sensor_ds18b20_name(void);
 

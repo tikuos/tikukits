@@ -34,6 +34,13 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a Goertzel filter for a specific frequency bin
+ *
+ * Stores the precomputed Q14 coefficient and block size, then zeros
+ * the feedback registers (s1, s2) and sample counter so the filter
+ * is ready to accept its first block of samples.
+ */
 int tiku_kits_sigfeatures_goertzel_init(
     struct tiku_kits_sigfeatures_goertzel *g,
     int16_t coeff_q14,
@@ -56,6 +63,12 @@ int tiku_kits_sigfeatures_goertzel_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset filter state for a new block
+ *
+ * Clears s1, s2, and count while preserving the coefficient and
+ * block size.  Call between consecutive blocks.
+ */
 int tiku_kits_sigfeatures_goertzel_reset(
     struct tiku_kits_sigfeatures_goertzel *g)
 {
@@ -73,6 +86,15 @@ int tiku_kits_sigfeatures_goertzel_reset(
 /* SAMPLE INPUT                                                              */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push one sample through the Goertzel filter
+ *
+ * Applies the second-order IIR recurrence:
+ *   s0 = x[n] + (coeff_q14 * s1 >> 14) - s2
+ * then shifts s2 <- s1, s1 <- s0.  The multiplication is widened
+ * to int64_t before the right-shift to prevent overflow on 16-bit
+ * targets.
+ */
 int tiku_kits_sigfeatures_goertzel_push(
     struct tiku_kits_sigfeatures_goertzel *g,
     tiku_kits_sigfeatures_elem_t value)
@@ -106,6 +128,12 @@ int tiku_kits_sigfeatures_goertzel_push(
 /* QUERIES                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check if a full block of N samples has been processed
+ *
+ * Returns 1 when count >= block_size, meaning the magnitude can
+ * now be read.  Safe to call with a NULL pointer -- returns 0.
+ */
 int tiku_kits_sigfeatures_goertzel_complete(
     const struct tiku_kits_sigfeatures_goertzel *g)
 {
@@ -117,6 +145,14 @@ int tiku_kits_sigfeatures_goertzel_complete(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Compute the squared magnitude of the target DFT bin
+ *
+ * Evaluates |X[k]|^2 = s1^2 + s2^2 - coeff*s1*s2 using the
+ * final feedback register values.  The coeff*s1 product is
+ * computed in Q14 then multiplied by s2 in int64_t to prevent
+ * overflow.  The result is not normalized by N.
+ */
 int tiku_kits_sigfeatures_goertzel_magnitude_sq(
     const struct tiku_kits_sigfeatures_goertzel *g,
     int64_t *result)
@@ -150,6 +186,13 @@ int tiku_kits_sigfeatures_goertzel_magnitude_sq(
 /* BATCH OPERATION                                                           */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Process an entire block and return squared magnitude
+ *
+ * Convenience wrapper that resets the filter, pushes all len
+ * samples through the Goertzel recurrence, and computes the
+ * squared magnitude in a single call.  O(N).
+ */
 int tiku_kits_sigfeatures_goertzel_block(
     struct tiku_kits_sigfeatures_goertzel *g,
     const tiku_kits_sigfeatures_elem_t *src, uint16_t len,
@@ -165,7 +208,8 @@ int tiku_kits_sigfeatures_goertzel_block(
         return TIKU_KITS_SIGFEATURES_ERR_SIZE;
     }
 
-    /* Reset state for the new block */
+    /* Reset feedback registers for the new block so previous
+     * state does not leak into the current computation. */
     g->s1 = 0;
     g->s2 = 0;
     g->count = 0;

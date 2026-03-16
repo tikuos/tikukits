@@ -42,22 +42,34 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Encode data using Run-Length Encoding
+ * @brief Compress a byte buffer using Run-Length Encoding
  *
- * Each run of identical bytes is replaced with a 2-byte pair:
- * (count, byte_value), where count is 1..255. Runs longer than
- * 255 bytes are split into multiple pairs.
+ * Scans the input left-to-right and replaces every maximal run of
+ * identical bytes with a 2-byte pair: [count][value], where count is
+ * in the range 1..255.  Runs longer than 255 bytes are automatically
+ * split into consecutive pairs so that no information is lost.
  *
- * Worst case output size is 2 * src_len (no repeated bytes).
+ * The algorithm is O(n) in time and uses zero auxiliary RAM beyond the
+ * caller-provided source and destination buffers.
  *
- * @param src     Input data to compress
- * @param src_len Length of input data in bytes
- * @param dst     Output buffer for compressed data
- * @param dst_cap Capacity of output buffer in bytes
- * @param out_len Output: number of bytes written to dst
+ * Worst-case output size is exactly 2 * @p src_len (when every byte
+ * differs from its neighbours).  Best-case is 2 bytes (entire input is
+ * a single repeated value, provided the run is <= 255 bytes).  Callers
+ * should size @p dst accordingly, or handle ERR_SIZE gracefully.
+ *
+ * @param src     Input data to compress (must not be NULL)
+ * @param src_len Length of input data in bytes; 0 is valid (produces
+ *                zero output)
+ * @param dst     Output buffer for compressed data (must not be NULL)
+ * @param dst_cap Capacity of @p dst in bytes; must be >= 2 * src_len
+ *                in the worst case to guarantee success
+ * @param out_len Output: number of bytes actually written to @p dst
+ *                (must not be NULL)
  * @return TIKU_KITS_TEXTCOMPRESSION_OK on success,
- *         TIKU_KITS_TEXTCOMPRESSION_ERR_NULL if any pointer is NULL,
- *         TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE if dst is too small
+ *         TIKU_KITS_TEXTCOMPRESSION_ERR_NULL if src, dst, or out_len
+ *         is NULL,
+ *         TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE if @p dst_cap is too
+ *         small to hold the compressed output
  *
  * @code
  *   uint8_t src[] = {0, 0, 0, 0, 1, 1, 2};
@@ -76,20 +88,35 @@ int tiku_kits_textcompression_rle_encode(const uint8_t *src, uint16_t src_len,
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Decode Run-Length Encoded data
+ * @brief Decompress a Run-Length Encoded byte buffer
  *
- * Expands (count, byte_value) pairs back into the original byte stream.
+ * Reads consecutive [count][value] pairs from the compressed input and
+ * expands each one by writing @c value into the destination buffer
+ * @c count times.  The process repeats until all input pairs are
+ * consumed.
  *
- * @param src     Compressed input data
- * @param src_len Length of compressed data in bytes (must be even)
- * @param dst     Output buffer for decompressed data
- * @param dst_cap Capacity of output buffer in bytes
- * @param out_len Output: number of bytes written to dst
+ * Because the compressed format uses 2-byte pairs, @p src_len must be
+ * even; an odd length indicates truncated or corrupt data.  A count
+ * byte of zero is likewise invalid (every pair must represent at least
+ * one output byte).
+ *
+ * The algorithm is O(n) in the size of the decompressed output and
+ * uses zero auxiliary RAM beyond the caller-provided buffers.
+ *
+ * @param src     Compressed input data (must not be NULL)
+ * @param src_len Length of compressed data in bytes; must be even
+ * @param dst     Output buffer for decompressed data (must not be NULL)
+ * @param dst_cap Capacity of @p dst in bytes; must be large enough
+ *                to hold the fully expanded output
+ * @param out_len Output: number of bytes actually written to @p dst
+ *                (must not be NULL)
  * @return TIKU_KITS_TEXTCOMPRESSION_OK on success,
- *         TIKU_KITS_TEXTCOMPRESSION_ERR_NULL if any pointer is NULL,
- *         TIKU_KITS_TEXTCOMPRESSION_ERR_CORRUPT if src_len is odd or
- *         a count byte is zero,
- *         TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE if dst is too small
+ *         TIKU_KITS_TEXTCOMPRESSION_ERR_NULL if src, dst, or out_len
+ *         is NULL,
+ *         TIKU_KITS_TEXTCOMPRESSION_ERR_CORRUPT if @p src_len is odd
+ *         or a count byte is zero,
+ *         TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE if @p dst_cap is too
+ *         small to hold the decompressed output
  */
 int tiku_kits_textcompression_rle_decode(const uint8_t *src, uint16_t src_len,
                                          uint8_t *dst, uint16_t dst_cap,

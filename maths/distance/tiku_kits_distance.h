@@ -51,9 +51,18 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * Element type for vector components.
- * Defaults to int32_t for integer-only targets (no FPU).
- * Define as int16_t before including to save memory on short vectors.
+ * @brief Element type for vector components.
+ *
+ * Defaults to int32_t, which is safe for integer-only targets with
+ * no FPU (e.g. MSP430).  Change to int16_t to halve memory when
+ * feature vectors contain small values (e.g. 8-bit sensor readings
+ * sign-extended to 16 bits).
+ *
+ * Override before including this header to change the type:
+ * @code
+ *   #define TIKU_KITS_DISTANCE_ELEM_TYPE int16_t
+ *   #include "tiku_kits_distance.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_DISTANCE_ELEM_TYPE
 #define TIKU_KITS_DISTANCE_ELEM_TYPE int32_t
@@ -76,15 +85,20 @@ typedef TIKU_KITS_DISTANCE_ELEM_TYPE tiku_kits_distance_elem_t;
 
 /**
  * @brief Compute the Manhattan (L1) distance between two vectors
- * @param a      First vector (length len)
- * @param b      Second vector (length len)
- * @param len    Number of elements (must be > 0)
- * @param result Output: sum of |a[i] - b[i]|
- * @return TIKU_KITS_MATHS_OK, TIKU_KITS_MATHS_ERR_NULL, or
- *         TIKU_KITS_MATHS_ERR_SIZE (len == 0)
  *
- * No multiplication needed -- only subtraction and absolute value.
- * The cheapest distance metric. Result is accumulated in int64_t.
+ * Sums the absolute element-wise differences: sum |a[i] - b[i]|.
+ * No multiplication is needed -- only subtraction and absolute value
+ * -- making this the cheapest distance metric for integer targets.
+ * Each difference is widened to int64_t before accumulation to prevent
+ * overflow on 16-bit architectures even for long vectors.
+ *
+ * @param a      First vector, length @p len (must not be NULL)
+ * @param b      Second vector, length @p len (must not be NULL)
+ * @param len    Number of elements (must be > 0)
+ * @param result Output pointer for the distance (must not be NULL)
+ * @return TIKU_KITS_MATHS_OK on success,
+ *         TIKU_KITS_MATHS_ERR_NULL if a, b, or result is NULL,
+ *         TIKU_KITS_MATHS_ERR_SIZE if len == 0
  *
  * @code
  *   tiku_kits_distance_elem_t a[] = {1, 2, 3};
@@ -108,16 +122,23 @@ int tiku_kits_distance_manhattan(
 
 /**
  * @brief Compute the squared Euclidean distance between two vectors
- * @param a      First vector (length len)
- * @param b      Second vector (length len)
- * @param len    Number of elements (must be > 0)
- * @param result Output: sum of (a[i] - b[i])^2
- * @return TIKU_KITS_MATHS_OK, TIKU_KITS_MATHS_ERR_NULL, or
- *         TIKU_KITS_MATHS_ERR_SIZE (len == 0)
  *
- * Skips the square root -- comparing squared distances preserves
- * ordering for nearest-neighbor queries. Uses the hardware multiplier
- * on MSP430 via normal C multiply. Result accumulated in int64_t.
+ * Sums the squared element-wise differences: sum (a[i] - b[i])^2.
+ * The square root is intentionally omitted because comparing squared
+ * distances preserves ordering for nearest-neighbor queries and saves
+ * an expensive sqrt operation.  Each difference is widened to int64_t
+ * before squaring, so overflow is safe even with int32_t elements.
+ * On MSP430 the multiply uses the hardware multiplier via normal C
+ * multiply.
+ *
+ * @param a      First vector, length @p len (must not be NULL)
+ * @param b      Second vector, length @p len (must not be NULL)
+ * @param len    Number of elements (must be > 0)
+ * @param result Output pointer for the squared distance (must not be
+ *               NULL)
+ * @return TIKU_KITS_MATHS_OK on success,
+ *         TIKU_KITS_MATHS_ERR_NULL if a, b, or result is NULL,
+ *         TIKU_KITS_MATHS_ERR_SIZE if len == 0
  *
  * @code
  *   tiku_kits_distance_elem_t a[] = {1, 2, 3};
@@ -141,21 +162,23 @@ int tiku_kits_distance_euclidean_sq(
 
 /**
  * @brief Compute the dot product of two vectors
- * @param a      First vector (length len)
- * @param b      Second vector (length len)
- * @param len    Number of elements (must be > 0)
- * @param result Output: sum of a[i] * b[i]
- * @return TIKU_KITS_MATHS_OK, TIKU_KITS_MATHS_ERR_NULL, or
- *         TIKU_KITS_MATHS_ERR_SIZE (len == 0)
  *
- * When both vectors are pre-normalized to unit length (e.g. in
- * fixed-point Q15), the dot product equals cosine similarity.
- * This is just a multiply-accumulate (MAC) loop. Result accumulated
- * in int64_t for overflow safety.
+ * Performs a multiply-accumulate (MAC) loop: sum a[i] * b[i].  When
+ * both vectors are pre-normalized to unit length (e.g. in fixed-point
+ * Q15), the dot product equals cosine similarity.  All products are
+ * widened to int64_t before accumulation for overflow safety.
  *
  * For cosine similarity on raw (unnormalized) vectors, use
- * tiku_kits_distance_cosine_sq() which returns the numerator and
- * denominator separately to avoid division.
+ * tiku_kits_distance_cosine_sq() instead, which returns the
+ * numerator and denominator separately to avoid division.
+ *
+ * @param a      First vector, length @p len (must not be NULL)
+ * @param b      Second vector, length @p len (must not be NULL)
+ * @param len    Number of elements (must be > 0)
+ * @param result Output pointer for the dot product (must not be NULL)
+ * @return TIKU_KITS_MATHS_OK on success,
+ *         TIKU_KITS_MATHS_ERR_NULL if a, b, or result is NULL,
+ *         TIKU_KITS_MATHS_ERR_SIZE if len == 0
  *
  * @code
  *   // Pre-normalized Q15 vectors
@@ -173,22 +196,31 @@ int tiku_kits_distance_dot(
 
 /**
  * @brief Compute cosine similarity components for raw vectors
- * @param a      First vector (length len)
- * @param b      Second vector (length len)
+ *
+ * Computes the three dot products needed for cosine similarity in a
+ * single pass over the data, avoiding redundant memory traversals:
+ *
+ *   cosine similarity = dot_ab / sqrt(dot_aa * dot_bb)
+ *
+ * The caller receives all three components and can compare similarity
+ * without performing the expensive sqrt/divide:
+ *
+ *   cos^2(theta) = dot_ab^2 / (dot_aa * dot_bb)
+ *
+ * Comparing cos^2 values preserves similarity ordering.  All products
+ * are accumulated in int64_t for overflow safety.
+ *
+ * @param a      First vector, length @p len (must not be NULL)
+ * @param b      Second vector, length @p len (must not be NULL)
  * @param len    Number of elements (must be > 0)
- * @param dot_ab Output: dot(a, b) = sum a[i]*b[i]
- * @param dot_aa Output: dot(a, a) = sum a[i]^2 (squared magnitude)
- * @param dot_bb Output: dot(b, b) = sum b[i]^2 (squared magnitude)
- * @return TIKU_KITS_MATHS_OK, TIKU_KITS_MATHS_ERR_NULL, or
- *         TIKU_KITS_MATHS_ERR_SIZE (len == 0)
- *
- * Cosine similarity = dot_ab / sqrt(dot_aa * dot_bb). This function
- * provides all three components in a single pass so the caller can
- * compute the ratio or compare without the expensive sqrt/divide:
- *
- *     cos^2(theta) = dot_ab^2 / (dot_aa * dot_bb)
- *
- * Comparing cos^2 values preserves similarity ordering.
+ * @param dot_ab Output: dot(a, b) = sum a[i]*b[i] (must not be NULL)
+ * @param dot_aa Output: dot(a, a) = sum a[i]^2, squared magnitude of
+ *               a (must not be NULL)
+ * @param dot_bb Output: dot(b, b) = sum b[i]^2, squared magnitude of
+ *               b (must not be NULL)
+ * @return TIKU_KITS_MATHS_OK on success,
+ *         TIKU_KITS_MATHS_ERR_NULL if any pointer is NULL,
+ *         TIKU_KITS_MATHS_ERR_SIZE if len == 0
  */
 int tiku_kits_distance_cosine_sq(
     const tiku_kits_distance_elem_t *a,
@@ -206,16 +238,21 @@ int tiku_kits_distance_cosine_sq(
 
 /**
  * @brief Compute the bitwise Hamming distance between two byte arrays
- * @param a      First byte array (length len)
- * @param b      Second byte array (length len)
- * @param len    Number of bytes (must be > 0)
- * @param result Output: number of differing bits
- * @return TIKU_KITS_MATHS_OK, TIKU_KITS_MATHS_ERR_NULL, or
- *         TIKU_KITS_MATHS_ERR_SIZE (len == 0)
  *
- * XOR + popcount on each byte. Extremely cheap -- useful for binary
- * feature vectors, locality-sensitive hashing, and error counting.
- * Uses a nibble lookup table (16 bytes in flash) for fast popcount.
+ * XORs corresponding bytes and counts the number of set bits using a
+ * nibble lookup table (16 bytes in flash) for fast popcount.  This
+ * is extremely cheap -- no multiplications, just XOR and table
+ * lookups -- making it ideal for binary feature vectors, locality-
+ * sensitive hashing (LSH), and error counting.
+ *
+ * @param a      First byte array, length @p len (must not be NULL)
+ * @param b      Second byte array, length @p len (must not be NULL)
+ * @param len    Number of bytes to compare (must be > 0)
+ * @param result Output pointer for the number of differing bits (must
+ *               not be NULL)
+ * @return TIKU_KITS_MATHS_OK on success,
+ *         TIKU_KITS_MATHS_ERR_NULL if a, b, or result is NULL,
+ *         TIKU_KITS_MATHS_ERR_SIZE if len == 0
  *
  * @code
  *   uint8_t a[] = {0xFF, 0x00, 0xAA};

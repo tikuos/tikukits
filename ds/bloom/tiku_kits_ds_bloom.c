@@ -97,6 +97,13 @@ static uint16_t bloom_bit_pos(const uint8_t *key,
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a Bloom filter with the given dimensions
+ *
+ * Zeros the entire backing byte array so that every bit starts in a
+ * deterministic (clear) state.  Stores the runtime bit count and
+ * hash count for subsequent add/check operations.
+ */
 int tiku_kits_ds_bloom_init(struct tiku_kits_ds_bloom *bloom,
                             uint16_t num_bits,
                             uint8_t num_hashes)
@@ -116,6 +123,9 @@ int tiku_kits_ds_bloom_init(struct tiku_kits_ds_bloom *bloom,
     bloom->num_bits   = num_bits;
     bloom->num_hashes = num_hashes;
     bloom->count      = 0;
+
+    /* Zero the full static buffer so that the struct is in a clean
+     * state regardless of prior memory contents. */
     memset(bloom->bits, 0, sizeof(bloom->bits));
     return TIKU_KITS_DS_OK;
 }
@@ -124,6 +134,14 @@ int tiku_kits_ds_bloom_init(struct tiku_kits_ds_bloom *bloom,
 /* INSERT                                                                    */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Add a key to the Bloom filter
+ *
+ * Computes num_hashes bit positions from the key using seed-varied
+ * FNV-1a, then sets each corresponding bit via byte-level OR.
+ * The item counter is incremented unconditionally (even for
+ * duplicate keys) because the filter cannot detect duplicates.
+ */
 int tiku_kits_ds_bloom_add(struct tiku_kits_ds_bloom *bloom,
                            const void *key,
                            uint16_t key_len)
@@ -143,6 +161,8 @@ int tiku_kits_ds_bloom_add(struct tiku_kits_ds_bloom *bloom,
 
     k = (const uint8_t *)key;
 
+    /* Set one bit per hash function -- each seed produces an
+     * independent bit position from the same key bytes. */
     for (i = 0; i < bloom->num_hashes; i++) {
         pos      = bloom_bit_pos(k, key_len, i,
                                  bloom->num_bits);
@@ -159,6 +179,15 @@ int tiku_kits_ds_bloom_add(struct tiku_kits_ds_bloom *bloom,
 /* QUERY                                                                     */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check whether a key may be in the Bloom filter
+ *
+ * Recomputes the same bit positions that add() would set, then
+ * tests each one.  Returns 0 (definitely absent) on the first
+ * clear bit encountered -- early exit makes the common "not found"
+ * case fast.  Returns 1 (possibly present) only if all hash-
+ * derived bits are set.
+ */
 int tiku_kits_ds_bloom_check(
     const struct tiku_kits_ds_bloom *bloom,
     const void *key,
@@ -185,6 +214,8 @@ int tiku_kits_ds_bloom_check(
         byte_idx = pos / 8;
         bit_idx  = pos % 8;
 
+        /* Early exit: a single clear bit proves the key was never
+         * added, so there is no need to check remaining hashes. */
         if ((bloom->bits[byte_idx] & (1u << bit_idx)) == 0) {
             return 0;
         }
@@ -197,6 +228,14 @@ int tiku_kits_ds_bloom_check(
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Clear all bits and reset the item count
+ *
+ * Zeros only the bytes that cover [0, num_bits) using memset for
+ * efficiency, rather than clearing the full MAX_BYTES buffer.
+ * Resets the item counter to 0 so that count() reflects the
+ * empty state.  num_bits and num_hashes are preserved.
+ */
 int tiku_kits_ds_bloom_clear(struct tiku_kits_ds_bloom *bloom)
 {
     uint16_t n_bytes;
@@ -205,6 +244,8 @@ int tiku_kits_ds_bloom_clear(struct tiku_kits_ds_bloom *bloom)
         return TIKU_KITS_DS_ERR_NULL;
     }
 
+    /* Only zero the bytes that actually hold valid bits, not the
+     * full MAX_BYTES backing buffer. */
     n_bytes = (bloom->num_bits + 7) / 8;
     memset(bloom->bits, 0, (size_t)n_bytes);
     bloom->count = 0;
@@ -213,6 +254,14 @@ int tiku_kits_ds_bloom_clear(struct tiku_kits_ds_bloom *bloom)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the number of items added to the filter
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.  Returns the cumulative insert count, not the
+ * number of distinct items (the filter cannot distinguish
+ * duplicates).
+ */
 uint16_t tiku_kits_ds_bloom_count(
     const struct tiku_kits_ds_bloom *bloom)
 {

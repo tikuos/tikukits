@@ -36,11 +36,15 @@
 
 /**
  * @brief 64-bit integer square root (floor)
+ *
+ * Non-restoring bit-shift algorithm operating entirely with shifts,
+ * adds, and compares -- no multiplication needed.  Used internally
+ * by the energy tracker's RMS computation where mean_sq is int64_t
+ * and may exceed 32-bit range.  Runs in at most 32 iterations
+ * (bit starts at 2^62 and shifts right by 2 each iteration).
+ *
  * @param x Non-negative input
  * @return floor(sqrt(x)), or 0 if x <= 0
- *
- * Non-restoring bit-shift algorithm. No multiplication.
- * Used internally by energy RMS where mean_sq is int64_t.
  */
 static int64_t isqrt64(int64_t x)
 {
@@ -53,12 +57,15 @@ static int64_t isqrt64(int64_t x)
     }
 
     val = (uint64_t)x;
+    /* Start with the highest power-of-4 that fits in 64 bits */
     bit = (uint64_t)1 << 62;
 
+    /* Skip leading zero pairs to reduce iterations */
     while (bit > val) {
         bit >>= 2;
     }
 
+    /* Non-restoring square root: each iteration refines one bit */
     while (bit != 0) {
         if (val >= result + bit) {
             val -= result + bit;
@@ -78,6 +85,13 @@ static int64_t isqrt64(int64_t x)
 /*                                                                           */
 /*===========================================================================*/
 
+/**
+ * @brief Initialize a statistics tracker with given window size
+ *
+ * Zeros the entire circular buffer so that reads of unpopulated
+ * slots return deterministic values.  The runtime capacity is
+ * clamped to TIKU_KITS_STATISTICS_MAX_WINDOW.
+ */
 int tiku_kits_statistics_init(struct tiku_kits_statistics *s,
                               uint16_t window)
 {
@@ -93,12 +107,19 @@ int tiku_kits_statistics_init(struct tiku_kits_statistics *s,
     s->head = 0;
     s->count = 0;
     s->sum = 0;
+    /* Zero the full static buffer for a clean initial state */
     memset(s->buf, 0, sizeof(s->buf));
     return TIKU_KITS_MATHS_OK;
 }
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Clear all samples, preserving the window size
+ *
+ * Resets count, head, and sum while keeping the configured capacity.
+ * The buffer is zeroed for a clean state.
+ */
 int tiku_kits_statistics_reset(struct tiku_kits_statistics *s)
 {
     if (s == NULL) {
@@ -114,6 +135,13 @@ int tiku_kits_statistics_reset(struct tiku_kits_statistics *s)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a new sample into the window
+ *
+ * O(1).  If the window is full, the oldest sample (at head) is
+ * subtracted from the running sum before being overwritten, keeping
+ * the sum accurate without a rescan.
+ */
 int tiku_kits_statistics_push(struct tiku_kits_statistics *s,
                               tiku_kits_statistics_elem_t value)
 {
@@ -122,6 +150,7 @@ int tiku_kits_statistics_push(struct tiku_kits_statistics *s,
     }
 
     if (s->count >= s->capacity) {
+        /* Evict oldest: subtract its contribution from the running sum */
         s->sum -= s->buf[s->head];
     } else {
         s->count++;
@@ -129,6 +158,7 @@ int tiku_kits_statistics_push(struct tiku_kits_statistics *s,
 
     s->buf[s->head] = value;
     s->sum += value;
+    /* Advance head circularly within the capacity range */
     s->head = (s->head + 1) % s->capacity;
 
     return TIKU_KITS_MATHS_OK;
@@ -136,6 +166,12 @@ int tiku_kits_statistics_push(struct tiku_kits_statistics *s,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Compute the arithmetic mean of the current window
+ *
+ * O(1) -- divides the incrementally maintained running sum by the
+ * sample count.  Integer division truncates toward zero.
+ */
 int tiku_kits_statistics_mean(
     const struct tiku_kits_statistics *s,
     tiku_kits_statistics_elem_t *result)
@@ -153,6 +189,14 @@ int tiku_kits_statistics_mean(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Compute the population variance of the current window
+ *
+ * Two-pass approach: first compute the mean from the running sum,
+ * then scan the buffer to accumulate sum((x_i - mean)^2).  O(n)
+ * where n is the current count.  Population variance (denominator n,
+ * not n-1).
+ */
 int tiku_kits_statistics_variance(
     const struct tiku_kits_statistics *s,
     tiku_kits_statistics_elem_t *result)
@@ -169,9 +213,11 @@ int tiku_kits_statistics_variance(
         return TIKU_KITS_MATHS_ERR_SIZE;
     }
 
+    /* Pass 1: mean from the running sum (O(1)) */
     mean = s->sum / (tiku_kits_statistics_elem_t)s->count;
     sum_sq = 0;
 
+    /* Pass 2: accumulate squared deviations */
     for (i = 0; i < s->count; i++) {
         diff = s->buf[i] - mean;
         sum_sq += diff * diff;
@@ -183,6 +229,12 @@ int tiku_kits_statistics_variance(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the minimum value in the current window
+ *
+ * Linear scan over the buffer.  O(n) where n is the current count.
+ * Acceptable for the small window sizes typical in embedded use.
+ */
 int tiku_kits_statistics_min(
     const struct tiku_kits_statistics *s,
     tiku_kits_statistics_elem_t *result)
@@ -210,6 +262,12 @@ int tiku_kits_statistics_min(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the maximum value in the current window
+ *
+ * Linear scan over the buffer.  O(n) where n is the current count.
+ * Acceptable for the small window sizes typical in embedded use.
+ */
 int tiku_kits_statistics_max(
     const struct tiku_kits_statistics *s,
     tiku_kits_statistics_elem_t *result)
@@ -237,6 +295,11 @@ int tiku_kits_statistics_max(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the current number of samples in the window
+ *
+ * Safe to call with a NULL pointer -- returns 0.
+ */
 uint16_t tiku_kits_statistics_count(
     const struct tiku_kits_statistics *s)
 {
@@ -248,6 +311,11 @@ uint16_t tiku_kits_statistics_count(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check if the window is full (count >= capacity)
+ *
+ * Safe to call with a NULL pointer -- returns 0 (not full).
+ */
 int tiku_kits_statistics_full(
     const struct tiku_kits_statistics *s)
 {
@@ -259,6 +327,11 @@ int tiku_kits_statistics_full(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the configured window capacity
+ *
+ * Safe to call with a NULL pointer -- returns 0.
+ */
 uint16_t tiku_kits_statistics_capacity(
     const struct tiku_kits_statistics *s)
 {
@@ -274,6 +347,11 @@ uint16_t tiku_kits_statistics_capacity(
 /*                                                                           */
 /*===========================================================================*/
 
+/**
+ * @brief Initialize a Welford tracker to an empty state
+ *
+ * Zeros mean, M2, and count.  No buffer allocation needed.
+ */
 int tiku_kits_statistics_welford_init(
     struct tiku_kits_statistics_welford *w)
 {
@@ -289,6 +367,11 @@ int tiku_kits_statistics_welford_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset a Welford tracker, clearing all samples
+ *
+ * Equivalent to a fresh init -- mean, M2, and count are zeroed.
+ */
 int tiku_kits_statistics_welford_reset(
     struct tiku_kits_statistics_welford *w)
 {
@@ -304,6 +387,18 @@ int tiku_kits_statistics_welford_reset(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a new sample into the Welford tracker
+ *
+ * Implements Welford's online algorithm in O(1):
+ *   delta  = value - old_mean
+ *   mean  += delta / n
+ *   delta2 = value - new_mean
+ *   M2    += delta * delta2
+ *
+ * The delta product is widened to int64_t to prevent overflow when
+ * element values are large int32_t.
+ */
 int tiku_kits_statistics_welford_push(
     struct tiku_kits_statistics_welford *w,
     tiku_kits_statistics_elem_t value)
@@ -316,9 +411,12 @@ int tiku_kits_statistics_welford_push(
     }
 
     w->n++;
+    /* delta before mean update */
     delta = value - w->mean;
     w->mean += delta / (tiku_kits_statistics_elem_t)w->n;
+    /* delta2 after mean update -- key to Welford's numerical stability */
     delta2 = value - w->mean;
+    /* Widen to int64_t so the product does not overflow */
     w->m2 += (int64_t)delta * (int64_t)delta2;
 
     return TIKU_KITS_MATHS_OK;
@@ -326,6 +424,11 @@ int tiku_kits_statistics_welford_push(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the running mean
+ *
+ * O(1) -- the mean is maintained incrementally by push().
+ */
 int tiku_kits_statistics_welford_mean(
     const struct tiku_kits_statistics_welford *w,
     tiku_kits_statistics_elem_t *result)
@@ -343,6 +446,11 @@ int tiku_kits_statistics_welford_mean(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the running population variance
+ *
+ * Population variance = M2 / n.  Single int64_t division.
+ */
 int tiku_kits_statistics_welford_variance(
     const struct tiku_kits_statistics_welford *w,
     tiku_kits_statistics_elem_t *result)
@@ -361,6 +469,12 @@ int tiku_kits_statistics_welford_variance(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the running population standard deviation
+ *
+ * Delegates to welford_variance(), then applies integer sqrt.
+ * Result is floor(sqrt(variance)).
+ */
 int tiku_kits_statistics_welford_stddev(
     const struct tiku_kits_statistics_welford *w,
     tiku_kits_statistics_elem_t *result)
@@ -379,6 +493,11 @@ int tiku_kits_statistics_welford_stddev(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the number of samples pushed
+ *
+ * Safe to call with a NULL pointer -- returns 0.
+ */
 uint32_t tiku_kits_statistics_welford_count(
     const struct tiku_kits_statistics_welford *w)
 {
@@ -411,6 +530,12 @@ uint32_t tiku_kits_statistics_welford_count(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a sliding-window min/max tracker
+ *
+ * Clears both deques, resets the sequence counter, and zeros the
+ * sample buffer.
+ */
 int tiku_kits_statistics_minmax_init(
     struct tiku_kits_statistics_minmax *m,
     uint16_t window)
@@ -436,6 +561,11 @@ int tiku_kits_statistics_minmax_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset a min/max tracker, clearing all samples
+ *
+ * Equivalent to a fresh init with the same capacity.
+ */
 int tiku_kits_statistics_minmax_reset(
     struct tiku_kits_statistics_minmax *m)
 {
@@ -455,6 +585,19 @@ int tiku_kits_statistics_minmax_reset(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a new sample into the min/max tracker
+ *
+ * O(1) amortized.  For each deque (min and max):
+ *   1. Expire front entries whose sequence number falls outside
+ *      the window (unsigned modular age >= capacity).
+ *   2. Pop back entries dominated by the new value (they can never
+ *      become the min/max while the new value is in the window).
+ *   3. Push the current sequence number onto the back.
+ *
+ * Each element enters and leaves each deque at most once, so the
+ * total work over n pushes is O(n).
+ */
 int tiku_kits_statistics_minmax_push(
     struct tiku_kits_statistics_minmax *m,
     tiku_kits_statistics_elem_t value)
@@ -466,14 +609,12 @@ int tiku_kits_statistics_minmax_push(
         return TIKU_KITS_MATHS_ERR_NULL;
     }
 
-    /* Store sample in circular buffer */
+    /* Store sample in circular buffer at current sequence position */
     m->buf[m->seq % m->capacity] = value;
 
     /*
      * Min-deque: maintain ascending values from front to back.
-     * 1. Expire front entries outside the window.
-     * 2. Pop back entries >= new value (they can never be min).
-     * 3. Push current seq to back.
+     * Step 1: Expire front entries outside the window.
      */
     while (m->min_size > 0
            && (uint16_t)(m->seq - m->min_dq[m->min_front])
@@ -482,6 +623,7 @@ int tiku_kits_statistics_minmax_push(
         m->min_size--;
     }
 
+    /* Step 2: Pop back entries >= new value (they can never be min) */
     while (m->min_size > 0) {
         back_idx = DQ_BACK_IDX(m->min_front, m->min_size);
         back_seq = m->min_dq[back_idx];
@@ -492,13 +634,14 @@ int tiku_kits_statistics_minmax_push(
         }
     }
 
+    /* Step 3: Push current sequence number onto back */
     m->min_dq[DQ_NEXT_IDX(m->min_front, m->min_size)]
         = m->seq;
     m->min_size++;
 
     /*
      * Max-deque: maintain descending values from front to back.
-     * Same logic with reversed comparison.
+     * Same three-step logic with reversed comparison.
      */
     while (m->max_size > 0
            && (uint16_t)(m->seq - m->max_dq[m->max_front])
@@ -521,7 +664,7 @@ int tiku_kits_statistics_minmax_push(
         = m->seq;
     m->max_size++;
 
-    /* Advance sequence counter and count */
+    /* Advance the monotonic sequence counter */
     m->seq++;
     if (m->count < m->capacity) {
         m->count++;
@@ -532,6 +675,12 @@ int tiku_kits_statistics_minmax_push(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the minimum value in the current window
+ *
+ * O(1) -- the front of the min-deque always holds the sequence
+ * number of the current minimum.
+ */
 int tiku_kits_statistics_minmax_min(
     const struct tiku_kits_statistics_minmax *m,
     tiku_kits_statistics_elem_t *result)
@@ -545,6 +694,8 @@ int tiku_kits_statistics_minmax_min(
         return TIKU_KITS_MATHS_ERR_SIZE;
     }
 
+    /* Look up the sample at the sequence number stored at the
+     * front of the min-deque */
     front_seq = m->min_dq[m->min_front];
     *result = m->buf[front_seq % m->capacity];
     return TIKU_KITS_MATHS_OK;
@@ -552,6 +703,12 @@ int tiku_kits_statistics_minmax_min(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the maximum value in the current window
+ *
+ * O(1) -- the front of the max-deque always holds the sequence
+ * number of the current maximum.
+ */
 int tiku_kits_statistics_minmax_max(
     const struct tiku_kits_statistics_minmax *m,
     tiku_kits_statistics_elem_t *result)
@@ -565,6 +722,8 @@ int tiku_kits_statistics_minmax_max(
         return TIKU_KITS_MATHS_ERR_SIZE;
     }
 
+    /* Look up the sample at the sequence number stored at the
+     * front of the max-deque */
     front_seq = m->max_dq[m->max_front];
     *result = m->buf[front_seq % m->capacity];
     return TIKU_KITS_MATHS_OK;
@@ -572,6 +731,11 @@ int tiku_kits_statistics_minmax_max(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the current number of samples in the window
+ *
+ * Safe to call with a NULL pointer -- returns 0.
+ */
 uint16_t tiku_kits_statistics_minmax_count(
     const struct tiku_kits_statistics_minmax *m)
 {
@@ -583,6 +747,11 @@ uint16_t tiku_kits_statistics_minmax_count(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check if the window is full (count >= capacity)
+ *
+ * Safe to call with a NULL pointer -- returns 0 (not full).
+ */
 int tiku_kits_statistics_minmax_full(
     const struct tiku_kits_statistics_minmax *m)
 {
@@ -598,6 +767,12 @@ int tiku_kits_statistics_minmax_full(
 /*                                                                           */
 /*===========================================================================*/
 
+/**
+ * @brief Initialize an EWMA tracker
+ *
+ * Stores the smoothing parameters and clears the ready flag.  The
+ * first push() will seed the EWMA directly from the sample.
+ */
 int tiku_kits_statistics_ewma_init(
     struct tiku_kits_statistics_ewma *e,
     uint16_t alpha, uint8_t shift)
@@ -605,6 +780,8 @@ int tiku_kits_statistics_ewma_init(
     if (e == NULL) {
         return TIKU_KITS_MATHS_ERR_NULL;
     }
+    /* Shift > 16 would make the intermediate product unreliable
+     * even in int64_t, so reject it. */
     if (shift > 16) {
         return TIKU_KITS_MATHS_ERR_SIZE;
     }
@@ -618,6 +795,11 @@ int tiku_kits_statistics_ewma_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset an EWMA tracker, clearing state
+ *
+ * Clears value and ready flag while preserving alpha and shift.
+ */
 int tiku_kits_statistics_ewma_reset(
     struct tiku_kits_statistics_ewma *e)
 {
@@ -632,6 +814,13 @@ int tiku_kits_statistics_ewma_reset(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a new sample into the EWMA tracker
+ *
+ * First sample seeds the EWMA directly (no lag).  Subsequent
+ * samples apply: ewma += alpha * (value - ewma) >> shift.
+ * The diff and product are computed in int64_t to prevent overflow.
+ */
 int tiku_kits_statistics_ewma_push(
     struct tiku_kits_statistics_ewma *e,
     tiku_kits_statistics_elem_t value)
@@ -643,9 +832,11 @@ int tiku_kits_statistics_ewma_push(
     }
 
     if (!e->ready) {
+        /* Seed directly from the first sample -- no startup transient */
         e->value = value;
         e->ready = 1;
     } else {
+        /* Widen to int64_t so alpha * diff does not overflow */
         diff = (int64_t)value - (int64_t)e->value;
         e->value += (tiku_kits_statistics_elem_t)
             (((int64_t)e->alpha * diff) >> e->shift);
@@ -656,6 +847,12 @@ int tiku_kits_statistics_ewma_push(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the current EWMA value
+ *
+ * O(1) -- returns the most recent smoothed value.  Fails if no
+ * samples have been pushed (ready flag not set).
+ */
 int tiku_kits_statistics_ewma_get(
     const struct tiku_kits_statistics_ewma *e,
     tiku_kits_statistics_elem_t *result)
@@ -677,6 +874,12 @@ int tiku_kits_statistics_ewma_get(
 /*                                                                           */
 /*===========================================================================*/
 
+/**
+ * @brief Initialize an energy/RMS tracker to an empty state
+ *
+ * Zeros mean_sq and count.  No buffer needed -- the energy tracker
+ * computes cumulative statistics incrementally.
+ */
 int tiku_kits_statistics_energy_init(
     struct tiku_kits_statistics_energy *e)
 {
@@ -691,6 +894,11 @@ int tiku_kits_statistics_energy_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset an energy tracker, clearing all samples
+ *
+ * Equivalent to a fresh init -- mean_sq and count are zeroed.
+ */
 int tiku_kits_statistics_energy_reset(
     struct tiku_kits_statistics_energy *e)
 {
@@ -705,6 +913,14 @@ int tiku_kits_statistics_energy_reset(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a new sample into the energy tracker
+ *
+ * Computes x^2 in int64_t (safe for the full int32_t range) and
+ * updates the running mean incrementally:
+ *   mean_sq += (x^2 - mean_sq) / n
+ * This keeps mean_sq bounded and avoids accumulator overflow.
+ */
 int tiku_kits_statistics_energy_push(
     struct tiku_kits_statistics_energy *e,
     tiku_kits_statistics_elem_t value)
@@ -717,7 +933,9 @@ int tiku_kits_statistics_energy_push(
     }
 
     e->n++;
+    /* Widen to int64_t before squaring to avoid overflow */
     sq = (int64_t)value * (int64_t)value;
+    /* Incremental mean update -- same idea as Welford for x^2 */
     delta = sq - e->mean_sq;
     e->mean_sq += delta / (int64_t)e->n;
 
@@ -726,6 +944,11 @@ int tiku_kits_statistics_energy_push(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the running mean of x^2 (signal power)
+ *
+ * O(1) -- truncates the int64_t mean_sq to the element type.
+ */
 int tiku_kits_statistics_energy_mean_sq(
     const struct tiku_kits_statistics_energy *e,
     tiku_kits_statistics_elem_t *result)
@@ -743,6 +966,12 @@ int tiku_kits_statistics_energy_mean_sq(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the running RMS (root mean square)
+ *
+ * Applies the 64-bit integer square root to mean_sq and truncates
+ * the result to the element type.
+ */
 int tiku_kits_statistics_energy_rms(
     const struct tiku_kits_statistics_energy *e,
     tiku_kits_statistics_elem_t *result)
@@ -760,6 +989,11 @@ int tiku_kits_statistics_energy_rms(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the number of samples pushed
+ *
+ * Safe to call with a NULL pointer -- returns 0.
+ */
 uint32_t tiku_kits_statistics_energy_count(
     const struct tiku_kits_statistics_energy *e)
 {
@@ -775,6 +1009,15 @@ uint32_t tiku_kits_statistics_energy_count(
 /*                                                                           */
 /*===========================================================================*/
 
+/**
+ * @brief Integer square root (floor) for element-width values
+ *
+ * Non-restoring bit-shift algorithm.  No multiplication -- only
+ * shifts, adds, and comparisons.  The starting bit position is
+ * derived from the element type's width so the same code works for
+ * int16_t and int32_t elements.  Runs in O(b/2) iterations where
+ * b is the bit width.
+ */
 tiku_kits_statistics_elem_t tiku_kits_statistics_isqrt(
     tiku_kits_statistics_elem_t x)
 {
@@ -788,15 +1031,18 @@ tiku_kits_statistics_elem_t tiku_kits_statistics_isqrt(
 
     val = (uint32_t)x;
 
-    /* Start with highest power-of-4 that does not exceed val */
+    /* Start with the highest power-of-4 that fits in the element type.
+     * The mask ~1u ensures the shift count is even. */
     bit = (uint32_t)1
         << ((sizeof(tiku_kits_statistics_elem_t) * 8 - 2)
             & ~(uint32_t)1);
+    /* Skip leading zero pairs to reduce iterations */
     while (bit > val) {
         bit >>= 2;
     }
 
-    /* Non-restoring bit-shift square root */
+    /* Non-restoring bit-shift square root: each iteration refines
+     * one bit of the result */
     while (bit != 0) {
         if (val >= result + bit) {
             val -= result + bit;

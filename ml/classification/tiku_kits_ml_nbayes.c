@@ -38,15 +38,16 @@
 
 /**
  * @brief Fixed-point log2 approximation
- * @param x     Positive integer (must be > 0)
- * @param shift Number of fractional bits
- * @return log2(x) in Q(shift) fixed-point
  *
- * Uses the identity: log2(x) = floor_log2(x) + frac
- * where frac is linearly interpolated from the mantissa.
+ * Computes log2(x) in Q(shift) fixed-point using the identity
+ * log2(x) = floor_log2(x) + frac, where frac is linearly
+ * interpolated from the mantissa bits.  The integer part is the
+ * position of the highest set bit; the fractional part is computed
+ * as (x - 2^ilog) / 2^ilog in Q(shift).
  *
- * Accuracy: exact for powers of 2, ~0.09 max error for other values.
- * This is sufficient for comparing log-likelihood scores.
+ * Accuracy: exact for powers of 2, ~0.09 max error for other
+ * values.  This is sufficient for comparing log-likelihood scores
+ * where only the relative ordering matters.
  */
 static int32_t log2_q(uint32_t x, uint8_t shift)
 {
@@ -88,6 +89,12 @@ static int32_t log2_q(uint32_t x, uint8_t shift)
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a Naive Bayes model
+ *
+ * Validates all configuration parameters, then zeros the frequency
+ * table and class counters using memset for efficiency.
+ */
 int tiku_kits_ml_nbayes_init(struct tiku_kits_ml_nbayes *nb,
                                uint8_t n_features,
                                uint8_t n_bins,
@@ -126,6 +133,12 @@ int tiku_kits_ml_nbayes_init(struct tiku_kits_ml_nbayes *nb,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset all frequency counters without changing configuration
+ *
+ * Zeros the frequency table and class counters.  Preserves
+ * n_features, n_bins, n_classes, and shift.
+ */
 int tiku_kits_ml_nbayes_reset(struct tiku_kits_ml_nbayes *nb)
 {
     if (nb == NULL) {
@@ -143,6 +156,13 @@ int tiku_kits_ml_nbayes_reset(struct tiku_kits_ml_nbayes *nb)
 /* TRAINING                                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Train the model with one sample
+ *
+ * Validates all bin indices before touching the frequency table so
+ * that a partially-valid sample never causes a partial update.
+ * O(n_features) for validation + O(n_features) for the update.
+ */
 int tiku_kits_ml_nbayes_train(struct tiku_kits_ml_nbayes *nb,
                                 const uint8_t *x,
                                 uint8_t label)
@@ -156,14 +176,16 @@ int tiku_kits_ml_nbayes_train(struct tiku_kits_ml_nbayes *nb,
         return TIKU_KITS_ML_ERR_PARAM;
     }
 
-    /* Validate all bin indices before updating */
+    /* Validate ALL bin indices before committing any changes so
+     * that a single out-of-range bin does not leave the model in
+     * an inconsistent state. */
     for (j = 0; j < nb->n_features; j++) {
         if (x[j] >= nb->n_bins) {
             return TIKU_KITS_ML_ERR_PARAM;
         }
     }
 
-    /* Update frequency table */
+    /* Update frequency table -- one increment per feature */
     for (j = 0; j < nb->n_features; j++) {
         nb->freq[label][j][x[j]]++;
     }
@@ -177,6 +199,20 @@ int tiku_kits_ml_nbayes_train(struct tiku_kits_ml_nbayes *nb,
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get log-likelihood scores for all classes
+ *
+ * For each class c, computes the log-posterior score using Laplace
+ * (add-1) smoothing in Q(shift) fixed-point.  The prior
+ * log2(class_count+1) favours classes with more training data.
+ * The likelihood sum adds log2(freq+1) for each feature.  The
+ * normalization term subtracts n_features * log2(class_count+n_bins)
+ * to account for the smoothed denominator.
+ *
+ * Out-of-range bin values in x are treated as unseen (freq = 0)
+ * rather than triggering an error, so prediction is robust to
+ * occasional quantization glitches.
+ */
 int tiku_kits_ml_nbayes_predict_log_proba(
     const struct tiku_kits_ml_nbayes *nb,
     const uint8_t *x,
@@ -237,6 +273,12 @@ int tiku_kits_ml_nbayes_predict_log_proba(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Classify a feature vector using Naive Bayes
+ *
+ * Delegates to predict_log_proba() and returns the argmax class.
+ * Ties are broken by the lowest class index (deterministic).
+ */
 int tiku_kits_ml_nbayes_predict(const struct tiku_kits_ml_nbayes *nb,
                                   const uint8_t *x,
                                   uint8_t *result)
@@ -275,6 +317,12 @@ int tiku_kits_ml_nbayes_predict(const struct tiku_kits_ml_nbayes *nb,
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the total number of training samples
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.
+ */
 uint16_t tiku_kits_ml_nbayes_count(
     const struct tiku_kits_ml_nbayes *nb)
 {
@@ -286,6 +334,12 @@ uint16_t tiku_kits_ml_nbayes_count(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the number of training samples for a specific class
+ *
+ * Safe to call with a NULL pointer or out-of-range class --
+ * returns 0 in both cases rather than dereferencing.
+ */
 uint16_t tiku_kits_ml_nbayes_class_count(
     const struct tiku_kits_ml_nbayes *nb,
     uint8_t cls)

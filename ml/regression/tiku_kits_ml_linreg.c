@@ -37,11 +37,15 @@
 
 /**
  * @brief Compute slope numerator and denominator from accumulators
- * @param lr  Model with accumulated sums
- * @param num Output: n*sum_xy - sum_x*sum_y
- * @param den Output: n*sum_xx - sum_x*sum_x
- * @return TIKU_KITS_ML_OK, TIKU_KITS_ML_ERR_SIZE, or
- *         TIKU_KITS_ML_ERR_SINGULAR
+ *
+ * Extracts the two components of the OLS slope formula:
+ *   numerator   = n * Sxy - Sx * Sy
+ *   denominator = n * Sxx - Sx * Sx
+ *
+ * Returns ERR_SIZE if fewer than 2 points have been pushed, or
+ * ERR_SINGULAR if the denominator is zero (all x values identical).
+ * This helper is reused by slope(), intercept(), predict(), and r2()
+ * to avoid duplicating the accumulator arithmetic.
  */
 static int slope_parts(const struct tiku_kits_ml_linreg *lr,
                        int64_t *num, int64_t *den)
@@ -70,6 +74,11 @@ static int slope_parts(const struct tiku_kits_ml_linreg *lr,
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a linear regression model
+ *
+ * Zeros all five accumulators and the sample count.
+ */
 int tiku_kits_ml_linreg_init(struct tiku_kits_ml_linreg *lr,
                               uint8_t shift)
 {
@@ -92,6 +101,11 @@ int tiku_kits_ml_linreg_init(struct tiku_kits_ml_linreg *lr,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset a model, clearing all data points
+ *
+ * Zeros all accumulators and the sample count.  Preserves shift.
+ */
 int tiku_kits_ml_linreg_reset(struct tiku_kits_ml_linreg *lr)
 {
     if (lr == NULL) {
@@ -111,6 +125,13 @@ int tiku_kits_ml_linreg_reset(struct tiku_kits_ml_linreg *lr)
 /* DATA INPUT                                                                */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a data point (x, y) into the model
+ *
+ * Updates all five accumulators in O(1).  Intermediate products
+ * are widened to int64_t before accumulation to prevent overflow
+ * when x and y are large int32_t values.
+ */
 int tiku_kits_ml_linreg_push(struct tiku_kits_ml_linreg *lr,
                               tiku_kits_ml_elem_t x,
                               tiku_kits_ml_elem_t y)
@@ -133,6 +154,12 @@ int tiku_kits_ml_linreg_push(struct tiku_kits_ml_linreg *lr,
 /* FITTED PARAMETERS                                                         */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the fitted slope as a fixed-point value
+ *
+ * slope_q = (num << shift) / den, where num and den come from
+ * slope_parts().  The left-shift applies the Q(shift) scaling.
+ */
 int tiku_kits_ml_linreg_slope(
     const struct tiku_kits_ml_linreg *lr,
     int32_t *result)
@@ -155,6 +182,14 @@ int tiku_kits_ml_linreg_slope(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the fitted intercept as a fixed-point value
+ *
+ * intercept = (Sy - slope * Sx) / n.  To avoid computing slope
+ * explicitly, the formula is rearranged using the slope numerator
+ * and denominator: inter_num = Sy * den - num * Sx, then
+ * result = (inter_num << shift) / (n * den).
+ */
 int tiku_kits_ml_linreg_intercept(
     const struct tiku_kits_ml_linreg *lr,
     int32_t *result)
@@ -188,6 +223,16 @@ int tiku_kits_ml_linreg_intercept(
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Predict y for a given x value
+ *
+ * Computes y = slope * x + intercept directly from accumulators
+ * without extracting slope or intercept separately.  The algebra
+ * simplifies to:
+ *   y = (num * (n*x - Sx) + Sy * den) / (n * den)
+ * which avoids any Q-format scaling -- the result is in the
+ * original integer domain.
+ */
 int tiku_kits_ml_linreg_predict(
     const struct tiku_kits_ml_linreg *lr,
     tiku_kits_ml_elem_t x,
@@ -224,6 +269,16 @@ int tiku_kits_ml_linreg_predict(
 /* GOODNESS OF FIT                                                           */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the R-squared (coefficient of determination)
+ *
+ * R2 = num^2 / (den * SSyy) where SSyy = n*Syy - Sy^2.
+ * To produce a Q(shift) result, the numerator is shifted left.
+ * To mitigate overflow when num^2 is very large, the division is
+ * split: (num/den) * num, then the shift and final division by
+ * SSyy.  The result is clamped to [0, 1 << shift] to guard
+ * against rounding overshoot.
+ */
 int tiku_kits_ml_linreg_r2(
     const struct tiku_kits_ml_linreg *lr,
     int32_t *result)
@@ -277,6 +332,12 @@ int tiku_kits_ml_linreg_r2(
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the number of data points pushed
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.
+ */
 uint16_t tiku_kits_ml_linreg_count(
     const struct tiku_kits_ml_linreg *lr)
 {

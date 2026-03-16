@@ -35,6 +35,13 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a peak detector with the given hysteresis
+ *
+ * Stores the hysteresis threshold and resets all counters, the
+ * extreme tracker, and the state machine to RISING.  The first
+ * push() will seed the extreme value.
+ */
 int tiku_kits_sigfeatures_peak_init(
     struct tiku_kits_sigfeatures_peak *p,
     tiku_kits_sigfeatures_elem_t hysteresis)
@@ -60,6 +67,13 @@ int tiku_kits_sigfeatures_peak_init(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset a peak detector, clearing all accumulated state
+ *
+ * Returns the detector to the post-init condition while preserving
+ * the hysteresis threshold.  The state machine reverts to RISING,
+ * all counters are zeroed, and no peaks are recorded.
+ */
 int tiku_kits_sigfeatures_peak_reset(
     struct tiku_kits_sigfeatures_peak *p)
 {
@@ -82,6 +96,16 @@ int tiku_kits_sigfeatures_peak_reset(
 /* SAMPLE INPUT                                                              */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Push a new sample into the peak detector
+ *
+ * Implements the two-state hysteresis machine.  In the RISING
+ * state, the running maximum is updated or, if the signal drops
+ * below max - hysteresis, a peak is confirmed and the machine
+ * transitions to FALLING.  In the FALLING state, the running
+ * minimum is updated or, if the signal rises above min +
+ * hysteresis, the machine transitions back to RISING.  O(1).
+ */
 int tiku_kits_sigfeatures_peak_push(
     struct tiku_kits_sigfeatures_peak *p,
     tiku_kits_sigfeatures_elem_t value)
@@ -145,6 +169,12 @@ int tiku_kits_sigfeatures_peak_push(
 /* QUERIES                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check if a peak was detected on the most recent push
+ *
+ * Returns the boolean detected flag.  Safe to call with NULL --
+ * returns 0.
+ */
 int tiku_kits_sigfeatures_peak_detected(
     const struct tiku_kits_sigfeatures_peak *p)
 {
@@ -156,6 +186,12 @@ int tiku_kits_sigfeatures_peak_detected(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the value of the most recently confirmed peak
+ *
+ * Copies the peak amplitude into *result.  Fails with ERR_NODATA
+ * if no peaks have been confirmed yet.
+ */
 int tiku_kits_sigfeatures_peak_last_value(
     const struct tiku_kits_sigfeatures_peak *p,
     tiku_kits_sigfeatures_elem_t *result)
@@ -173,6 +209,12 @@ int tiku_kits_sigfeatures_peak_last_value(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the sample index of the most recently confirmed peak
+ *
+ * Copies the 0-based sample index of the confirmed peak into
+ * *result.  Fails with ERR_NODATA if peak_count is 0.
+ */
 int tiku_kits_sigfeatures_peak_last_index(
     const struct tiku_kits_sigfeatures_peak *p,
     uint16_t *result)
@@ -190,6 +232,12 @@ int tiku_kits_sigfeatures_peak_last_index(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the total number of confirmed peaks
+ *
+ * Returns the cumulative peak count.  Safe to call with NULL --
+ * returns 0.
+ */
 uint16_t tiku_kits_sigfeatures_peak_count(
     const struct tiku_kits_sigfeatures_peak *p)
 {

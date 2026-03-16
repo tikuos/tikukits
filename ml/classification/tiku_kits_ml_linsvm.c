@@ -39,13 +39,11 @@
 
 /**
  * @brief Compute the linear combination z = w0 + w1*x1 + ... + wn*xn
- * @param svm Model with current weights
- * @param x   Feature vector of length n_features
- * @return z in Q(shift) fixed-point
  *
  * Weights are Q(shift) and features are plain integers, so each
- * product w_j * x_j is Q(shift). The sum is accumulated in int64_t
- * to prevent overflow, then truncated to int32_t.
+ * product w_j * x_j is Q(shift).  The sum is accumulated in int64_t
+ * to prevent overflow when many large-valued features contribute,
+ * then truncated to int32_t for the caller.
  */
 static int32_t dot_product(const struct tiku_kits_ml_linsvm *svm,
                            const tiku_kits_ml_elem_t *x)
@@ -64,6 +62,14 @@ static int32_t dot_product(const struct tiku_kits_ml_linsvm *svm,
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Initialize a linear SVM model
+ *
+ * Validates parameters, zeros the weight vector, and sets default
+ * hyperparameters: learning rate ~0.1 and lambda ~0.01 in Q(shift).
+ * Both defaults are clamped to a minimum of 1 to ensure at least
+ * one quantum of update per step.
+ */
 int tiku_kits_ml_linsvm_init(struct tiku_kits_ml_linsvm *svm,
                                uint8_t n_features,
                                uint8_t shift)
@@ -107,6 +113,12 @@ int tiku_kits_ml_linsvm_init(struct tiku_kits_ml_linsvm *svm,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset all weights and training count to zero
+ *
+ * Zeros the weight vector and resets the training counter.
+ * Preserves n_features, shift, learning_rate, and lambda.
+ */
 int tiku_kits_ml_linsvm_reset(struct tiku_kits_ml_linsvm *svm)
 {
     uint8_t i;
@@ -127,6 +139,11 @@ int tiku_kits_ml_linsvm_reset(struct tiku_kits_ml_linsvm *svm)
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Set the SGD learning rate
+ *
+ * Stores the new learning rate for subsequent train() calls.
+ */
 int tiku_kits_ml_linsvm_set_lr(struct tiku_kits_ml_linsvm *svm,
                                  int32_t learning_rate)
 {
@@ -143,6 +160,11 @@ int tiku_kits_ml_linsvm_set_lr(struct tiku_kits_ml_linsvm *svm,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Set the L2 regularization strength
+ *
+ * Stores the new lambda for subsequent train() calls.
+ */
 int tiku_kits_ml_linsvm_set_lambda(struct tiku_kits_ml_linsvm *svm,
                                      int32_t lambda)
 {
@@ -161,6 +183,18 @@ int tiku_kits_ml_linsvm_set_lambda(struct tiku_kits_ml_linsvm *svm,
 /* TRAINING                                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Train the model with one sample using SGD on the hinge loss
+ *
+ * Computes the forward pass f(x) = w . x + bias, then checks the
+ * margin y * f(x) against 1.0 in Q(shift).  If the margin is
+ * violated, weights receive both the hinge-loss gradient and L2
+ * regularization; otherwise only regularization is applied.
+ *
+ * All intermediate products use int64_t to prevent overflow.
+ * The double right-shift (>> shift >> shift) converts the
+ * lr * lambda * w product from Q(3*shift) back to Q(shift).
+ */
 int tiku_kits_ml_linsvm_train(struct tiku_kits_ml_linsvm *svm,
                                 const tiku_kits_ml_elem_t *x,
                                 int8_t y)
@@ -236,6 +270,12 @@ int tiku_kits_ml_linsvm_train(struct tiku_kits_ml_linsvm *svm,
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Compute the decision function f(x) = w . x + bias
+ *
+ * Delegates to the internal dot_product() helper and writes the
+ * signed margin in Q(shift) to *result.
+ */
 int tiku_kits_ml_linsvm_decision(
     const struct tiku_kits_ml_linsvm *svm,
     const tiku_kits_ml_elem_t *x,
@@ -252,6 +292,12 @@ int tiku_kits_ml_linsvm_decision(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Predict the binary class label (+1 or -1)
+ *
+ * Evaluates the decision function and thresholds at zero.
+ * Reuses decision() to avoid duplicating the dot-product logic.
+ */
 int tiku_kits_ml_linsvm_predict(
     const struct tiku_kits_ml_linsvm *svm,
     const tiku_kits_ml_elem_t *x,
@@ -278,6 +324,11 @@ int tiku_kits_ml_linsvm_predict(
 /* WEIGHT ACCESS                                                             */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the weight vector (bias + feature weights)
+ *
+ * Copies (n_features + 1) entries into the caller's buffer.
+ */
 int tiku_kits_ml_linsvm_get_weights(
     const struct tiku_kits_ml_linsvm *svm,
     int32_t *weights)
@@ -297,6 +348,13 @@ int tiku_kits_ml_linsvm_get_weights(
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Set the weight vector (for pre-trained model deployment)
+ *
+ * Copies (n_features + 1) entries from the caller's buffer into
+ * the model.  The weights must be in Q(shift) matching the model's
+ * configured shift.
+ */
 int tiku_kits_ml_linsvm_set_weights(
     struct tiku_kits_ml_linsvm *svm,
     const int32_t *weights)
@@ -318,6 +376,12 @@ int tiku_kits_ml_linsvm_set_weights(
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Get the number of training samples seen
+ *
+ * Safe to call with a NULL pointer -- returns 0 rather than
+ * dereferencing.
+ */
 uint16_t tiku_kits_ml_linsvm_count(
     const struct tiku_kits_ml_linsvm *svm)
 {

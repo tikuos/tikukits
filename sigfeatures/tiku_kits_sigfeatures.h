@@ -49,9 +49,18 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * Element type for sample values.
- * Defaults to int32_t for integer-only targets (no FPU).
- * Define as int16_t before including if memory is very tight.
+ * @brief Element type used for all signal feature sample values.
+ *
+ * Defaults to int32_t, which covers the full dynamic range of a
+ * 16-bit ADC with headroom for accumulation and difference
+ * operations.  On targets with very tight RAM, int16_t is
+ * sufficient for raw ADC samples and halves buffer sizes.
+ *
+ * Override before including this header to change the type:
+ * @code
+ *   #define TIKU_KITS_SIGFEATURES_ELEM_TYPE int16_t
+ *   #include "tiku_kits_sigfeatures.h"
+ * @endcode
  */
 #ifndef TIKU_KITS_SIGFEATURES_ELEM_TYPE
 #define TIKU_KITS_SIGFEATURES_ELEM_TYPE int32_t
@@ -61,8 +70,15 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/** @typedef tiku_kits_sigfeatures_elem_t
- *  @brief Element type used for all sample values
+/**
+ * @typedef tiku_kits_sigfeatures_elem_t
+ * @brief Scalar element type used for all signal sample values.
+ *
+ * This typedef resolves to TIKU_KITS_SIGFEATURES_ELEM_TYPE (default
+ * int32_t).  Every sub-module -- ZCR, peak, histogram, delta,
+ * Goertzel, z-score, and min-max scale -- uses this type for input
+ * samples, thresholds, and per-sample outputs so that a single
+ * compile-time switch changes the precision globally.
  */
 typedef TIKU_KITS_SIGFEATURES_ELEM_TYPE tiku_kits_sigfeatures_elem_t;
 

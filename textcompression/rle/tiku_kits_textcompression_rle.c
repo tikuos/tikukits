@@ -34,6 +34,17 @@
 /* ENCODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Compress a byte buffer using Run-Length Encoding
+ *
+ * Single-pass left-to-right scan.  For each position, the inner loop
+ * counts how many consecutive bytes match the current value (capped at
+ * 255 so the count fits in one byte).  Each maximal run is then
+ * emitted as a [count][value] pair.  The outer loop advances past the
+ * counted run and repeats until all input is consumed.
+ *
+ * Worst-case output is 2 * src_len (no adjacent duplicates).
+ */
 int tiku_kits_textcompression_rle_encode(const uint8_t *src, uint16_t src_len,
                                          uint8_t *dst, uint16_t dst_cap,
                                          uint16_t *out_len)
@@ -51,12 +62,14 @@ int tiku_kits_textcompression_rle_encode(const uint8_t *src, uint16_t src_len,
 
     while (si < src_len) {
         count = 1;
+        /* Extend the run while the next byte matches and count < 255 */
         while (si + count < src_len
                && src[si + count] == src[si]
                && count < 255) {
             count++;
         }
 
+        /* Each pair needs exactly 2 bytes in the output */
         if (di + 2 > dst_cap) {
             return TIKU_KITS_TEXTCOMPRESSION_ERR_SIZE;
         }
@@ -74,6 +87,15 @@ int tiku_kits_textcompression_rle_encode(const uint8_t *src, uint16_t src_len,
 /* DECODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Decompress a Run-Length Encoded byte buffer
+ *
+ * Reads [count][value] pairs sequentially.  For each pair the value
+ * byte is written into the output buffer @c count times.  Two
+ * structural checks guard against corrupt data: an odd src_len
+ * (truncated pair) and a zero count byte (would produce no output
+ * and stall decoding progress).
+ */
 int tiku_kits_textcompression_rle_decode(const uint8_t *src, uint16_t src_len,
                                          uint8_t *dst, uint16_t dst_cap,
                                          uint16_t *out_len)
@@ -88,6 +110,7 @@ int tiku_kits_textcompression_rle_decode(const uint8_t *src, uint16_t src_len,
         return TIKU_KITS_TEXTCOMPRESSION_ERR_NULL;
     }
 
+    /* Pairs are always 2 bytes; an odd length means truncated data */
     if (src_len % 2 != 0) {
         return TIKU_KITS_TEXTCOMPRESSION_ERR_CORRUPT;
     }
@@ -99,6 +122,8 @@ int tiku_kits_textcompression_rle_decode(const uint8_t *src, uint16_t src_len,
         count = src[si++];
         val = src[si++];
 
+        /* A zero count is invalid -- it would produce no output and
+         * could cause an infinite loop if not caught. */
         if (count == 0) {
             return TIKU_KITS_TEXTCOMPRESSION_ERR_CORRUPT;
         }
