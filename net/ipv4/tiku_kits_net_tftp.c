@@ -519,9 +519,20 @@ tiku_kits_net_tftp_poll(void)
         break;
 
     case TIKU_KITS_NET_TFTP_EVT_ACK_RECV:
-        /* WRQ path: server acknowledged the previous DATA block.
-         * Supply the next block from the application and send it. */
+        /* WRQ path: server acknowledged a DATA block. */
         if (direction == 1) {
+            /* If we already sent the final short block (last_was_full==0)
+             * and now received the ACK for it, the transfer is complete.
+             * Check BEFORE supplying the next block. */
+            if (!last_was_full &&
+                state == TIKU_KITS_NET_TFTP_STATE_SENDING) {
+                state = TIKU_KITS_NET_TFTP_STATE_COMPLETE;
+                tiku_kits_net_udp_unbind(
+                    TIKU_KITS_NET_TFTP_LOCAL_PORT);
+                return TIKU_KITS_NET_TFTP_EVT_COMPLETE;
+            }
+
+            /* Supply the next block from the application and send it */
             next_block = block_num + 1;
             supply_len = 0;
 
@@ -543,17 +554,6 @@ tiku_kits_net_tftp_poll(void)
             if (supply_len < TIKU_KITS_NET_TFTP_BLOCK_SIZE) {
                 last_was_full = 0;
             }
-        }
-
-        /* WRQ path: if this ACK is for the last (short) DATA block,
-         * the transfer is complete */
-        if (direction == 1 && !last_was_full &&
-            block_num > 0 &&
-            state == TIKU_KITS_NET_TFTP_STATE_SENDING) {
-            /* We already sent the last block and now got the ACK
-             * for the previous one.  Actually, the final ACK for
-             * the last block comes in a subsequent poll. Check if
-             * the ACK block_num matches our last sent block. */
         }
         break;
 

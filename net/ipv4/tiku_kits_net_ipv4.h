@@ -173,15 +173,19 @@ uint16_t tiku_kits_net_ipv4_chksum(const uint8_t *data, uint16_t len);
 /**
  * @brief Process an incoming IPv4 packet.
  *
- * Validates the packet through five checks in order:
+ * Validates the packet through eight checks in order:
  *   1. Minimum length (>= 20 bytes)
  *   2. Version == 4
  *   3. IHL >= 5 (header >= 20 bytes)
- *   4. Header checksum == 0
- *   5. Destination IP matches our address
+ *   4. IHL <= frame length (prevents buffer over-read)
+ *   5. Header checksum == 0
+ *   6. total_len is plausible (>= IHL bytes, <= frame length)
+ *   7. Packet is not fragmented (MF=0, offset=0)
+ *   8. Destination IP matches our address
  *
  * Packets that fail any check are silently dropped (no ICMP error).
- * Valid packets are dispatched by protocol field:
+ * Valid packets are dispatched by protocol field using total_len
+ * (trimming any link-layer padding):
  *   - Protocol 1 (ICMP): tiku_kits_net_icmp_input()
  *   - Protocol 17 (UDP): tiku_kits_net_udp_input()
  *   - Other: silently dropped

@@ -126,6 +126,8 @@ tiku_kits_net_ipv4_input(uint8_t *buf, uint16_t len)
 {
     uint16_t ihl_bytes;
     uint16_t hdr_chksum;
+    uint16_t total_len;
+    uint16_t frag;
 
     /* Debug LED: LED2 on for valid-looking IPv4 frames */
     if (len > 0 && buf[0] == 0x45) {
@@ -150,13 +152,35 @@ tiku_kits_net_ipv4_input(uint8_t *buf, uint16_t len)
         return;
     }
 
-    /* Check 4: header checksum must validate to zero */
+    /* Check 4: IHL must not exceed frame (prevents buffer over-read) */
+    if (ihl_bytes > len) {
+        return;
+    }
+
+    /* Check 5: header checksum must validate to zero */
     hdr_chksum = tiku_kits_net_ipv4_chksum(buf, ihl_bytes);
     if (hdr_chksum != 0) {
         return;
     }
 
-    /* Check 5: destination IP must match ours */
+    /* Check 6: total_len must be plausible
+     *   - At least large enough for the header (ihl_bytes)
+     *   - Must not exceed the actual frame length */
+    total_len = TIKU_KITS_NET_IPV4_TOTLEN(buf);
+    if (total_len < ihl_bytes || total_len > len) {
+        return;
+    }
+
+    /* Check 7: fragmented packets are not supported
+     *   - MF (More Fragments) bit set → fragment
+     *   - Non-zero fragment offset   → fragment */
+    frag = (uint16_t)((uint16_t)buf[TIKU_KITS_NET_IPV4_OFF_FRAG] << 8 |
+                       buf[TIKU_KITS_NET_IPV4_OFF_FRAG + 1]);
+    if ((frag & 0x2000) || (frag & 0x1FFF)) {
+        return;
+    }
+
+    /* Check 8: destination IP must match ours */
     if (buf[TIKU_KITS_NET_IPV4_OFF_DST]     != our_addr.b[0] ||
         buf[TIKU_KITS_NET_IPV4_OFF_DST + 1] != our_addr.b[1] ||
         buf[TIKU_KITS_NET_IPV4_OFF_DST + 2] != our_addr.b[2] ||
@@ -164,13 +188,13 @@ tiku_kits_net_ipv4_input(uint8_t *buf, uint16_t len)
         return;
     }
 
-    /* Protocol dispatch */
+    /* Protocol dispatch -- use total_len (trims any link-layer padding) */
     switch (TIKU_KITS_NET_IPV4_PROTO(buf)) {
     case TIKU_KITS_NET_IPV4_PROTO_ICMP:
-        tiku_kits_net_icmp_input(buf, len, ihl_bytes);
+        tiku_kits_net_icmp_input(buf, total_len, ihl_bytes);
         break;
     case TIKU_KITS_NET_IPV4_PROTO_UDP:
-        tiku_kits_net_udp_input(buf, len, ihl_bytes);
+        tiku_kits_net_udp_input(buf, total_len, ihl_bytes);
         break;
     default:
         /* Unsupported protocol -- silently drop */
