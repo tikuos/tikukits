@@ -8,7 +8,12 @@
  *
  * Provides shared return codes, configuration macros, byte-order
  * helpers, and the link-layer abstraction used by all TikuKits
- * networking sub-modules (SLIP, IPv4, ICMP, etc.).
+ * networking sub-modules (SLIP, IPv4, ICMP, UDP, etc.).
+ *
+ * All networking code is designed for ultra-low-power embedded
+ * targets with severe memory constraints.  The single shared packet
+ * buffer (TIKU_KITS_NET_MTU bytes) and static allocation policy
+ * keep total RAM overhead well under 200 bytes.  No heap is used.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +51,14 @@
  * indicates success; negative values indicate distinct error classes.
  * Sub-modules must never define their own return codes -- all codes
  * live here so that application code can handle errors uniformly.
+ *
+ * Example:
+ * @code
+ *   int8_t rc = tiku_kits_net_ipv4_output(buf, len);
+ *   if (rc != TIKU_KITS_NET_OK) {
+ *       // handle error
+ *   }
+ * @endcode
  * @{
  */
 #define TIKU_KITS_NET_OK            0   /**< Operation succeeded */
@@ -63,24 +76,53 @@
 /* CONFIGURATION (compile-time overrideable)                                 */
 /*---------------------------------------------------------------------------*/
 
-/** Maximum transmission unit (bytes).  128 fits in SRAM and keeps
- *  total RAM usage around 172 bytes (~8.4% of 2 KB). */
+/**
+ * @brief Maximum transmission unit (bytes).
+ *
+ * 128 fits comfortably in MSP430 SRAM and keeps total RAM usage
+ * around 172 bytes (~8.4% of 2 KB).  This is the capacity of the
+ * single shared packet buffer used for both RX and TX (half-duplex).
+ * All upper-layer protocols derive their maximum payload from this
+ * value (e.g. ICMP max payload = MTU - 20 - 8 = 100 bytes).
+ *
+ * Override at compile time to adjust:
+ * @code
+ *   #define TIKU_KITS_NET_MTU 256
+ *   #include "tiku_kits_net.h"
+ * @endcode
+ */
 #ifndef TIKU_KITS_NET_MTU
 #define TIKU_KITS_NET_MTU           128
 #endif
 
-/** Our IPv4 address (default: 172.16.7.2).
- *  Avoids 192.x (0xC0 = SLIP END) to simplify SLIP encoding. */
+/**
+ * @brief Our IPv4 address (default: 172.16.7.2).
+ *
+ * Stored as four initialiser bytes in network order.  The default
+ * avoids 192.x addresses because 192 == 0xC0 == SLIP END, which
+ * would complicate SLIP encoding of the IP header.
+ */
 #ifndef TIKU_KITS_NET_IP_ADDR
 #define TIKU_KITS_NET_IP_ADDR       {172, 16, 7, 2}
 #endif
 
-/** Default time-to-live for outgoing packets. */
+/**
+ * @brief Default time-to-live for outgoing packets.
+ *
+ * 64 is the standard TTL for most operating systems and is more
+ * than sufficient for a point-to-point SLIP link with no routing.
+ */
 #ifndef TIKU_KITS_NET_TTL
 #define TIKU_KITS_NET_TTL           64
 #endif
 
-/** Net process I/O poll interval (ticks).  TIKU_CLOCK_SECOND/20 ~ 50 ms. */
+/**
+ * @brief Net process I/O poll interval (ticks).
+ *
+ * The net process protothread wakes every POLL_TICKS to drain UART
+ * bytes through the SLIP decoder.  TIKU_CLOCK_SECOND/20 gives
+ * approximately 50 ms, balancing responsiveness against CPU wake-ups.
+ */
 #ifndef TIKU_KITS_NET_POLL_TICKS
 #define TIKU_KITS_NET_POLL_TICKS    (TIKU_CLOCK_SECOND / 20)
 #endif
@@ -90,11 +132,13 @@
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief IPv4 address stored as four bytes.
+ * @struct tiku_kits_net_ip4_addr
+ * @brief IPv4 address stored as four bytes in network order.
  *
  * Using a byte array avoids alignment issues on 16-bit MSP430 and
- * makes network byte order handling trivial (bytes are already in
- * network order).
+ * makes network byte order handling trivial -- the bytes are already
+ * in network order and can be copied directly into packet headers
+ * via memcpy without any byte-swapping.
  */
 typedef struct tiku_kits_net_ip4_addr {
     uint8_t b[4];  /**< Address octets in network order */
@@ -108,6 +152,11 @@ typedef struct tiku_kits_net_ip4_addr {
  * @brief Convert a 16-bit value from host to network byte order.
  *
  * MSP430 is little-endian; network order is big-endian, so we swap.
+ * Implemented as an inline function rather than a macro to ensure
+ * the argument is evaluated exactly once.
+ *
+ * @param h  16-bit value in host byte order
+ * @return The same value in network (big-endian) byte order
  */
 static inline uint16_t
 tiku_kits_net_htons(uint16_t h)
@@ -117,6 +166,12 @@ tiku_kits_net_htons(uint16_t h)
 
 /**
  * @brief Convert a 16-bit value from network to host byte order.
+ *
+ * Symmetric with htons; both perform an identical byte swap on
+ * little-endian targets.
+ *
+ * @param n  16-bit value in network byte order
+ * @return The same value in host (little-endian) byte order
  */
 static inline uint16_t
 tiku_kits_net_ntohs(uint16_t n)
@@ -129,19 +184,37 @@ tiku_kits_net_ntohs(uint16_t n)
 /*---------------------------------------------------------------------------*/
 
 /**
+ * @struct tiku_kits_net_link
  * @brief Link-layer backend descriptor.
  *
- * Modeled on tiku_cli_io_t.  IPv4 calls send() to transmit a
- * complete IP packet; the net process calls poll_rx() to feed bytes
- * from the hardware into the link-layer decoder.
+ * Abstracts the underlying transport so that the IPv4 layer is
+ * independent of the physical link.  The default implementation
+ * uses SLIP over UART (tiku_kits_net_slip_link), but any transport
+ * (wireless, SPI, loopback) can be plugged in by filling one of
+ * these structs and passing it to tiku_kits_net_ipv4_set_link().
  *
- * To add a new link layer (e.g. wireless), fill one of these structs
- * and pass it to tiku_kits_net_ipv4_set_link().
+ * The design mirrors tiku_cli_io_t -- a function-pointer struct
+ * that decouples I/O from processing logic.
+ *
+ * Example (registering a custom link):
+ * @code
+ *   static const tiku_kits_net_link_t my_link = {
+ *       .send    = my_send_func,
+ *       .poll_rx = my_poll_func,
+ *       .name    = "custom"
+ *   };
+ *   tiku_kits_net_ipv4_set_link(&my_link);
+ * @endcode
  */
 typedef struct tiku_kits_net_link {
     /**
      * @brief Transmit a framed packet over the link.
-     * @param pkt  Pointer to the IP packet
+     *
+     * The link layer is responsible for any framing (e.g. SLIP
+     * encoding) before writing bytes to the hardware.  The caller
+     * retains ownership of @p pkt.
+     *
+     * @param pkt  Pointer to the complete IP packet
      * @param len  Packet length in bytes
      * @return TIKU_KITS_NET_OK on success, negative error code otherwise
      */
@@ -150,13 +223,16 @@ typedef struct tiku_kits_net_link {
     /**
      * @brief Poll the hardware for incoming bytes (non-blocking).
      *
-     * Reads all available bytes from the hardware and feeds them into
-     * the link-layer decoder.  When a complete frame has been
-     * assembled in @p buf, sets *pos to the frame length and returns 1.
+     * Reads all available bytes from the hardware and feeds them
+     * into the link-layer decoder.  When a complete frame has been
+     * assembled in @p buf, sets *pos to the frame length and
+     * returns 1.  May be called repeatedly in a tight loop until
+     * it returns 0 (no more complete frames available).
      *
-     * @param buf       Receive buffer
+     * @param buf       Receive buffer (caller-owned)
      * @param buf_size  Buffer capacity (MTU)
-     * @param pos       In/out: current write position in buf
+     * @param pos       In/out: current write position in buf;
+     *                  set to frame length on return of 1
      * @return 1 if a complete frame is ready, 0 otherwise
      */
     uint8_t (*poll_rx)(uint8_t *buf, uint16_t buf_size, uint16_t *pos);
