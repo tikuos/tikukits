@@ -55,8 +55,9 @@ static uint8_t net_buf[TIKU_KITS_NET_MTU];
 /** Current frame length in net_buf (reset to 0 after processing) */
 static uint16_t net_buf_len;
 
-/** Our IPv4 address, initialised from the TIKU_KITS_NET_IP_ADDR macro */
-static const tiku_kits_net_ip4_addr_t our_addr = {TIKU_KITS_NET_IP_ADDR};
+/** Our IPv4 address, initialised from the TIKU_KITS_NET_IP_ADDR macro.
+ *  Mutable so that DHCP (or other runtime config) can update it. */
+static tiku_kits_net_ip4_addr_t our_addr = {TIKU_KITS_NET_IP_ADDR};
 
 /** Active link-layer backend (set by ipv4_set_link, NULL at startup) */
 static const tiku_kits_net_link_t *active_link;
@@ -180,11 +181,17 @@ tiku_kits_net_ipv4_input(uint8_t *buf, uint16_t len)
         return;
     }
 
-    /* Check 8: destination IP must match ours */
-    if (buf[TIKU_KITS_NET_IPV4_OFF_DST]     != our_addr.b[0] ||
-        buf[TIKU_KITS_NET_IPV4_OFF_DST + 1] != our_addr.b[1] ||
-        buf[TIKU_KITS_NET_IPV4_OFF_DST + 2] != our_addr.b[2] ||
-        buf[TIKU_KITS_NET_IPV4_OFF_DST + 3] != our_addr.b[3]) {
+    /* Check 8: destination IP must match ours or be broadcast.
+     * Broadcast (255.255.255.255) is accepted for DHCP responses
+     * and any future broadcast-based protocols. */
+    if (!(buf[TIKU_KITS_NET_IPV4_OFF_DST]     == 255 &&
+          buf[TIKU_KITS_NET_IPV4_OFF_DST + 1] == 255 &&
+          buf[TIKU_KITS_NET_IPV4_OFF_DST + 2] == 255 &&
+          buf[TIKU_KITS_NET_IPV4_OFF_DST + 3] == 255) &&
+        (buf[TIKU_KITS_NET_IPV4_OFF_DST]     != our_addr.b[0] ||
+         buf[TIKU_KITS_NET_IPV4_OFF_DST + 1] != our_addr.b[1] ||
+         buf[TIKU_KITS_NET_IPV4_OFF_DST + 2] != our_addr.b[2] ||
+         buf[TIKU_KITS_NET_IPV4_OFF_DST + 3] != our_addr.b[3])) {
         return;
     }
 
@@ -239,16 +246,26 @@ tiku_kits_net_ipv4_output(uint8_t *buf, uint16_t len)
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Return a pointer to the shared packet buffer
+ * @brief Return a pointer to the shared packet buffer for TX use.
  *
- * Used by upper-layer send functions (e.g. udp_send) to construct
- * outgoing packets directly in the shared buffer, avoiding an extra
- * copy.  The caller must not be inside a receive callback (the
- * buffer already holds the incoming packet at that point).
+ * Used by upper-layer send functions (e.g. udp_send, dhcp_send)
+ * to construct outgoing packets directly in the shared buffer,
+ * avoiding an extra copy.  Resets the RX decode position so that
+ * any partially-received SLIP frame is discarded -- the buffer
+ * is half-duplex and cannot hold RX data while being used for TX.
+ *
+ * The caller must not be inside a receive callback (the buffer
+ * already holds the incoming packet at that point).
  */
 uint8_t *
 tiku_kits_net_ipv4_get_buf(uint16_t *size)
 {
+    /* Discard any partial SLIP decode in progress.  Without this,
+     * a TX operation (e.g. DHCP retransmit) that memsets net_buf
+     * would corrupt the SLIP decoder's partial frame state, causing
+     * the next poll_rx to produce a garbage "complete" frame. */
+    net_buf_len = 0;
+
     if (size != NULL) {
         *size = TIKU_KITS_NET_MTU;
     }
@@ -268,6 +285,41 @@ const uint8_t *
 tiku_kits_net_ipv4_get_addr(void)
 {
     return our_addr.b;
+}
+
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief Update our IPv4 address at runtime.
+ *
+ * Used by DHCP (or other runtime configuration) to set the IP
+ * address after obtaining a lease.  The 4-byte address is in
+ * network order.  Passing NULL is a no-op.
+ */
+void
+tiku_kits_net_ipv4_set_addr(const uint8_t *addr)
+{
+    if (addr != (void *)0) {
+        our_addr.b[0] = addr[0];
+        our_addr.b[1] = addr[1];
+        our_addr.b[2] = addr[2];
+        our_addr.b[3] = addr[3];
+    }
+}
+
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief Return 1 if no partial SLIP frame is being decoded.
+ *
+ * When net_buf_len > 0, the SLIP decoder has partially filled
+ * net_buf with an incoming frame.  Writing to net_buf at this
+ * point (e.g. for a retransmit) would corrupt the partial frame.
+ */
+uint8_t
+tiku_kits_net_ipv4_rx_idle(void)
+{
+    return (net_buf_len == 0) ? 1 : 0;
 }
 
 /*---------------------------------------------------------------------------*/

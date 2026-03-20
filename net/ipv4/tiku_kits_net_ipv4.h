@@ -253,6 +253,28 @@ uint8_t *tiku_kits_net_ipv4_get_buf(uint16_t *size);
  */
 const uint8_t *tiku_kits_net_ipv4_get_addr(void);
 
+/**
+ * @brief Update our IPv4 address at runtime.
+ *
+ * Used by DHCP (or other runtime configuration) to set the IP
+ * address after obtaining a lease.  Passing NULL is a no-op.
+ *
+ * @param addr  New IPv4 address (4 bytes, network order)
+ */
+void tiku_kits_net_ipv4_set_addr(const uint8_t *addr);
+
+/**
+ * @brief Check if the SLIP receive buffer is idle (no partial frame).
+ *
+ * Returns 1 if net_buf_len == 0, meaning no partially-decoded SLIP
+ * frame is in the buffer.  Used by DHCP to avoid retransmitting
+ * (which overwrites net_buf) while an incoming response is being
+ * assembled by the SLIP decoder.
+ *
+ * @return 1 if idle, 0 if a partial frame is in progress
+ */
+uint8_t tiku_kits_net_ipv4_rx_idle(void);
+
 /*---------------------------------------------------------------------------*/
 /* NET PROCESS                                                               */
 /*---------------------------------------------------------------------------*/

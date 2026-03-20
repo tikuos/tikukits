@@ -77,6 +77,23 @@
 /*---------------------------------------------------------------------------*/
 
 /**
+ * @brief Enable the DHCP client (default: disabled).
+ *
+ * When enabled, the MTU is automatically raised to at least 300
+ * bytes so that DHCP packets (236-byte fixed header + options)
+ * fit within the shared net_buf.  This adds ~172 bytes of RAM
+ * compared to the default 128-byte MTU.
+ *
+ * Set to 1 at compile time to enable:
+ * @code
+ *   #define TIKU_KITS_NET_DHCP_ENABLE 1
+ * @endcode
+ */
+#ifndef TIKU_KITS_NET_DHCP_ENABLE
+#define TIKU_KITS_NET_DHCP_ENABLE   0
+#endif
+
+/**
  * @brief Maximum transmission unit (bytes).
  *
  * 128 fits comfortably in MSP430 SRAM and keeps total RAM usage
@@ -85,12 +102,21 @@
  * All upper-layer protocols derive their maximum payload from this
  * value (e.g. ICMP max payload = MTU - 20 - 8 = 100 bytes).
  *
+ * When DHCP is enabled, the MTU is automatically raised to 300
+ * to accommodate the 236-byte DHCP header plus options.  The user
+ * may still override this by defining TIKU_KITS_NET_MTU before
+ * including this header.
+ *
  * Override at compile time to adjust:
  * @code
  *   #define TIKU_KITS_NET_MTU 256
  *   #include "tiku_kits_net.h"
  * @endcode
  */
+#if TIKU_KITS_NET_DHCP_ENABLE && !defined(TIKU_KITS_NET_MTU)
+#define TIKU_KITS_NET_MTU           300
+#endif
+
 #ifndef TIKU_KITS_NET_MTU
 #define TIKU_KITS_NET_MTU           128
 #endif
