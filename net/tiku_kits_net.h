@@ -94,6 +94,24 @@
 #endif
 
 /**
+ * @brief Enable the TCP transport layer (default: disabled).
+ *
+ * When enabled, the net process initialises the TCP subsystem and
+ * dispatches protocol-6 packets to the TCP input handler.  TCP
+ * uses FRAM-backed buffers for retransmission and receive data;
+ * see tiku_kits_net_tcp.h for configuration macros and memory
+ * budget details.
+ *
+ * Set to 1 at compile time to enable:
+ * @code
+ *   #define TIKU_KITS_NET_TCP_ENABLE 1
+ * @endcode
+ */
+#ifndef TIKU_KITS_NET_TCP_ENABLE
+#define TIKU_KITS_NET_TCP_ENABLE    0
+#endif
+
+/**
  * @brief Maximum transmission unit (bytes).
  *
  * 128 fits comfortably in MSP430 SRAM and keeps total RAM usage

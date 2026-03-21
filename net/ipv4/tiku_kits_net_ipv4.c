@@ -33,6 +33,9 @@
 #include "tiku_kits_net_ipv4.h"
 #include "tiku_kits_net_icmp.h"
 #include "tiku_kits_net_udp.h"
+#if TIKU_KITS_NET_TCP_ENABLE
+#include "tiku_kits_net_tcp.h"
+#endif
 #include <tikukits/net/slip/tiku_kits_net_slip.h>
 #include <kernel/process/tiku_process.h>
 #include <kernel/timers/tiku_timer.h>
@@ -203,6 +206,11 @@ tiku_kits_net_ipv4_input(uint8_t *buf, uint16_t len)
     case TIKU_KITS_NET_IPV4_PROTO_UDP:
         tiku_kits_net_udp_input(buf, total_len, ihl_bytes);
         break;
+#if TIKU_KITS_NET_TCP_ENABLE
+    case TIKU_KITS_NET_IPV4_PROTO_TCP:
+        tiku_kits_net_tcp_input(buf, total_len, ihl_bytes);
+        break;
+#endif
     default:
         /* Unsupported protocol -- silently drop */
         break;
@@ -349,6 +357,9 @@ TIKU_PROCESS_THREAD(tiku_kits_net_process, ev, data)
     tiku_kits_net_slip_init();
     tiku_kits_net_ipv4_set_link(&tiku_kits_net_slip_link);
     tiku_kits_net_udp_init();
+#if TIKU_KITS_NET_TCP_ENABLE
+    tiku_kits_net_tcp_init();
+#endif
     net_buf_len = 0;
     TIKU_BOARD_LED1_INIT();
     TIKU_BOARD_LED2_INIT();
@@ -381,6 +392,10 @@ TIKU_PROCESS_THREAD(tiku_kits_net_process, ev, data)
             tiku_kits_net_ipv4_input(net_buf, net_buf_len);
             net_buf_len = 0;
         }
+
+#if TIKU_KITS_NET_TCP_ENABLE
+        tiku_kits_net_tcp_periodic();
+#endif
 
         tiku_timer_reset(&net_timer);
     }

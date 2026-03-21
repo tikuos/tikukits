@@ -140,6 +140,7 @@
  * @{
  */
 #define TIKU_KITS_NET_IPV4_PROTO_ICMP   1   /**< ICMP (RFC 792) */
+#define TIKU_KITS_NET_IPV4_PROTO_TCP    6   /**< TCP (RFC 793) */
 #define TIKU_KITS_NET_IPV4_PROTO_UDP   17   /**< UDP (RFC 768) */
 /** @} */
 
