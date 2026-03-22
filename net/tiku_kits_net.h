@@ -70,6 +70,8 @@
 #define TIKU_KITS_NET_ERR_NOLINK  (-6)  /**< No link-layer backend set */
 #define TIKU_KITS_NET_ERR_PROTO   (-7)  /**< Unsupported protocol */
 #define TIKU_KITS_NET_ERR_SLIP    (-8)  /**< SLIP framing error */
+/** @brief Operation timed out waiting for a response. */
+#define TIKU_KITS_NET_ERR_TIMEOUT (-9)  /**< Timeout (no reply) */
 /** @} */
 
 /*---------------------------------------------------------------------------*/
