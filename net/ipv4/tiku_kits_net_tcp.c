@@ -284,11 +284,13 @@ tcp_free_conn(tiku_kits_net_tcp_conn_t *c)
 /**
  * @brief Find a connection matching a 4-tuple.
  */
+
 static tiku_kits_net_tcp_conn_t *
 tcp_find_conn(const uint8_t *remote_ip, uint16_t remote_port,
               uint16_t local_port)
 {
     uint8_t i;
+
 
     for (i = 0; i < TIKU_KITS_NET_TCP_MAX_CONNS; i++) {
         tiku_kits_net_tcp_conn_t *c = &conn_table[i];
@@ -732,7 +734,6 @@ tcp_process(tiku_kits_net_tcp_conn_t *c,
     if (flags & TIKU_KITS_NET_TCP_FLAG_RST) {
         if (c->state == TIKU_KITS_NET_TCP_STATE_SYN_RCVD ||
             c->state == TIKU_KITS_NET_TCP_STATE_SYN_SENT) {
-            /* Connection refused */
             if (c->event_cb) {
                 c->event_cb(c, TIKU_KITS_NET_TCP_EVT_ABORTED);
             }
@@ -819,7 +820,6 @@ tcp_process(tiku_kits_net_tcp_conn_t *c,
      * --------------------------------------------------------------- */
     if ((flags & TIKU_KITS_NET_TCP_FLAG_SYN) &&
         c->state >= TIKU_KITS_NET_TCP_STATE_ESTABLISHED) {
-        /* SYN in established connection is an error -- RST */
         if (c->event_cb) {
             c->event_cb(c, TIKU_KITS_NET_TCP_EVT_ABORTED);
         }
