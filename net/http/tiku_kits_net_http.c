@@ -32,6 +32,7 @@
 /*---------------------------------------------------------------------------*/
 
 #include "tiku_kits_net_http.h"
+#include <kernel/memory/tiku_mem.h>
 #include <stddef.h>
 
 /*---------------------------------------------------------------------------*/
@@ -521,10 +522,14 @@ http_execute(
     /*---------------------------------------------------------------*/
     /* 4. Build and send HTTP request                                */
     /*---------------------------------------------------------------*/
-    req_len = tiku_kits_net_http_build_request(
-        method, host, path, api_key, body_len,
-        http_req_buf,
-        TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
+    {
+        uint16_t saved = tiku_mpu_unlock_nvm();
+        req_len = tiku_kits_net_http_build_request(
+            method, host, path, api_key, body_len,
+            http_req_buf,
+            TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
+        tiku_mpu_lock_nvm(saved);
+    }
 
     if (req_len >= TIKU_KITS_NET_HTTP_REQ_BUF_SIZE) {
         tiku_kits_crypto_tls_close(http_ctx.tls);
@@ -560,14 +565,22 @@ http_execute(
          timeout++) {
         http_net_poll();
 
-        /* Read decrypted data (reuse req_buf as staging) */
-        n = tiku_kits_crypto_tls_read(
-            http_ctx.tls, http_req_buf,
-            TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
+        /* Read decrypted data (reuse req_buf as staging).
+         * Both http_req_buf and the caller's response_buf may
+         * be in FRAM (.persistent), so MPU must be unlocked
+         * for tls_read (writes to http_req_buf) and
+         * parser_feed (writes to response_buf). */
+        {
+            uint16_t saved = tiku_mpu_unlock_nvm();
+            n = tiku_kits_crypto_tls_read(
+                http_ctx.tls, http_req_buf,
+                TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
 
-        if (n > 0) {
-            tiku_kits_net_http_parser_feed(
-                &http_ctx.parser, http_req_buf, n);
+            if (n > 0) {
+                tiku_kits_net_http_parser_feed(
+                    &http_ctx.parser, http_req_buf, n);
+            }
+            tiku_mpu_lock_nvm(saved);
         }
 
         /* Connection closed: read remaining buffered data */
@@ -576,6 +589,7 @@ http_execute(
             || http_ctx.tls_event
                 == TIKU_KITS_CRYPTO_TLS_EVT_ERROR) {
             do {
+                uint16_t saved = tiku_mpu_unlock_nvm();
                 n = tiku_kits_crypto_tls_read(
                     http_ctx.tls, http_req_buf,
                     TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
@@ -584,6 +598,7 @@ http_execute(
                         &http_ctx.parser,
                         http_req_buf, n);
                 }
+                tiku_mpu_lock_nvm(saved);
             } while (n > 0);
             break;
         }
