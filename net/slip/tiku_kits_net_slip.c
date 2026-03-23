@@ -80,13 +80,16 @@ tiku_kits_net_slip_send(const uint8_t *pkt, uint16_t len)
             tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC);
             tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC_ESC);
             break;
+#if TIKU_KITS_NET_SLIP_ESC_NUL_ENABLE
         case 0x00:
             /* eZ-FET workaround: two consecutive 0x00 bytes on the
              * backchannel UART trigger a target reset in eZ-FET
-             * firmware v31501001.  Escaping NUL prevents this. */
+             * firmware v31501001.  Escaping NUL prevents this.
+             * Disabled when using FT232/slattach (kernel SLIP). */
             tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC);
             tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC_NUL);
             break;
+#endif
         default:
             tiku_uart_putc((char)pkt[i]);
             break;

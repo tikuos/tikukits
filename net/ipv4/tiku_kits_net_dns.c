@@ -276,7 +276,11 @@ static void dns_udp_recv(const uint8_t *src_addr,
     if (dns_rx_len > sizeof(dns_rx_buf)) {
         dns_rx_len = sizeof(dns_rx_buf);
     }
-    memcpy(dns_rx_buf, payload, dns_rx_len);
+    {
+        uint16_t saved = tiku_mpu_unlock_nvm();
+        memcpy(dns_rx_buf, payload, dns_rx_len);
+        tiku_mpu_lock_nvm(saved);
+    }
 
     /* Signal poll() that a valid reply arrived */
     dns_reply_ready = 1;

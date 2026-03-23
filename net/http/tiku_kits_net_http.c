@@ -4,9 +4,9 @@
  *
  * Authors: Ambuj Varshney <ambuj@tiku-os.org>
  *
- * tiku_kits_net_http.c - Minimal HTTP/1.0 client
+ * tiku_kits_net_http.c - Minimal HTTP/1.1 client
  *
- * Implements the HTTP/1.0 request builder, response parser,
+ * Implements the HTTP/1.1 request builder, response parser,
  * and blocking client that drives DNS, TCP, and TLS to
  * completion.  Designed for ultra-low-power MCUs with static
  * allocation only.
@@ -218,11 +218,11 @@ tiku_kits_net_http_build_request(
     uint16_t p = 0;
     char len_str[6];
 
-    /* Request line: METHOD path HTTP/1.0\r\n */
+    /* Request line: METHOD path HTTP/1.1\r\n */
     p = http_append(buf, p, buf_max, method);
     p = http_append(buf, p, buf_max, " ");
     p = http_append(buf, p, buf_max, path);
-    p = http_append(buf, p, buf_max, " HTTP/1.0\r\n");
+    p = http_append(buf, p, buf_max, " HTTP/1.1\r\n");
 
     /* Host header */
     p = http_append(buf, p, buf_max, "Host: ");

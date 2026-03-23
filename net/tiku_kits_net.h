@@ -142,6 +142,29 @@
 #endif
 
 /**
+ * @brief Escape NUL (0x00) bytes in SLIP frames (default: enabled).
+ *
+ * The eZ-FET backchannel firmware resets the MSP430 target when it
+ * receives two consecutive NUL bytes.  With this enabled, the SLIP
+ * encoder replaces 0x00 with [ESC, 0xDE] and the decoder reverses
+ * it.  This is a non-standard SLIP extension.
+ *
+ * **Disable (set to 0) when using an external UART adapter (FT232,
+ * CP2102) with the Linux kernel SLIP driver (slattach).**  The
+ * kernel's SLIP decoder does not understand the NUL escape and
+ * will corrupt every 0x00 byte in the packet (turning it into
+ * 0xDE), making IP packets unparseable.
+ *
+ * Set to 0 at compile time to disable:
+ * @code
+ *   -DTIKU_KITS_NET_SLIP_ESC_NUL_ENABLE=0
+ * @endcode
+ */
+#ifndef TIKU_KITS_NET_SLIP_ESC_NUL_ENABLE
+#define TIKU_KITS_NET_SLIP_ESC_NUL_ENABLE  1
+#endif
+
+/**
  * @brief Our IPv4 address (default: 172.16.7.2).
  *
  * Stored as four initialiser bytes in network order.  The default

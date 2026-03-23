@@ -4,9 +4,9 @@
  *
  * Authors: Ambuj Varshney <ambuj@tiku-os.org>
  *
- * tiku_kits_net_http.h - Minimal HTTP/1.0 client
+ * tiku_kits_net_http.h - Minimal HTTP/1.1 client
  *
- * Provides a minimal HTTP/1.0 client that runs on top of the
+ * Provides a minimal HTTP/1.1 client that runs on top of the
  * existing TLS 1.3 PSK-only transport.  Only GET and POST are
  * supported.  No chunked encoding, redirects, cookies, gzip,
  * or keep-alive.
@@ -200,7 +200,7 @@ uint8_t tiku_kits_net_http_parser_done(
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Build an HTTP/1.0 request into a buffer.
+ * @brief Build an HTTP/1.1 request into a buffer.
  *
  * Formats the request line and all headers.  The body is NOT
  * included --- the caller sends it separately.
@@ -238,7 +238,7 @@ uint16_t tiku_kits_net_http_build_request(
 #if TIKU_KITS_NET_HTTP_ENABLE
 
 /**
- * @brief Perform an HTTP/1.0 POST over TLS.
+ * @brief Perform an HTTP/1.1 POST over TLS.
  *
  * Drives the complete sequence: DNS resolve, TCP connect,
  * TLS handshake, send request + JSON body, receive and parse
@@ -272,7 +272,7 @@ int8_t tiku_kits_net_http_post(
     uint16_t *response_len);
 
 /**
- * @brief Perform an HTTP/1.0 GET over TLS.
+ * @brief Perform an HTTP/1.1 GET over TLS.
  *
  * Same as http_post but sends a GET request with no body.
  *
