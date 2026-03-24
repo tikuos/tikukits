@@ -6,6 +6,11 @@
  *
  * tiku_kits_time.c - Common time utility functions
  *
+ * Platform-independent time conversion utilities.  Converts between
+ * Unix timestamps (seconds since 1970-01-01) and broken-down
+ * date/time structs (tiku_kits_time_t).  Uses integer-only
+ * arithmetic with no heap allocation, suitable for embedded systems.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:

@@ -162,6 +162,13 @@ tiku_kits_net_syslog_init(void)
 /* CONFIGURATION API                                                         */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Store the syslog collector's IPv4 address.
+ *
+ * Copies 4 bytes into static storage and sets the server_set flag.
+ * All subsequent syslog_send() calls will direct UDP datagrams to
+ * this address on port 514.
+ */
 int8_t
 tiku_kits_net_syslog_set_server(const uint8_t *server_addr)
 {
@@ -176,6 +183,13 @@ tiku_kits_net_syslog_set_server(const uint8_t *server_addr)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Change the syslog facility code (0-23).
+ *
+ * The facility occupies the upper bits of the PRI field and
+ * identifies the source subsystem.  Valid range 0-23; values
+ * above 23 are rejected.  Takes effect on the next send() call.
+ */
 int8_t
 tiku_kits_net_syslog_set_facility(uint8_t facility)
 {
@@ -189,6 +203,13 @@ tiku_kits_net_syslog_set_facility(uint8_t facility)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Set the hostname field for outgoing syslog messages.
+ *
+ * Truncates to TIKU_KITS_NET_SYSLOG_MAX_HOSTNAME characters if
+ * the provided string is longer.  The hostname appears after the
+ * PRI field in the BSD syslog header.
+ */
 int8_t
 tiku_kits_net_syslog_set_hostname(const char *hostname)
 {
@@ -210,6 +231,13 @@ tiku_kits_net_syslog_set_hostname(const char *hostname)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Set the tag (application name) for outgoing messages.
+ *
+ * Truncates to TIKU_KITS_NET_SYSLOG_MAX_TAG characters if the
+ * provided string is longer.  The tag appears before the colon
+ * separator in the MSG part (e.g. "kern: watchdog reset").
+ */
 int8_t
 tiku_kits_net_syslog_set_tag(const char *tag)
 {

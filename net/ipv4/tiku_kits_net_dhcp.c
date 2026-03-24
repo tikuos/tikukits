@@ -437,6 +437,14 @@ dhcp_send(uint8_t msg_type)
 /* INITIALISATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset the DHCP client to its initial idle state.
+ *
+ * Unbinds the DHCP client port (68), clears the lease, hardware
+ * address, transaction ID, retry counter, and saved IP.  After
+ * init the client is in IDLE state and ready for a new exchange.
+ * Safe to call at any time to forcibly abort a running exchange.
+ */
 void
 tiku_kits_net_dhcp_init(void)
 {
@@ -456,6 +464,21 @@ tiku_kits_net_dhcp_init(void)
 /* DHCP EXCHANGE                                                             */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Begin a DHCP exchange by broadcasting a DISCOVER.
+ *
+ * Saves the current IP address, sets our IP to 0.0.0.0 (as required
+ * by RFC 2131), stores the client hardware address (or the default
+ * "TIKU\x01\x00" if NULL), generates a transaction ID by XOR-ing
+ * the first 4 hardware bytes with "DHCP", binds UDP port 68 for
+ * receiving responses, and transmits a DHCPDISCOVER.
+ *
+ * On any failure (already active, bind failure, send failure) the
+ * saved IP is restored and the client port is unbound.
+ *
+ * After start(), call dhcp_poll() periodically until get_state()
+ * returns BOUND or ERROR.
+ */
 int8_t
 tiku_kits_net_dhcp_start(const uint8_t *client_hw)
 {
@@ -517,6 +540,24 @@ tiku_kits_net_dhcp_start(const uint8_t *client_hw)
 /* POLLING                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Check for pending DHCP events and drive the state machine.
+ *
+ * Consumes the pending_evt flag set by the UDP receive callback.
+ * If no event is pending, increments the retry counter and
+ * retransmits the current message (DISCOVER or REQUEST) -- but
+ * only when the SLIP receive buffer is idle, to avoid corrupting
+ * a partially-received response in the half-duplex net_buf.
+ *
+ * On OFFER: resets retries, sends DHCPREQUEST for the offered IP,
+ * and transitions to REQUESTING.
+ *
+ * On ACK: unbinds the client port, updates the system IP address
+ * via ipv4_set_addr(), and transitions to BOUND.
+ *
+ * On NAK or retry exhaustion: unbinds the port, restores the
+ * saved IP, and transitions to ERROR.
+ */
 tiku_kits_net_dhcp_evt_t
 tiku_kits_net_dhcp_poll(void)
 {
@@ -596,6 +637,13 @@ tiku_kits_net_dhcp_poll(void)
 /* STATE AND LEASE QUERY                                                     */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the current DHCP client state.
+ *
+ * IDLE = no exchange active, DISCOVER_SENT = awaiting OFFER,
+ * REQUESTING = awaiting ACK, BOUND = lease active (IP assigned),
+ * ERROR = exchange failed.
+ */
 tiku_kits_net_dhcp_state_t
 tiku_kits_net_dhcp_get_state(void)
 {
@@ -604,6 +652,14 @@ tiku_kits_net_dhcp_get_state(void)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return a pointer to the lease information.
+ *
+ * Only valid when get_state() returns BOUND.  The lease struct
+ * contains the assigned IP, subnet mask, gateway, server IP,
+ * and lease duration in seconds.  Returns NULL if the client
+ * is not in BOUND state.
+ */
 const tiku_kits_net_dhcp_lease_t *
 tiku_kits_net_dhcp_get_lease(void)
 {
@@ -617,6 +673,15 @@ tiku_kits_net_dhcp_get_lease(void)
 /* RELEASE                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Release the DHCP lease and return to IDLE.
+ *
+ * If currently BOUND, briefly re-binds the client port, sends a
+ * DHCPRELEASE to the server (so it can reclaim the address), and
+ * unbinds.  Resets the state to IDLE and clears pending events.
+ * The system IP is NOT cleared -- the caller should set a new
+ * address or call dhcp_start() for a fresh lease.
+ */
 int8_t
 tiku_kits_net_dhcp_release(void)
 {

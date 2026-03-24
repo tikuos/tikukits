@@ -6,6 +6,25 @@
  *
  * tiku_kits_net_slip.c - SLIP (RFC 1055) encode/decode over UART
  *
+ * Platform-independent SLIP framing implementation.  TX is a
+ * blocking encoder that escapes special bytes (END, ESC, and
+ * optionally NUL) and writes one byte at a time via
+ * tiku_uart_putc().  RX is a non-blocking byte-at-a-time state
+ * machine that can be called repeatedly from a poll loop to
+ * reassemble a complete IP frame from UART bytes.
+ *
+ * The decoder uses two static variables (state and overflow flag)
+ * that persist across poll_rx calls, allowing partial frames to
+ * be assembled over multiple invocations.  When a frame exceeds
+ * the caller's buffer capacity, the overflow flag is set and the
+ * remaining bytes are discarded until the next END delimiter
+ * resets the decoder for a fresh frame.
+ *
+ * The pre-defined tiku_kits_net_slip_link struct at the bottom
+ * packages the send and poll_rx functions into a link-layer
+ * backend that can be plugged into the IPv4 layer via
+ * tiku_kits_net_ipv4_set_link().
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
@@ -46,9 +65,16 @@ static enum slip_rx_state slip_state;
 static uint8_t slip_overflow;
 
 /*---------------------------------------------------------------------------*/
-/* PUBLIC FUNCTIONS                                                          */
+/* INITIALISATION                                                            */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset the SLIP decoder to its initial state.
+ *
+ * Clears the state machine to NORMAL and resets the overflow flag.
+ * The UART hardware is NOT initialised here -- that is handled by
+ * the arch-level boot sequence before the net process starts.
+ */
 void
 tiku_kits_net_slip_init(void)
 {
@@ -57,7 +83,29 @@ tiku_kits_net_slip_init(void)
 }
 
 /*---------------------------------------------------------------------------*/
+/* TRANSMIT                                                                  */
+/*---------------------------------------------------------------------------*/
 
+/**
+ * @brief SLIP-encode and transmit a packet over UART.
+ *
+ * Sends a leading END byte to flush any line noise, then iterates
+ * over the packet replacing special bytes with their two-byte escape
+ * sequences (RFC 1055):
+ *   - END (0xC0)  ->  ESC (0xDB) + ESC_END (0xDC)
+ *   - ESC (0xDB)  ->  ESC (0xDB) + ESC_ESC (0xDD)
+ *   - NUL (0x00)  ->  ESC (0xDB) + ESC_NUL (0xDE)  [if enabled]
+ *
+ * A trailing END byte marks the frame boundary.  All bytes are
+ * written synchronously via tiku_uart_putc(), so this function
+ * blocks until the entire frame has been queued to the UART.
+ *
+ * The NUL escape is a non-standard extension that works around
+ * an eZ-FET firmware bug where two consecutive 0x00 bytes on the
+ * backchannel UART trigger a target reset.  It is controlled by
+ * TIKU_KITS_NET_SLIP_ESC_NUL_ENABLE and must be disabled when
+ * using an external UART adapter with the Linux kernel SLIP driver.
+ */
 int8_t
 tiku_kits_net_slip_send(const uint8_t *pkt, uint16_t len)
 {
@@ -103,7 +151,33 @@ tiku_kits_net_slip_send(const uint8_t *pkt, uint16_t len)
 }
 
 /*---------------------------------------------------------------------------*/
+/* RECEIVE                                                                   */
+/*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Non-blocking SLIP receive: decode available UART bytes.
+ *
+ * Drains all bytes currently available in the UART ring buffer
+ * and feeds them through a two-state machine:
+ *
+ *   SLIP_RX_NORMAL -- the default state.  An END byte signals a
+ *   frame boundary; an ESC byte transitions to SLIP_RX_ESC; all
+ *   other bytes are appended to the output buffer.
+ *
+ *   SLIP_RX_ESC -- the previous byte was ESC.  The current byte
+ *   is decoded (ESC_END -> END, ESC_ESC -> ESC, ESC_NUL -> NUL)
+ *   and appended.  Any other byte after ESC is treated as a
+ *   protocol violation and stored literally.
+ *
+ * If the decoded frame exceeds @p buf_size, the overflow flag is
+ * set and remaining bytes are discarded.  The overflow flag is
+ * cleared when the next END delimiter arrives, allowing the
+ * decoder to recover for subsequent frames.
+ *
+ * Returns 1 when a complete, non-empty frame is ready in @p buf
+ * (with *pos set to the frame length).  Returns 0 if no complete
+ * frame is available yet -- call again when more UART bytes arrive.
+ */
 uint8_t
 tiku_kits_net_slip_poll_rx(uint8_t *buf, uint16_t buf_size, uint16_t *pos)
 {
@@ -171,6 +245,12 @@ tiku_kits_net_slip_poll_rx(uint8_t *buf, uint16_t buf_size, uint16_t *pos)
 /* LINK BACKEND DEFINITION                                                   */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * Pre-defined SLIP link-layer backend.  Pass to
+ * tiku_kits_net_ipv4_set_link() to route all IPv4 I/O through
+ * SLIP over the backchannel UART.  The net process registers
+ * this backend during its one-time init sequence.
+ */
 const tiku_kits_net_link_t tiku_kits_net_slip_link = {
     .send    = tiku_kits_net_slip_send,
     .poll_rx = tiku_kits_net_slip_poll_rx,

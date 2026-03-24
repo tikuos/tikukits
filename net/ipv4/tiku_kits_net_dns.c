@@ -544,6 +544,13 @@ static int8_t dns_parse_response(void)
 /* PUBLIC API                                                                */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset all resolver state and flush the cache.
+ *
+ * Clears the transaction ID counter, reply flags, cache entries,
+ * and unbinds any previously-bound UDP port.  After init the
+ * resolver is in IDLE state with no server configured.
+ */
 void tiku_kits_net_dns_init(void)
 {
     dns_state = TIKU_KITS_NET_DNS_STATE_IDLE;
@@ -567,6 +574,13 @@ void tiku_kits_net_dns_init(void)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Store the DNS server address for future queries.
+ *
+ * Copies 4 bytes into static storage.  Must be called at least
+ * once before dns_resolve() -- the resolver rejects queries if
+ * no server has been configured.
+ */
 int8_t tiku_kits_net_dns_set_server(const uint8_t *addr)
 {
     if (addr == (void *)0) {
@@ -580,6 +594,20 @@ int8_t tiku_kits_net_dns_set_server(const uint8_t *addr)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Start a DNS A-record query for the given hostname.
+ *
+ * First computes a djb2 hash of the hostname and checks the 2-entry
+ * cache.  On a cache hit the resolver transitions directly to DONE
+ * without sending a packet.  On a miss, the hostname is encoded into
+ * DNS wire format (length-prefixed labels), a standard query packet
+ * is built on the stack (ID, RD=1, QDCOUNT=1, QTYPE=A, QCLASS=IN),
+ * the local UDP port is bound for receiving the response, and the
+ * packet is sent to the configured DNS server on port 53.
+ *
+ * After calling resolve(), poll dns_poll() periodically until
+ * get_state() returns DONE or ERROR.
+ */
 int8_t tiku_kits_net_dns_resolve(const char *hostname)
 {
     uint8_t qname[TIKU_KITS_NET_DNS_MAX_HOSTNAME + 2];
@@ -698,6 +726,19 @@ int8_t tiku_kits_net_dns_resolve(const char *hostname)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Poll for a DNS reply and drive the state machine.
+ *
+ * If the UDP callback has set dns_reply_ready, parses the response
+ * from the FRAM-backed rx buffer, extracts the first A record,
+ * caches the result (hash + address + TTL), unbinds the port, and
+ * transitions to DONE.  If the parse fails (NXDOMAIN, truncation,
+ * no A record), transitions to ERROR.
+ *
+ * If no reply has arrived, increments the retry counter.  When
+ * retries reach DNS_MAX_RETRIES the port is unbound and the state
+ * moves to ERROR with a TIMEOUT return code.
+ */
 int8_t tiku_kits_net_dns_poll(void)
 {
     int8_t rc;
@@ -744,6 +785,12 @@ int8_t tiku_kits_net_dns_poll(void)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the current resolver state.
+ *
+ * IDLE = no query active, SENT = query in flight, DONE = address
+ * available via get_addr(), ERROR = query failed.
+ */
 tiku_kits_net_dns_state_t tiku_kits_net_dns_get_state(void)
 {
     return dns_state;
@@ -751,6 +798,12 @@ tiku_kits_net_dns_state_t tiku_kits_net_dns_get_state(void)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Copy the resolved IPv4 address to the caller's buffer.
+ *
+ * Only valid when get_state() returns DONE.  Copies 4 bytes in
+ * network order into @p addr_out.
+ */
 int8_t tiku_kits_net_dns_get_addr(uint8_t *addr_out)
 {
     if (addr_out == (void *)0) {
@@ -767,6 +820,13 @@ int8_t tiku_kits_net_dns_get_addr(uint8_t *addr_out)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the TTL from the resolved A record.
+ *
+ * Only meaningful in DONE state.  Returns 0 if no result is
+ * available.  The TTL is in seconds as received from the DNS
+ * server and is not adjusted for elapsed time since the query.
+ */
 uint32_t tiku_kits_net_dns_get_ttl(void)
 {
     if (dns_state != TIKU_KITS_NET_DNS_STATE_DONE) {
@@ -777,6 +837,12 @@ uint32_t tiku_kits_net_dns_get_ttl(void)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Cancel any in-flight query and return to IDLE.
+ *
+ * Unbinds the DNS port, clears the reply flag and retry counter.
+ * Safe to call in any state (including IDLE, where it is a no-op).
+ */
 int8_t tiku_kits_net_dns_abort(void)
 {
     tiku_kits_net_udp_unbind(TIKU_KITS_NET_DNS_LOCAL_PORT);
@@ -788,6 +854,13 @@ int8_t tiku_kits_net_dns_abort(void)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Invalidate every cache entry.
+ *
+ * Sets the valid flag to 0 on all TIKU_KITS_NET_DNS_CACHE_SIZE
+ * slots.  The next resolve() call will always send a query on
+ * the wire regardless of hostname.
+ */
 void tiku_kits_net_dns_cache_flush(void)
 {
     uint8_t i;

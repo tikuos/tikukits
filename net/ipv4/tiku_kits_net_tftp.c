@@ -413,6 +413,15 @@ start_transfer(const uint8_t *server_addr, const char *filename,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Start a read transfer (download file from server).
+ *
+ * Stores the data callback, calls start_transfer() to send an
+ * RRQ with blksize option, and enters the RRQ_SENT state.
+ * After this, the application must call tftp_poll() repeatedly
+ * to receive DATA blocks via the callback and drive the ACK
+ * exchange to completion.
+ */
 int8_t
 tiku_kits_net_tftp_get(const uint8_t *server_addr,
                         const char *filename,
@@ -438,6 +447,15 @@ tiku_kits_net_tftp_get(const uint8_t *server_addr,
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Start a write transfer (upload file to server).
+ *
+ * Stores the supply callback, calls start_transfer() to send a
+ * WRQ with blksize option, and enters the WRQ_SENT state.
+ * After this, the application must call tftp_poll() repeatedly.
+ * Each ACK from the server triggers the supply_cb to provide
+ * the next data block for transmission.
+ */
 int8_t
 tiku_kits_net_tftp_put(const uint8_t *server_addr,
                         const char *filename,
@@ -600,6 +618,13 @@ tiku_kits_net_tftp_poll(void)
 /* STATE QUERY                                                               */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the current transfer state.
+ *
+ * IDLE = no transfer, *_SENT = request in flight, TRANSFERRING =
+ * receiving DATA blocks, SENDING = transmitting DATA blocks,
+ * COMPLETE = transfer finished OK, ERROR = transfer failed.
+ */
 tiku_kits_net_tftp_state_t
 tiku_kits_net_tftp_get_state(void)
 {
@@ -608,6 +633,13 @@ tiku_kits_net_tftp_get_state(void)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the TFTP error code from the last ERROR packet.
+ *
+ * Only meaningful when get_state() returns ERROR and the cause
+ * was an ERROR packet from the server.  Returns one of the
+ * TIKU_KITS_NET_TFTP_ERR_* codes (0-7 per RFC 1350).
+ */
 uint16_t
 tiku_kits_net_tftp_get_error(void)
 {

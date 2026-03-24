@@ -106,6 +106,12 @@ http_u16_to_str(uint16_t val, char *buf)
 /* RESPONSE PARSER                                                           */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Reset the HTTP response parser to its initial state.
+ *
+ * Sets the output buffer, zeroes counters, and positions the
+ * state machine at the start of the HTTP status line.
+ */
 void
 tiku_kits_net_http_parser_init(
     tiku_kits_net_http_parser_t *p,
@@ -121,6 +127,20 @@ tiku_kits_net_http_parser_init(
     p->hdr_end_seq = 0;
 }
 
+/**
+ * @brief Feed raw HTTP response bytes through the parser.
+ *
+ * Processes each byte through a three-phase state machine:
+ *   1. STATUS -- skips "HTTP/1.x ", extracts the 3-digit status
+ *      code, then skips the reason phrase until \\n.
+ *   2. HEADERS -- counts \\r\\n sequences; when \\r\\n\\r\\n is
+ *      detected (the empty line after headers), transitions to BODY.
+ *   3. BODY -- copies bytes into the caller's body_buf up to
+ *      body_max capacity.
+ *
+ * The parser is incremental: it can be called repeatedly with
+ * small chunks as data arrives from the TLS layer.
+ */
 void
 tiku_kits_net_http_parser_feed(
     tiku_kits_net_http_parser_t *p,
@@ -195,6 +215,12 @@ tiku_kits_net_http_parser_feed(
     }
 }
 
+/**
+ * @brief Check if the parser has finished processing the response.
+ *
+ * Returns 1 when the parser state has reached PARSE_DONE (the TLS
+ * connection signalled end-of-data), 0 otherwise.
+ */
 uint8_t
 tiku_kits_net_http_parser_done(
     const tiku_kits_net_http_parser_t *p)
@@ -206,6 +232,18 @@ tiku_kits_net_http_parser_done(
 /* REQUEST BUILDER                                                           */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Format an HTTP/1.1 request line and headers into a buffer.
+ *
+ * Assembles the request line ("METHOD path HTTP/1.1\\r\\n") followed
+ * by Host, Content-Type (if body_len > 0), x-api-key + anthropic-
+ * version (if api_key != NULL), Content-Length (if body_len > 0),
+ * Connection: close, and the final blank line.  The body is NOT
+ * included -- the caller sends it separately after the headers.
+ *
+ * Returns the number of bytes written.  If the buffer is too small,
+ * the output is truncated and the return value equals buf_max.
+ */
 uint16_t
 tiku_kits_net_http_build_request(
     const char *method,
@@ -625,6 +663,13 @@ http_execute(
 /* PUBLIC API                                                                */
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Perform an HTTP/1.1 POST over TLS.
+ *
+ * Thin wrapper around http_execute() with method="POST".  Validates
+ * required parameters and delegates the full DNS -> TCP -> TLS ->
+ * HTTP sequence to the internal blocking helper.
+ */
 int8_t
 tiku_kits_net_http_post(
     const char *host,
@@ -646,6 +691,12 @@ tiku_kits_net_http_post(
         response_buf, response_max, response_len);
 }
 
+/**
+ * @brief Perform an HTTP/1.1 GET over TLS.
+ *
+ * Same as http_post but sends a GET request with no body.
+ * Delegates to http_execute() with method="GET" and body_len=0.
+ */
 int8_t
 tiku_kits_net_http_get(
     const char *host,
@@ -665,6 +716,13 @@ tiku_kits_net_http_get(
         response_buf, response_max, response_len);
 }
 
+/**
+ * @brief Return the HTTP status code from the last transaction.
+ *
+ * Reads the status_code field from the parser context.  Returns
+ * the 3-digit code (e.g. 200, 404) or 0 if no request has been
+ * made yet.
+ */
 uint16_t
 tiku_kits_net_http_get_status_code(void)
 {

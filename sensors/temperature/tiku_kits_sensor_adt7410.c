@@ -6,6 +6,12 @@
  *
  * tiku_kits_sensor_adt7410.c - ADT7410 I2C temperature sensor driver
  *
+ * Analog Devices ADT7410 high-accuracy digital temperature sensor
+ * driver using the TikuOS I2C bus abstraction.  Reads the 16-bit
+ * temperature register (13-bit mode by default) and converts the
+ * raw two's-complement value to a tiku_kits_sensor_temp_t.
+ * Typical accuracy is +/-0.5 C from -40 to +105 C.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:

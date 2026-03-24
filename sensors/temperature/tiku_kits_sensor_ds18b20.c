@@ -6,6 +6,13 @@
  *
  * tiku_kits_sensor_ds18b20.c - DS18B20 1-Wire temperature sensor driver
  *
+ * Dallas/Maxim DS18B20 programmable-resolution digital temperature
+ * sensor driver using the TikuOS 1-Wire bus abstraction.  Issues a
+ * Convert T command, waits for the conversion delay (750 ms at 12-bit
+ * resolution), reads the 9-byte scratchpad, validates the CRC, and
+ * converts the raw 16-bit two's-complement value to a
+ * tiku_kits_sensor_temp_t.  Accuracy is +/-0.5 C from -10 to +85 C.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:

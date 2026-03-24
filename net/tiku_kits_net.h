@@ -110,7 +110,7 @@
  * @endcode
  */
 #ifndef TIKU_KITS_NET_TCP_ENABLE
-#define TIKU_KITS_NET_TCP_ENABLE    0
+#define TIKU_KITS_NET_TCP_ENABLE    1
 #endif
 
 /**
@@ -161,7 +161,7 @@
  * @endcode
  */
 #ifndef TIKU_KITS_NET_SLIP_ESC_NUL_ENABLE
-#define TIKU_KITS_NET_SLIP_ESC_NUL_ENABLE  1
+#define TIKU_KITS_NET_SLIP_ESC_NUL_ENABLE  0
 #endif
 
 /**

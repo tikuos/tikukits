@@ -255,7 +255,7 @@
  * as TIKU_KITS_NET_TCP_MSS + 10.
  */
 #ifndef TIKU_KITS_NET_TCP_TX_POOL_COUNT
-#define TIKU_KITS_NET_TCP_TX_POOL_COUNT     4
+#define TIKU_KITS_NET_TCP_TX_POOL_COUNT     8
 #endif
 
 /**
