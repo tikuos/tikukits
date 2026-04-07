@@ -267,14 +267,9 @@ tls_send_client_hello(void)
     uint8_t early_secret[32], binder_key[32];
     uint8_t trunc_hash[32], binder[32];
     uint16_t saved;
-    uint8_t i;
 
-    /* Generate client_random.
-     * TODO: replace with proper entropy source.
-     * For now, use a simple counter-based approach. */
-    for (i = 0; i < 32; i++) {
-        client_random[i] = (uint8_t)(i * 7 + 0xA5);
-    }
+    /* Fill client_random from the platform entropy source. */
+    TIKU_KITS_CRYPTO_TLS_RNG_FILL(client_random, 32);
 
     /* Build ClientHello in FRAM TX buffer */
     saved = tiku_mpu_unlock_nvm();

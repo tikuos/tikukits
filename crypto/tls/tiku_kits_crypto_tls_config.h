@@ -43,6 +43,28 @@
 #endif
 
 /*---------------------------------------------------------------------------*/
+/* ENTROPY SOURCE                                                            */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * User-supplied function that fills a buffer with random bytes.
+ *
+ * Signature: void func(uint8_t *buf, uint8_t len)
+ *
+ * Define this macro to the name of your platform RNG before including
+ * this header or via EXTRA_CFLAGS, e.g.:
+ *   -DTIKU_KITS_CRYPTO_TLS_RNG_FILL=my_hw_rng_fill
+ *
+ * If left undefined, the build will fail with an error — there is no
+ * insecure fallback.
+ */
+#ifndef TIKU_KITS_CRYPTO_TLS_RNG_FILL
+#error "TIKU_KITS_CRYPTO_TLS_RNG_FILL must be defined to a function " \
+       "with signature void f(uint8_t *buf, uint8_t len) that provides " \
+       "cryptographically suitable random bytes."
+#endif
+
+/*---------------------------------------------------------------------------*/
 /* BUFFER SIZES (FRAM-backed)                                                */
 /*---------------------------------------------------------------------------*/
 
