@@ -20,9 +20,46 @@ tikukits/epaper/
                                     supported model.
 ```
 
-Currently shipped families:
-- `pervasive_itc/` -- Pervasive iTC small-CJ controller (BW + BWR + BWRY,
-  panels up to 4.37").
+Currently shipped families (all live under `pervasive_itc/`):
+- iTC small-CJ -- C/H/K (BW) and J (BWR Spectra) film panels up to
+  4.37".  Ships with E2266KS0C1 (2.66" BW) and E2370JS0C1 (3.70" BWR)
+  descriptors.  Driver: `tiku_kits_epaper_itc_smallcj.{c,h}`.
+- iTC Spectra-4 -- Q-film BWRY panels (black/white/red/yellow).
+  Different protocol from small-CJ: per-panel OTP read over 3-wire
+  SPI, single packed 2bpp framebuffer, panel-specific init sequence.
+  Ships with the E2417QS0A3 (4.17") descriptor.  Driver:
+  `tiku_kits_epaper_itc_spectra4.{c,h}`.
+
+## Extension boards
+
+The kit works with both Pervasive Displays extension boards in the
+field today:
+
+- **EXT3-1**: classic 10-pin connector, no panel-power gate.  Set
+  `pins.power_port = 0` so the kit treats the gate as not connected.
+- **EXT4-02**: 20-pin connector, adds a panel-power MOSFET on
+  pin 11 (White).  Set `pins.power_port` and `pins.power_pin` to
+  the GPIO that drives that line; the kit auto-drives it HIGH at
+  init and Spectra-4 drivers use it for OTP-recovery power cycles.
+
+```c
+tiku_kits_epaper_t epd = {
+    .panel = ...,
+    .pins  = {
+        .cs_port = 3, .cs_pin = 0,
+        .dc_port = 3, .dc_pin = 1,
+        .reset_port = 3, .reset_pin = 2,
+        .busy_port = 3, .busy_pin = 3,
+        /* EXT3-1: leave power_* zero.  EXT4-02: wire pin 11 to a
+         * GPIO and set power_port / power_pin here. */
+        .power_port = 3, .power_pin = 4,
+    },
+    ...
+};
+```
+
+The example `epaper_kit` selects the board at compile time:
+`-DEPAPER_KIT_BOARD=2` for EXT4-02, default is EXT3-1.
 
 ## Application code is family-agnostic
 
@@ -68,20 +105,27 @@ Pure data work, no driver edits:
 4. Add a matching `extern const ...` declaration in the family
    header so apps can reference it.
 
-Example: adding a 4.17" iTC BWRY panel to `pervasive_itc/`:
+Example: the 3.70" iTC BWR panel under `pervasive_itc/` (J-film,
+small-CJ controller):
 
 ```c
-static const tiku_kits_epaper_itc_smallcj_data_t e2417qs0a3_data = {
+static const tiku_kits_epaper_itc_smallcj_data_t e2370js0c1_data = {
     .psr_bytes = { 0x0Fu, 0x89u },   /* size >= 3.70" */
 };
-const tiku_kits_epaper_panel_t tiku_kits_epaper_panel_e2417qs0a3 = {
-    .width = 300, .height = 400,
-    .colour_planes = 2,              /* BWRY */
-    .name = "E2417QS0A3 (4.17\" iTC BWRY)",
+const tiku_kits_epaper_panel_t tiku_kits_epaper_panel_e2370js0c1 = {
+    .width = 240, .height = 416,     /* short axis, long axis */
+    .colour_planes = 2,              /* (black, red) plane pair */
+    .name = "E2370JS0C1 (3.70\" iTC BWR)",
     .ops = &tiku_kits_epaper_itc_smallcj_ops,
-    .family_data = &e2417qs0a3_data,
+    .family_data = &e2370js0c1_data,
 };
 ```
+
+BWRY (Q-film) panels follow a similar pattern but use a separate
+ops vtable (`tiku_kits_epaper_itc_spectra4_ops`) and a richer
+family-data struct (chip ID, OTP byte count, init function
+pointer).  See `pervasive_itc/tiku_kits_epaper_itc_spectra4.c`
+for the E2417QS0A3 entry as the working template.
 
 ## Adding a new controller family
 
@@ -149,7 +193,8 @@ between BUSY polls inside the driver.
 
 ## Verified hardware
 
-| Panel         | Family        | Verified on            |
-|---------------|---------------|------------------------|
-| E2266KS0C1    | iTC small-CJ  | MSP430FR5994 LP + EXT3-1 |
-| E2370JS0C1    | iTC small-CJ  | MSP430FR5994 LP + EXT3-1 |
+| Panel         | Family            | Status                                                    |
+|---------------|-------------------|-----------------------------------------------------------|
+| E2266KS0C1    | iTC small-CJ      | Verified, MSP430FR5994 LP + EXT3-1                        |
+| E2370JS0C1    | iTC small-CJ      | Verified, MSP430FR5994 LP + EXT3-1 **and EXT4-02**        |
+| E2417QS0A3    | iTC Spectra-4     | Driver landed, OTP read failing on EXT3-1 / EXT4-02 alike |

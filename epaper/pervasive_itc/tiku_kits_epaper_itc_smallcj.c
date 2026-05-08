@@ -7,8 +7,10 @@
  * tiku_kits_epaper_itc_smallcj.c - Pervasive iTC small-CJ implementation
  *
  * Implements the Pervasive Displays "small CJ" controller protocol
- * for monochrome (FILM_C/H/K) and colour (FILM_J/Q) iTC panels up
+ * for monochrome (FILM_C/H/K) and colour (FILM_J) iTC panels up
  * to 4.37". Verified on E2266KS0C1 (BW) and E2370JS0C1 (BWR).
+ * Q-film BWRY panels (e.g. E2417QS0A3) use a different protocol --
+ * see tiku_kits_epaper_itc_spectra4.c.
  *
  * Driver entry points are private (static) and exposed only via the
  * tiku_kits_epaper_itc_smallcj_ops vtable. Applications go through
@@ -57,6 +59,13 @@
 #include <interfaces/gpio/tiku_gpio.h>
 #include <kernel/cpu/tiku_common.h>
 
+#if defined(TIKU_SHELL_ENABLE) && (TIKU_SHELL_ENABLE == 1)
+#include <kernel/shell/tiku_shell_io.h>
+#define EPD_DBG(...) SHELL_PRINTF(__VA_ARGS__)
+#else
+#define EPD_DBG(...) do {} while (0)
+#endif
+
 /*---------------------------------------------------------------------------*/
 /* PROTOCOL CONSTANTS                                                        */
 /*---------------------------------------------------------------------------*/
@@ -76,10 +85,11 @@
  * boundary. */
 #define EPD_CS_HOLD_US          50u
 
-/* BUSY-poll safety bound. One iteration is roughly 20 ms, so 750
- * caps the total wait at ~15 s -- long enough for a global refresh
- * at 0 C, short enough that a wiring fault gets reported promptly. */
-#define EPD_BUSY_POLL_MAX       750u
+/* BUSY-poll safety bound. One iteration is roughly 20 ms, so 1500
+ * caps the total wait at ~30 s -- generous for a global refresh
+ * at 0 C and for fresh-power-on first refresh (EXT4 panelPower).
+ * A wiring fault still reports within 30 s. */
+#define EPD_BUSY_POLL_MAX       1500u
 
 /*---------------------------------------------------------------------------*/
 /* GPIO HELPERS                                                              */
@@ -214,10 +224,11 @@ push_frames(const tiku_kits_epaper_t *epd)
     const uint16_t bytes =
         (uint16_t)tiku_kits_epaper_framebuffer_size(epd->panel);
 
-    /* DTM1 = black plane, always sent.
-     * DTM2 = red plane for colour panels. For BW panels DTM2 is
-     *        omitted; the controller does not require it for
-     *        single-plane image data on this family. */
+    /* DTM1 = black plane, DTM2 = red plane. Plane encoding is
+     * (black, red): (0,0)=white, (1,0)=black, (0,1)=red. The
+     * (1,1) state is undefined for J-film BWR -- callers should
+     * not request YELLOW on a small-CJ panel.  Q-film BWRY uses
+     * a different driver entirely (itc_spectra4). */
     send_index_data(&epd->pins, EPD_OP_DTM1, epd->framebuffer, bytes);
     if (epd->framebuffer_red != NULL) {
         send_index_data(&epd->pins, EPD_OP_DTM2,
@@ -269,14 +280,40 @@ itc_smallcj_refresh(tiku_kits_epaper_t *epd)
     send_cmd8(&epd->pins, EPD_OP_DISPLAY_REFRESH);
     tiku_common_delay_ms(5);
 
-    return wait_ready(&epd->pins);
+    /* Poll for BUSY HIGH but cap the wait at a typical-refresh
+     * duration.  Some EXT board variants (notably EXT4) don't
+     * drive BUSY back HIGH at the end of the global update;
+     * the panel finishes the waveform but holds BUSY LOW until
+     * the next reset.  Waiting 30 s on every refresh would be
+     * a huge waste; cap at ~12 s which is enough for a typical
+     * 3.7" BWR global update at 25 C and matches the time the
+     * physical refresh actually takes.  Treat timeout as success
+     * since the panel painted the frame either way. */
+    {
+        uint16_t i;
+        for (i = 0; i < 600u; i++) {       /* 600 * 20 ms = 12 s */
+            if (!busy_asserted(&epd->pins)) {
+                break;                      /* BUSY went HIGH */
+            }
+            tiku_common_delay_ms(20);
+        }
+    }
+    return TIKU_KITS_EPAPER_OK;
 }
 
 static int
 itc_smallcj_sleep(tiku_kits_epaper_t *epd)
 {
+    uint16_t i;
     send_cmd8(&epd->pins, EPD_OP_POWER_OFF);
-    return wait_ready(&epd->pins);
+    /* Same EXT4 BUSY-stuck-LOW quirk applies after power-off:
+     * the panel's DC/DC has shut down (microamps now) but BUSY
+     * may not return HIGH on EXT4.  Cap at 4 s and proceed. */
+    for (i = 0; i < 200u; i++) {       /* 200 * 20 ms = 4 s */
+        if (!busy_asserted(&epd->pins)) break;
+        tiku_common_delay_ms(20);
+    }
+    return TIKU_KITS_EPAPER_OK;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -319,3 +356,4 @@ const tiku_kits_epaper_panel_t tiku_kits_epaper_panel_e2370js0c1 = {
     .ops           = &tiku_kits_epaper_itc_smallcj_ops,
     .family_data   = &e2370js0c1_data,
 };
+

@@ -181,6 +181,15 @@ typedef struct {
     int (*init)(tiku_kits_epaper_t *epd);
     int (*refresh)(tiku_kits_epaper_t *epd);
     int (*sleep)(tiku_kits_epaper_t *epd);
+    /** Optional partial-refresh path. NULL = panel doesn't support
+     *  partial; the generic dispatcher will fall back to a full
+     *  refresh in that case. The (x, y, w, h) rectangle is in
+     *  panel-pixel coordinates and may be silently expanded by
+     *  the driver to controller-window granularity (e.g. byte
+     *  alignment on the X axis). */
+    int (*refresh_rect)(tiku_kits_epaper_t *epd,
+                         uint16_t x, uint16_t y,
+                         uint16_t w, uint16_t h);
 } tiku_kits_epaper_ops_t;
 
 /*---------------------------------------------------------------------------*/
@@ -231,15 +240,25 @@ typedef struct {
  * application's tiku_spi_init() call before invoking the driver.
  * Only the per-panel discrete signals are described here.
  *
- * All four lines are required for SPI EPDs. Some panels also
- * have an external power-gate MOSFET; if your custom board uses
- * one, gate it from the application code (the kit does not own it).
+ * Panel power gate (`power_port`/`power_pin`):
+ *   EXT4-02 routes panel Vcc through a MOSFET driven by EXT4
+ *   pin 11 (White).  EXT3-1 has no such gate -- the panel is
+ *   always powered.  Set `power_port = 0` for EXT3-1 (or any
+ *   board without a panel-power gate); the kit treats port 0 as
+ *   "not connected" and skips all power-gate operations.  Set
+ *   it to the real port/pin (e.g. 3, 4 on FR5994 LaunchPad)
+ *   for EXT4-02 -- the kit will drive HIGH at init and use
+ *   power-cycle hygiene around reset on family drivers that
+ *   need it.
  */
 typedef struct {
     uint8_t cs_port,    cs_pin;     /**< Chip select (active low) */
     uint8_t dc_port,    dc_pin;     /**< Data / command select */
     uint8_t reset_port, reset_pin;  /**< Hardware reset (active low) */
     uint8_t busy_port,  busy_pin;   /**< BUSY input from panel */
+    uint8_t power_port, power_pin;  /**< Optional panel-power gate
+                                         (port=0 = not connected,
+                                         drives HIGH=on, LOW=off) */
 } tiku_kits_epaper_pins_t;
 
 /*---------------------------------------------------------------------------*/
@@ -306,6 +325,26 @@ int tiku_kits_epaper_init(tiku_kits_epaper_t *epd);
 int tiku_kits_epaper_refresh(tiku_kits_epaper_t *epd);
 
 /**
+ * @brief Push only the pixels inside (x, y, w, h) to the panel.
+ *
+ * Generic dispatcher. When the active panel's family driver
+ * exposes a refresh_rect op, the call routes through it and
+ * benefits from the controller's partial-update mode (typically
+ * <1 s vs ~10-25 s for a full refresh on BWR panels). When the
+ * driver does NOT expose refresh_rect, this falls back to a full
+ * tiku_kits_epaper_refresh() and the rectangle is ignored.
+ *
+ * Pair with tiku_kits_ui_window_render_dirty() and / or
+ * tiku_kits_gfx_offscreen_diff() to compute the rectangle.
+ *
+ * @return TIKU_KITS_EPAPER_OK on success, ERR_PARAM on missing
+ *         fields, or any error code returned by the family driver.
+ */
+int tiku_kits_epaper_refresh_rect(tiku_kits_epaper_t *epd,
+                                   uint16_t x, uint16_t y,
+                                   uint16_t w, uint16_t h);
+
+/**
  * @brief Place the panel in low-power sleep.
  *
  * Panel retains the last displayed image without consuming power.
@@ -358,5 +397,35 @@ void tiku_kits_epaper_clear(tiku_kits_epaper_t *epd, uint8_t colour);
  */
 void tiku_kits_epaper_set_pixel(tiku_kits_epaper_t *epd,
                                  uint16_t x, uint16_t y, uint8_t colour);
+
+/*---------------------------------------------------------------------------*/
+/* PANEL POWER GATE (EXT4 / custom boards)                                   */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief Drive the panel-power gate HIGH (panel powered).
+ *
+ * No-op on boards without a power gate (`power_port == 0`).
+ * EXT3-1 leaves the panel always-on; EXT4 wires it through a
+ * MOSFET on connector pin 11.
+ *
+ * Family drivers that need a Vcc cycle for OTP / waveform reset
+ * can call _off / settle / _on around their reset sequence.
+ *
+ * @param epd  Driver context (only the pins struct is consulted)
+ */
+void tiku_kits_epaper_panel_power_on(tiku_kits_epaper_t *epd);
+
+/**
+ * @brief Drive the panel-power gate LOW (panel unpowered).
+ *
+ * Must release SPI and discrete-control pins to high-Z BEFORE
+ * calling this -- driving signal lines into an unpowered IC can
+ * latch up its protection diodes.  No-op on boards without a
+ * power gate.
+ *
+ * @param epd  Driver context
+ */
+void tiku_kits_epaper_panel_power_off(tiku_kits_epaper_t *epd);
 
 #endif /* TIKU_KITS_EPAPER_H_ */

@@ -42,6 +42,8 @@
  */
 
 #include "tiku_kits_epaper.h"
+#include <interfaces/gpio/tiku_gpio.h>
+#include <kernel/cpu/tiku_common.h>
 #include <string.h>
 
 /*---------------------------------------------------------------------------*/
@@ -73,6 +75,10 @@ tiku_kits_epaper_init(tiku_kits_epaper_t *epd)
     if (epd->panel->ops->init == NULL) {
         return TIKU_KITS_EPAPER_ERR_UNSUPPORTED;
     }
+    /* Drive panel-power gate HIGH if the board has one (EXT4) so
+     * the panel has Vcc before the family driver starts touching
+     * SPI / control pins.  Boards without a gate skip this. */
+    tiku_kits_epaper_panel_power_on(epd);
     return epd->panel->ops->init(epd);
 }
 
@@ -85,6 +91,29 @@ tiku_kits_epaper_refresh(tiku_kits_epaper_t *epd)
         return TIKU_KITS_EPAPER_ERR_UNSUPPORTED;
     }
     return epd->panel->ops->refresh(epd);
+}
+
+int
+tiku_kits_epaper_refresh_rect(tiku_kits_epaper_t *epd,
+                                uint16_t x, uint16_t y,
+                                uint16_t w, uint16_t h)
+{
+    int rc = validate_context(epd);
+    if (rc != TIKU_KITS_EPAPER_OK) return rc;
+
+    /* Empty rectangles are no-ops. */
+    if (w == 0u || h == 0u) return TIKU_KITS_EPAPER_OK;
+
+    /* Driver-supported partial path. */
+    if (epd->panel->ops->refresh_rect != NULL) {
+        return epd->panel->ops->refresh_rect(epd, x, y, w, h);
+    }
+
+    /* Fallback: full refresh. */
+    if (epd->panel->ops->refresh != NULL) {
+        return epd->panel->ops->refresh(epd);
+    }
+    return TIKU_KITS_EPAPER_ERR_UNSUPPORTED;
 }
 
 int
@@ -180,4 +209,30 @@ tiku_kits_epaper_set_pixel(tiku_kits_epaper_t *epd,
         if (red_bit) epd->framebuffer_red[byte_idx] |= bit_mask;
         else         epd->framebuffer_red[byte_idx] &= (uint8_t)~bit_mask;
     }
+}
+
+/*---------------------------------------------------------------------------*/
+/* PANEL POWER GATE                                                          */
+/*---------------------------------------------------------------------------*/
+
+void
+tiku_kits_epaper_panel_power_on(tiku_kits_epaper_t *epd)
+{
+    if (epd == NULL || epd->pins.power_port == 0u) {
+        return;     /* no panel-power gate on this board */
+    }
+    (void)tiku_gpio_dir_out(epd->pins.power_port, epd->pins.power_pin);
+    (void)tiku_gpio_set(epd->pins.power_port, epd->pins.power_pin);
+    /* Vcc rise + panel internal POR. */
+    tiku_common_delay_ms(50);
+}
+
+void
+tiku_kits_epaper_panel_power_off(tiku_kits_epaper_t *epd)
+{
+    if (epd == NULL || epd->pins.power_port == 0u) {
+        return;
+    }
+    (void)tiku_gpio_dir_out(epd->pins.power_port, epd->pins.power_pin);
+    (void)tiku_gpio_clear(epd->pins.power_port, epd->pins.power_pin);
 }

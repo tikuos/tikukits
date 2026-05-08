@@ -11,8 +11,14 @@
  * films J/Q). Supported on the EXT3-1 / EXT4 extension boards.
  *
  * Verified panels:
- *   - E2266KS0C1  (2.66" BW, K film, single plane)
- *   - E2370JS0C1  (3.70" BWR, J film "Spectra", two planes)
+ *   - E2266KS0C1  (2.66" BW,   K film, single plane)
+ *   - E2370JS0C1  (3.70" BWR,  J film "Spectra", two planes)
+ *
+ * Q-film (BWRY "Spectra-4") panels do NOT use this driver --
+ * Pervasive ships them with a different protocol (per-panel OTP
+ * read over 3-wire SPI, single packed 2bpp framebuffer, distinct
+ * init / power-off sequences). See tiku_kits_epaper_itc_spectra4.h
+ * for the BWRY panel descriptors and ops vtable.
  *
  * Adding a new small-CJ panel:
  *   1. Pick the correct PSR pair from Pervasive's small-CJ
