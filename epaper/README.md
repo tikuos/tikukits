@@ -20,27 +20,29 @@ tikukits/epaper/
                                     supported model.
 ```
 
-Currently shipped families (all live under `pervasive_itc/`):
-- iTC small-CJ -- C/H/K (BW) and J (BWR Spectra) film panels up to
-  4.37".  Ships with E2266KS0C1 (2.66" BW) and E2370JS0C1 (3.70" BWR)
-  descriptors.  Driver: `tiku_kits_epaper_itc_smallcj.{c,h}`.
-- iTC Spectra-4 -- Q-film BWRY panels (black/white/red/yellow).
-  Different protocol from small-CJ: per-panel OTP read over 3-wire
-  SPI, single packed 2bpp framebuffer, panel-specific init sequence.
-  Ships with the E2417QS0A3 (4.17") descriptor.  Driver:
-  `tiku_kits_epaper_itc_spectra4.{c,h}`.
+Currently shipped families (under `pervasive_itc/`):
+- **iTC small-CJ** -- C/H/K (BW) and J (BWR "Spectra") film panels
+  up to 4.37".  Ships with E2266KS0C1 (2.66" BW) and E2370JS0C1
+  (3.70" BWR) descriptors.  Driver:
+  `tiku_kits_epaper_itc_smallcj.{c,h}`.
+
+The Q-film "Spectra-4" (BWRY) family is **not part of this public
+library**.  Its driver requires per-panel OTP captures and was
+qualified through extensive hardware bring-up that includes a
+proprietary tooling chain; it is maintained separately and
+distributed under a different licence.  If your build needs it,
+you'll know.
 
 ## Extension boards
 
-The kit works with both Pervasive Displays extension boards in the
-field today:
+The kit works with both Pervasive Displays extension boards:
 
 - **EXT3-1**: classic 10-pin connector, no panel-power gate.  Set
   `pins.power_port = 0` so the kit treats the gate as not connected.
 - **EXT4-02**: 20-pin connector, adds a panel-power MOSFET on
   pin 11 (White).  Set `pins.power_port` and `pins.power_pin` to
   the GPIO that drives that line; the kit auto-drives it HIGH at
-  init and Spectra-4 drivers use it for OTP-recovery power cycles.
+  init and family drivers can use it for power-cycle hygiene.
 
 ```c
 tiku_kits_epaper_t epd = {
@@ -121,11 +123,12 @@ const tiku_kits_epaper_panel_t tiku_kits_epaper_panel_e2370js0c1 = {
 };
 ```
 
-BWRY (Q-film) panels follow a similar pattern but use a separate
-ops vtable (`tiku_kits_epaper_itc_spectra4_ops`) and a richer
-family-data struct (chip ID, OTP byte count, init function
-pointer).  See `pervasive_itc/tiku_kits_epaper_itc_spectra4.c`
-for the E2417QS0A3 entry as the working template.
+A new ops vtable for a different controller family (e.g. Waveshare
+SSD16xx, GoodDisplay UC8xxx) follows the same shape -- declare a
+private family-data struct, implement `init`/`refresh`/`sleep`
+functions, export one `extern const tiku_kits_epaper_ops_t`, and
+add panel descriptors that reference it.  The common
+`tiku_kits_epaper.{c,h}` does not need to change.
 
 ## Adding a new controller family
 
@@ -193,8 +196,7 @@ between BUSY polls inside the driver.
 
 ## Verified hardware
 
-| Panel         | Family            | Status                                                    |
-|---------------|-------------------|-----------------------------------------------------------|
-| E2266KS0C1    | iTC small-CJ      | Verified, MSP430FR5994 LP + EXT3-1                        |
-| E2370JS0C1    | iTC small-CJ      | Verified, MSP430FR5994 LP + EXT3-1 **and EXT4-02**        |
-| E2417QS0A3    | iTC Spectra-4     | Driver landed, OTP read failing on EXT3-1 / EXT4-02 alike |
+| Panel       | Family             | Status                                              |
+|-------------|--------------------|-----------------------------------------------------|
+| E2266KS0C1  | iTC small-CJ (BW)  | Verified, MSP430FR5994 LP + EXT3-1                  |
+| E2370JS0C1  | iTC small-CJ (BWR) | Verified, MSP430FR5994 LP + EXT3-1 **and EXT4-02**  |

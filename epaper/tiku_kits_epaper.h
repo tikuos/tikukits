@@ -251,7 +251,7 @@ typedef struct {
  *   power-cycle hygiene around reset on family drivers that
  *   need it.
  */
-typedef struct {
+typedef struct tiku_kits_epaper_pins {
     uint8_t cs_port,    cs_pin;     /**< Chip select (active low) */
     uint8_t dc_port,    dc_pin;     /**< Data / command select */
     uint8_t reset_port, reset_pin;  /**< Hardware reset (active low) */
