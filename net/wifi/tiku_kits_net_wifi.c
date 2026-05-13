@@ -60,6 +60,61 @@ static uint32_t rx_dropped_other;   /* non-v4 / malformed             */
 static uint32_t rx_delivered;       /* slots successfully drained     */
 
 /*---------------------------------------------------------------------------*/
+/* Passive ARP cache                                                         */
+/*---------------------------------------------------------------------------*/
+/*
+ * Every IPv4 frame carries (sender_ip, sender_mac). Cache that pair
+ * implicitly so unicast TX can resolve dst_ip -> dst_mac without
+ * sending our own ARP request. Replies to incoming traffic always
+ * find a hit because the destination IS the previous sender. Full
+ * outbound-first ARP discovery (gateway we've never heard from)
+ * stays on the 5.A.1 list.
+ */
+#define ARP_CACHE_SIZE 4
+
+typedef struct {
+    uint8_t ip[4];
+    uint8_t mac[6];
+    uint8_t used;
+} arp_entry_t;
+
+static arp_entry_t arp_cache[ARP_CACHE_SIZE];
+static uint8_t     arp_cache_next;
+
+static void
+arp_cache_learn(const uint8_t ip[4], const uint8_t mac[6])
+{
+    uint8_t i, j;
+    for (i = 0U; i < ARP_CACHE_SIZE; ++i) {
+        if (arp_cache[i].used
+            && arp_cache[i].ip[0] == ip[0] && arp_cache[i].ip[1] == ip[1]
+            && arp_cache[i].ip[2] == ip[2] && arp_cache[i].ip[3] == ip[3]) {
+            for (j = 0U; j < 6U; ++j) arp_cache[i].mac[j] = mac[j];
+            return;
+        }
+    }
+    arp_cache[arp_cache_next].used = 1U;
+    for (j = 0U; j < 4U; ++j) arp_cache[arp_cache_next].ip[j]  = ip[j];
+    for (j = 0U; j < 6U; ++j) arp_cache[arp_cache_next].mac[j] = mac[j];
+    arp_cache_next = (uint8_t)((arp_cache_next + 1U) % ARP_CACHE_SIZE);
+}
+
+static int
+arp_cache_lookup(const uint8_t ip[4], uint8_t mac_out[6])
+{
+    uint8_t i, j;
+    for (i = 0U; i < ARP_CACHE_SIZE; ++i) {
+        if (arp_cache[i].used
+            && arp_cache[i].ip[0] == ip[0] && arp_cache[i].ip[1] == ip[1]
+            && arp_cache[i].ip[2] == ip[2] && arp_cache[i].ip[3] == ip[3]) {
+            for (j = 0U; j < 6U; ++j) mac_out[j] = arp_cache[i].mac[j];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*---------------------------------------------------------------------------*/
 /* Helpers                                                                   */
 /*---------------------------------------------------------------------------*/
 
@@ -172,9 +227,14 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
     etype = (uint16_t)((frame[12] << 8) | frame[13]);
 
     if (etype == ETHERTYPE_ARP) {
-        /* Reply if it's "who has <our IP>". Else drop. ARP reply
-         * frames (op=2) are also dropped here for now — they'll feed
-         * the unicast ARP cache in phase 5.A.1. */
+        /* Learn from any ARP traffic we see (request OR reply) — the
+         * ARP body carries sender_mac + sender_ip at body[8..17]. */
+        if (len >= ETH_HDR_LEN + 28U) {
+            const uint8_t *body = frame + ETH_HDR_LEN;
+            arp_cache_learn(&body[14], &body[8]);
+        }
+        /* Reply if it's "who has <our IP>". Otherwise just leave the
+         * cached MAC in place. */
         (void)arp_handle_in(frame, len);
         return;
     }
@@ -192,6 +252,15 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
             rx_dropped_other += 1U;
             return;
         }
+
+        /* Passive ARP learn: IPv4 header has sender IP at offset 12
+         * (12..15) within the IP packet; Ethernet src MAC is at
+         * frame[6..11]. */
+        if (ip_len >= 20U) {
+            arp_cache_learn(frame + ETH_HDR_LEN + 12U,
+                            frame + 6U);
+        }
+
         if (rx_stage_len != 0U) {
             rx_dropped_full += 1U;
             return;
@@ -231,10 +300,14 @@ wifi_send(const uint8_t *pkt, uint16_t len)
     }
 
     /* Destination MAC selection: IP dst at bytes 16..19 of an IPv4
-     * packet. v1 only sends broadcast-class traffic; unicast peers
-     * fall through to NOLINK until the ARP cache is wired in. */
+     * packet. Broadcast/multicast -> broadcast MAC. Unicast hits
+     * the passive ARP cache populated by wifi_rx_cb; cache miss
+     * still returns NOLINK (outbound-first ARP discovery is the
+     * remaining 5.A.1 piece). */
     if (ipv4_dst_is_broadcast(&pkt[16])) {
         for (i = 0U; i < 6U; ++i) dst[i] = 0xFFU;
+    } else if (arp_cache_lookup(&pkt[16], dst)) {
+        /* dst now holds the cached MAC for pkt[16..19]. */
     } else {
         return TIKU_KITS_NET_ERR_NOLINK;
     }
