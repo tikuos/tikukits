@@ -30,11 +30,13 @@
 #define ETHERTYPE_IPV4   0x0800U
 #define ETHERTYPE_ARP    0x0806U
 
-/* ARP op constants reserved for phase 5.A.1 (ARP cache + reply).
- * Kept as comments to document the planned shape:
- *   ARP_OP_REQUEST = 0x0001
- *   ARP_OP_REPLY   = 0x0002
- */
+#define ARP_OP_REQUEST   0x0001U
+#define ARP_OP_REPLY     0x0002U
+
+/* ARP request/reply frame size: 14 EthII + 28 ARP body = 42 bytes.
+ * The chip pads to the 64-byte 802.3 minimum on the air; we don't
+ * need to pre-pad here (whd_tx_eth ships exactly what we hand it).  */
+#define ARP_FRAME_BYTES  42U
 
 /* Single staging frame between the driver RX callback (runner ctx)
  * and the kit's poll_rx (net-proc ctx). Sized to hold any v4 frame
@@ -88,6 +90,72 @@ ipv4_dst_is_broadcast(const uint8_t ipv4_pkt[4])
     return 0;
 }
 
+/* Build an ARP reply telling `requester` that `our_ip` is at `our_mac`.
+ * Returns 42 (14 EthII + 28 ARP body). */
+static uint16_t
+arp_reply_build(uint8_t *out,
+                const uint8_t our_mac[6],
+                const uint8_t our_ip[4],
+                const uint8_t requester_mac[6],
+                const uint8_t requester_ip[4])
+{
+    uint8_t  i;
+    uint16_t n = eth_hdr_build(out, requester_mac, our_mac, ETHERTYPE_ARP);
+    out[n + 0]  = 0x00U; out[n + 1]  = 0x01U;            /* htype Eth */
+    out[n + 2]  = 0x08U; out[n + 3]  = 0x00U;            /* ptype IPv4*/
+    out[n + 4]  = 0x06U;                                 /* hlen 6    */
+    out[n + 5]  = 0x04U;                                 /* plen 4    */
+    out[n + 6]  = (uint8_t)(ARP_OP_REPLY >> 8);
+    out[n + 7]  = (uint8_t)(ARP_OP_REPLY & 0xFFU);
+    for (i = 0U; i < 6U; ++i) out[n + 8U  + i] = our_mac[i];
+    for (i = 0U; i < 4U; ++i) out[n + 14U + i] = our_ip[i];
+    for (i = 0U; i < 6U; ++i) out[n + 18U + i] = requester_mac[i];
+    for (i = 0U; i < 4U; ++i) out[n + 24U + i] = requester_ip[i];
+    return (uint16_t)(n + 28U);
+}
+
+/* Parse an incoming ARP frame and, if it's a request asking for our
+ * configured IP, send back a reply. Returns 1 if the frame was an
+ * ARP request we answered, 0 otherwise (caller can treat as dropped). */
+static int
+arp_handle_in(const uint8_t *frame, uint16_t len)
+{
+    const uint8_t *body;
+    uint16_t       op;
+    const uint8_t *kit_ip;
+    uint8_t        i;
+    uint8_t        reply[ARP_FRAME_BYTES];
+    tiku_wireless_status_t st;
+
+    if (len < ARP_FRAME_BYTES) return 0;
+    body = frame + ETH_HDR_LEN;
+
+    /* htype=1, ptype=0x0800, hlen=6, plen=4 — anything else, drop. */
+    if (body[0] != 0x00U || body[1] != 0x01U
+        || body[2] != 0x08U || body[3] != 0x00U
+        || body[4] != 0x06U || body[5] != 0x04U) {
+        return 0;
+    }
+    op = (uint16_t)((body[6] << 8) | body[7]);
+    if (op != ARP_OP_REQUEST) return 0;
+
+    /* Target IP is at body+24..27. Compare against the kit's configured
+     * address; if no match, ignore (the AP forwards ARPs broadcast). */
+    kit_ip = tiku_kits_net_ipv4_get_addr();
+    if (kit_ip == (const uint8_t *)0) return 0;
+    for (i = 0U; i < 4U; ++i) {
+        if (body[24U + i] != kit_ip[i]) return 0;
+    }
+
+    if (tiku_wireless_status(&st) != 0 || st.up == 0U) return 0;
+
+    /* requester_mac = body[8..13], requester_ip = body[14..17] */
+    (void)arp_reply_build(reply, st.mac, kit_ip,
+                          &body[8], &body[14]);
+    (void)whd_tx_eth(reply, ARP_FRAME_BYTES);
+    return 1;
+}
+
 /*---------------------------------------------------------------------------*/
 /* whd_register_rx_callback hook — runs in runner-process context.           */
 /*---------------------------------------------------------------------------*/
@@ -104,12 +172,10 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
     etype = (uint16_t)((frame[12] << 8) | frame[13]);
 
     if (etype == ETHERTYPE_ARP) {
-        /* Auto-reply to ARP requests asking about our IP — needed
-         * so peers can route unicast to us. Requires the kit to
-         * have an IP set. The kit doesn't expose its "own IP" here
-         * yet; for v1 we just drop ARP. Phase 5.A.1 will wire this
-         * to tiku_kits_net_ipv4_get_addr() once that exists. */
-        rx_dropped_other += 1U;
+        /* Reply if it's "who has <our IP>". Else drop. ARP reply
+         * frames (op=2) are also dropped here for now — they'll feed
+         * the unicast ARP cache in phase 5.A.1. */
+        (void)arp_handle_in(frame, len);
         return;
     }
 
