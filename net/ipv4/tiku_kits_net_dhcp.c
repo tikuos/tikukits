@@ -504,12 +504,19 @@ tiku_kits_net_dhcp_start(const uint8_t *client_hw)
         memcpy(hw_addr, default_hw, 6);
     }
 
-    /* Generate a transaction ID from the hardware address */
+    /* Generate a transaction ID from the hardware address mixed with
+     * the system clock. Without the clock mix, two identical boot
+     * cycles produce identical xids — and a DHCP server with a
+     * sticky cache will hand back the same lease, hiding bugs in
+     * fresh-bind paths. Mixing tiku_clock_time() makes each boot
+     * unique. A future interfaces/random/ surface would replace
+     * this with a real TRNG. */
     xid = ((uint32_t)hw_addr[0] << 24) |
            ((uint32_t)hw_addr[1] << 16) |
            ((uint32_t)hw_addr[2] <<  8) |
            ((uint32_t)hw_addr[3]);
     xid ^= 0x44484350UL;  /* XOR with "DHCP" */
+    xid ^= ((uint32_t)tiku_clock_time() * 2654435761UL);  /* Knuth hash */
 
     /* Clear previous lease data */
     memset(&lease, 0, sizeof(lease));
