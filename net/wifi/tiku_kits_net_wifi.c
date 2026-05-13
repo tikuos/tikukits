@@ -81,6 +81,16 @@ typedef struct {
 static arp_entry_t arp_cache[ARP_CACHE_SIZE];
 static uint8_t     arp_cache_next;
 
+/**
+ * @brief Insert or refresh an (ip, mac) pair in the ARP cache
+ *
+ * Linear scan over the 4-entry cache; if the IP already has a slot,
+ * the MAC is updated in-place. Otherwise the next round-robin slot
+ * is overwritten and the cursor advances.
+ *
+ * @param ip    4-byte IPv4 address (network order)
+ * @param mac   6-byte Ethernet address
+ */
 static void
 arp_cache_learn(const uint8_t ip[4], const uint8_t mac[6])
 {
@@ -99,6 +109,16 @@ arp_cache_learn(const uint8_t ip[4], const uint8_t mac[6])
     arp_cache_next = (uint8_t)((arp_cache_next + 1U) % ARP_CACHE_SIZE);
 }
 
+/**
+ * @brief Look up the MAC for an IPv4 destination in the ARP cache
+ *
+ * Linear scan over the 4-entry cache. On hit, the cached MAC is
+ * copied into mac_out.
+ *
+ * @param ip       4-byte IPv4 destination to resolve
+ * @param mac_out  6-byte buffer that receives the cached MAC on hit
+ * @return 1 if the address was found (mac_out populated), 0 on miss
+ */
 static int
 arp_cache_lookup(const uint8_t ip[4], uint8_t mac_out[6])
 {
@@ -118,8 +138,18 @@ arp_cache_lookup(const uint8_t ip[4], uint8_t mac_out[6])
 /* Helpers                                                                   */
 /*---------------------------------------------------------------------------*/
 
-/* Build an EthII header at the start of `out`: dst (6) + src (6) +
- * etype-BE (2). Returns 14. */
+/**
+ * @brief Write a 14-byte Ethernet II header at the start of `out`
+ *
+ * Layout: dst (6) + src (6) + etype big-endian (2). Caller is
+ * responsible for ensuring `out` has at least ETH_HDR_LEN bytes.
+ *
+ * @param out    Destination buffer (>= 14 bytes)
+ * @param dst    Destination MAC (6 bytes)
+ * @param src    Source MAC (6 bytes)
+ * @param etype  Ethertype in host byte order
+ * @return Number of bytes written (always 14)
+ */
 static uint16_t
 eth_hdr_build(uint8_t *out, const uint8_t dst[6], const uint8_t src[6],
               uint16_t etype)
@@ -132,10 +162,16 @@ eth_hdr_build(uint8_t *out, const uint8_t dst[6], const uint8_t src[6],
     return ETH_HDR_LEN;
 }
 
-/* Returns 1 if the IPv4 destination address starts on a byte that
- * suggests a broadcast/multicast — 255.255.255.255 (limited bcast)
- * or 224.0.0.0/4 (multicast). v1 also forces broadcast for any dst
- * whose host bits are all-1 since we don't know the subnet mask. */
+/**
+ * @brief Test whether an IPv4 destination requires a broadcast MAC
+ *
+ * Returns true for 255.255.255.255 (limited broadcast) and for
+ * 224.0.0.0/4 (multicast). v1 also forces broadcast for any dst
+ * whose host bits are all-1 since we don't know the subnet mask.
+ *
+ * @param ipv4_pkt  4-byte IPv4 destination address
+ * @return 1 if a broadcast/multicast MAC should be used, 0 otherwise
+ */
 static int
 ipv4_dst_is_broadcast(const uint8_t ipv4_pkt[4])
 {
@@ -145,8 +181,21 @@ ipv4_dst_is_broadcast(const uint8_t ipv4_pkt[4])
     return 0;
 }
 
-/* Build an ARP reply telling `requester` that `our_ip` is at `our_mac`.
- * Returns 42 (14 EthII + 28 ARP body). */
+/**
+ * @brief Build a complete ARP reply frame
+ *
+ * Tells `requester` that `our_ip` is reachable at `our_mac`. The
+ * resulting frame is 42 bytes: 14-byte EthII header + 28-byte ARP
+ * body (htype Eth, ptype IPv4, hlen 6, plen 4, op REPLY, then
+ * sender/target MAC+IP pairs).
+ *
+ * @param out            Destination buffer (>= ARP_FRAME_BYTES)
+ * @param our_mac        Our MAC address (sender in the reply)
+ * @param our_ip         Our IPv4 address (sender in the reply)
+ * @param requester_mac  MAC of the host that issued the ARP request
+ * @param requester_ip   IPv4 of the host that issued the ARP request
+ * @return Number of bytes written (always 42)
+ */
 static uint16_t
 arp_reply_build(uint8_t *out,
                 const uint8_t our_mac[6],
@@ -169,9 +218,21 @@ arp_reply_build(uint8_t *out,
     return (uint16_t)(n + 28U);
 }
 
-/* Parse an incoming ARP frame and, if it's a request asking for our
- * configured IP, send back a reply. Returns 1 if the frame was an
- * ARP request we answered, 0 otherwise (caller can treat as dropped). */
+/**
+ * @brief Parse an incoming ARP frame and answer if it targets us
+ *
+ * Validates that the frame is a well-formed IPv4-over-Ethernet ARP
+ * request (htype=1, ptype=0x0800, hlen=6, plen=4) and that the
+ * target IP matches the kit's configured address; if so, sends an
+ * ARP reply via whd_tx_eth. Non-request opcodes and requests
+ * targeting other hosts are ignored — the AP forwards ARPs broadcast,
+ * so seeing one for someone else is expected.
+ *
+ * @param frame  Pointer to the start of the EthII frame
+ * @param len    Total length of the frame in bytes
+ * @return 1 if an ARP request was answered, 0 otherwise (caller may
+ *         treat as dropped)
+ */
 static int
 arp_handle_in(const uint8_t *frame, uint16_t len)
 {
@@ -214,6 +275,21 @@ arp_handle_in(const uint8_t *frame, uint16_t len)
 /*---------------------------------------------------------------------------*/
 /* whd_register_rx_callback hook — runs in runner-process context.           */
 /*---------------------------------------------------------------------------*/
+
+/**
+ * @brief WHD driver RX callback (runner-process context)
+ *
+ * Strips the EthII header, learns sender (ip, mac) pairs into the
+ * passive ARP cache, answers ARP requests targeting us, and stages a
+ * single IPv4 packet for the kit's poll_rx to consume. ARP and
+ * non-IPv4 ethertypes are handled (or counted as dropped) inline; an
+ * IPv4 frame that arrives while the staging slot is already full
+ * bumps rx_dropped_full so backlog is observable.
+ *
+ * @param frame  Pointer to the start of the EthII frame
+ * @param len    Total length of the frame in bytes
+ * @param ctx    Opaque callback context (unused, passed by WHD)
+ */
 static void
 wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
 {
@@ -276,10 +352,20 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
 /* tiku_kits_net_link_t implementation                                       */
 /*---------------------------------------------------------------------------*/
 
-/* Outbound: prepend EthII + ship via whd_tx_eth. For v1, the
- * destination MAC is broadcast for limited-broadcast / multicast
- * destinations (DHCP, IGMP query response, etc.); unicast unknown
- * peers fail with NOLINK until an ARP cache lands in 5.A.1. */
+/**
+ * @brief `tiku_kits_net_link_t.send` impl — outbound IPv4 packet
+ *
+ * Prepends an EthII header (broadcast MAC for limited-broadcast /
+ * multicast destinations, otherwise the cached MAC from the passive
+ * ARP cache) and ships the result via whd_tx_eth. For v1, unicast
+ * peers we have never heard from fail with NOLINK until outbound-
+ * first ARP discovery lands in 5.A.1.
+ *
+ * @param pkt  IPv4 packet (>= 20 bytes; dst at bytes 16..19)
+ * @param len  Length of the IPv4 packet in bytes
+ * @return TIKU_KITS_NET_OK on success, otherwise a TIKU_KITS_NET_ERR_*
+ *         code mapped from the underlying driver result
+ */
 static int8_t
 wifi_send(const uint8_t *pkt, uint16_t len)
 {
@@ -323,10 +409,21 @@ wifi_send(const uint8_t *pkt, uint16_t len)
     return TIKU_KITS_NET_ERR_NOLINK;
 }
 
-/* Inbound: copy any staged IP packet to the caller's buffer. The
- * kit calls this in a loop until we return 0, so single-slot
- * staging is fine — backlog is just deferred to the next poll
- * (with the cost of a drop counter for slot-full events). */
+/**
+ * @brief `tiku_kits_net_link_t.poll_rx` impl — drain the staging slot
+ *
+ * Copies any staged IP packet into the caller's buffer. The kit calls
+ * this in a loop until we return 0, so single-slot staging is fine —
+ * backlog is just deferred to the next poll (with the cost of a drop
+ * counter for slot-full events). A caller buffer that's too small is
+ * also reported as zero-frame so corrupt delivery is avoided.
+ *
+ * @param buf       Destination buffer for the staged IP packet
+ * @param buf_size  Capacity of `buf` in bytes
+ * @param pos       Out: length of the delivered frame in bytes
+ * @return 1 if a frame was delivered, 0 otherwise (empty slot, bad
+ *         arguments, or oversized frame dropped)
+ */
 static uint8_t
 wifi_poll_rx(uint8_t *buf, uint16_t buf_size, uint16_t *pos)
 {
@@ -359,6 +456,17 @@ const tiku_kits_net_link_t tiku_kits_net_wifi_link = {
     .name    = "WiFi"
 };
 
+/**
+ * @brief Initialise the WiFi link adapter
+ *
+ * Clears the RX staging slot and drop counters, registers our RX
+ * callback with the WHD driver, and installs this link with the IPv4
+ * kit via tiku_kits_net_ipv4_set_link so outbound packets flow
+ * through wifi_send.
+ *
+ * @return TIKU_KITS_NET_OK on success, TIKU_KITS_NET_ERR_NOLINK if
+ *         the driver rejected the callback registration
+ */
 int8_t
 tiku_kits_net_wifi_init(void)
 {
