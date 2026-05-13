@@ -134,7 +134,13 @@
  * @endcode
  */
 #if TIKU_KITS_NET_DHCP_ENABLE && !defined(TIKU_KITS_NET_MTU)
-#define TIKU_KITS_NET_MTU           300
+/* 300 fits the BOOTP minimum body + a couple of options, but
+ * real-world DHCP servers (eg Android hotspots) pack enough
+ * options that the full IP frame exceeds 300 bytes (~338 B IP
+ * payload observed on Android 14). 512 gives comfortable headroom
+ * without losing meaningful RAM. Still overrideable for tight
+ * MSP430 builds via -DTIKU_KITS_NET_MTU=...   */
+#define TIKU_KITS_NET_MTU           512
 #endif
 
 #ifndef TIKU_KITS_NET_MTU
