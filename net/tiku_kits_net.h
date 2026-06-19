@@ -268,7 +268,7 @@ tiku_kits_net_ntohs(uint16_t n)
  * (wireless, SPI, loopback) can be plugged in by filling one of
  * these structs and passing it to tiku_kits_net_ipv4_set_link().
  *
- * The design mirrors tiku_cli_io_t -- a function-pointer struct
+ * The design mirrors tiku_shell_io_t -- a function-pointer struct
  * that decouples I/O from processing logic.
  *
  * Example (registering a custom link):
