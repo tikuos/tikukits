@@ -105,4 +105,40 @@
 void tiku_kits_net_icmp_input(uint8_t *buf, uint16_t len,
                               uint16_t ihl_len);
 
+/**
+ * @brief Build an ICMP echo request (ping) into a TX buffer.
+ *
+ * Fills a complete IPv4 + ICMP echo-request packet: the IPv4 header
+ * (protocol ICMP, source = our address, destination = @p dst_ip; the IPv4
+ * header checksum is left zero for tiku_kits_net_ipv4_output() to compute),
+ * then the ICMP echo-request header (type 8, the given @p id / @p seq)
+ * followed by @p payload_len filler bytes, with the ICMP checksum computed.
+ *
+ * @param buf          TX buffer, >= 28 + payload_len bytes (use
+ *                     tiku_kits_net_ipv4_get_buf()).
+ * @param dst_ip       4-byte destination IPv4 address.
+ * @param id           ICMP identifier (echoed back in the reply).
+ * @param seq          ICMP sequence number.
+ * @param payload_len  Echo payload size in bytes (0 is valid).
+ * @return Total IPv4 packet length to pass to tiku_kits_net_ipv4_output().
+ */
+uint16_t tiku_kits_net_icmp_build_echo_request(uint8_t *buf,
+                                               const uint8_t *dst_ip,
+                                               uint16_t id, uint16_t seq,
+                                               uint16_t payload_len);
+
+/**
+ * @brief Test whether a received IPv4 packet is an ICMP echo reply for us.
+ *
+ * @param buf      Received IPv4 packet.
+ * @param len      Packet length.
+ * @param id       Identifier sent in the request.
+ * @param out_seq  If non-NULL and this is a matching reply, receives the
+ *                 sequence number.
+ * @return 1 if @p buf is an ICMP echo reply (type 0) with id == @p id,
+ *         0 otherwise.
+ */
+uint8_t tiku_kits_net_icmp_match_echo_reply(const uint8_t *buf, uint16_t len,
+                                            uint16_t id, uint16_t *out_seq);
+
 #endif /* TIKU_KITS_NET_ICMP_H_ */

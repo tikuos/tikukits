@@ -113,3 +113,102 @@ tiku_kits_net_icmp_input(uint8_t *buf, uint16_t len, uint16_t ihl_len)
      * to account for the swapped addresses) */
     tiku_kits_net_ipv4_output(buf, len);
 }
+
+/*---------------------------------------------------------------------------*/
+/* ECHO REQUEST (ping source)                                                */
+/*---------------------------------------------------------------------------*/
+
+uint16_t
+tiku_kits_net_icmp_build_echo_request(uint8_t *buf, const uint8_t *dst_ip,
+                                      uint16_t id, uint16_t seq,
+                                      uint16_t payload_len)
+{
+    const uint8_t *src;
+    uint8_t       *icmp;
+    uint16_t       icmp_len;
+    uint16_t       total;
+    uint16_t       chksum;
+    uint16_t       i;
+
+    icmp_len = (uint16_t)(TIKU_KITS_NET_ICMP_OFF_DATA + payload_len);
+    total    = (uint16_t)(TIKU_KITS_NET_IPV4_HDR_LEN + icmp_len);
+
+    /* --- IPv4 header (header checksum left zero for ipv4_output) --- */
+    buf[TIKU_KITS_NET_IPV4_OFF_VER_IHL]    = 0x45;   /* IPv4, IHL=5 (20 B) */
+    buf[1]                                 = 0x00;   /* DSCP / ECN */
+    buf[2]                                 = (uint8_t)(total >> 8);
+    buf[3]                                 = (uint8_t)(total & 0xFFu);
+    buf[4]                                 = 0x00;   /* identification */
+    buf[5]                                 = 0x00;
+    buf[6]                                 = 0x40;   /* flags: Don't Fragment */
+    buf[7]                                 = 0x00;   /* fragment offset */
+    buf[TIKU_KITS_NET_IPV4_OFF_TTL]        = 64;
+    buf[TIKU_KITS_NET_IPV4_OFF_PROTO]      = TIKU_KITS_NET_IPV4_PROTO_ICMP;
+    buf[TIKU_KITS_NET_IPV4_OFF_CHKSUM]     = 0;
+    buf[TIKU_KITS_NET_IPV4_OFF_CHKSUM + 1] = 0;
+
+    src = tiku_kits_net_ipv4_get_addr();
+    for (i = 0; i < 4u; i++) {
+        buf[TIKU_KITS_NET_IPV4_OFF_SRC + i] = src[i];
+        buf[TIKU_KITS_NET_IPV4_OFF_DST + i] = dst_ip[i];
+    }
+
+    /* --- ICMP echo request --- */
+    icmp = buf + TIKU_KITS_NET_IPV4_HDR_LEN;
+    icmp[TIKU_KITS_NET_ICMP_OFF_TYPE]       = TIKU_KITS_NET_ICMP_ECHO_REQUEST;
+    icmp[TIKU_KITS_NET_ICMP_OFF_CODE]       = 0;
+    icmp[TIKU_KITS_NET_ICMP_OFF_CHKSUM]     = 0;
+    icmp[TIKU_KITS_NET_ICMP_OFF_CHKSUM + 1] = 0;
+    icmp[TIKU_KITS_NET_ICMP_OFF_ID]         = (uint8_t)(id >> 8);
+    icmp[TIKU_KITS_NET_ICMP_OFF_ID + 1]     = (uint8_t)(id & 0xFFu);
+    icmp[TIKU_KITS_NET_ICMP_OFF_SEQ]        = (uint8_t)(seq >> 8);
+    icmp[TIKU_KITS_NET_ICMP_OFF_SEQ + 1]    = (uint8_t)(seq & 0xFFu);
+    for (i = 0; i < payload_len; i++) {
+        icmp[TIKU_KITS_NET_ICMP_OFF_DATA + i] = (uint8_t)(0x20u + (i & 0x3Fu));
+    }
+
+    chksum = tiku_kits_net_ipv4_chksum(icmp, icmp_len);
+    icmp[TIKU_KITS_NET_ICMP_OFF_CHKSUM]     = (uint8_t)(chksum >> 8);
+    icmp[TIKU_KITS_NET_ICMP_OFF_CHKSUM + 1] = (uint8_t)(chksum & 0xFFu);
+
+    return total;
+}
+
+uint8_t
+tiku_kits_net_icmp_match_echo_reply(const uint8_t *buf, uint16_t len,
+                                    uint16_t id, uint16_t *out_seq)
+{
+    uint16_t       ihl_bytes;
+    const uint8_t *icmp;
+    uint16_t       rid;
+
+    if (len < (uint16_t)(TIKU_KITS_NET_IPV4_HDR_LEN +
+                         TIKU_KITS_NET_ICMP_OFF_DATA)) {
+        return 0;
+    }
+    if (buf[TIKU_KITS_NET_IPV4_OFF_PROTO] != TIKU_KITS_NET_IPV4_PROTO_ICMP) {
+        return 0;
+    }
+
+    ihl_bytes = (uint16_t)((buf[TIKU_KITS_NET_IPV4_OFF_VER_IHL] & 0x0Fu) * 4u);
+    if ((uint16_t)(ihl_bytes + TIKU_KITS_NET_ICMP_OFF_DATA) > len) {
+        return 0;
+    }
+
+    icmp = buf + ihl_bytes;
+    if (icmp[TIKU_KITS_NET_ICMP_OFF_TYPE] != TIKU_KITS_NET_ICMP_ECHO_REPLY) {
+        return 0;
+    }
+
+    rid = (uint16_t)(((uint16_t)icmp[TIKU_KITS_NET_ICMP_OFF_ID] << 8) |
+                      icmp[TIKU_KITS_NET_ICMP_OFF_ID + 1]);
+    if (rid != id) {
+        return 0;
+    }
+
+    if (out_seq != (uint16_t *)0) {
+        *out_seq = (uint16_t)(((uint16_t)icmp[TIKU_KITS_NET_ICMP_OFF_SEQ] << 8) |
+                               icmp[TIKU_KITS_NET_ICMP_OFF_SEQ + 1]);
+    }
+    return 1;
+}
