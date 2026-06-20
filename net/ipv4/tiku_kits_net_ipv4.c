@@ -39,7 +39,15 @@
 #include <tikukits/net/slip/tiku_kits_net_slip.h>
 #include <kernel/process/tiku_process.h>
 #include <kernel/timers/tiku_timer.h>
+#if defined(PLATFORM_MSP430)
 #include <arch/msp430/tiku_device_select.h>
+#elif defined(PLATFORM_RP2350)
+#include <arch/arm-rp2350/tiku_device_select.h>
+#elif defined(PLATFORM_AMBIQ)
+#include <arch/ambiq/tiku_device_select.h>
+#else
+#error "tikukits/net/ipv4: unsupported platform"
+#endif
 #include <stddef.h>
 
 /*---------------------------------------------------------------------------*/

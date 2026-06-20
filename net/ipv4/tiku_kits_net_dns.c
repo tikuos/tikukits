@@ -37,7 +37,15 @@
 #include "tiku_kits_net_ipv4.h"
 #include <tikukits/net/tiku_kits_net.h>
 #include <kernel/timers/tiku_clock.h>
+#if defined(PLATFORM_MSP430)
 #include <arch/msp430/tiku_timer_arch.h>
+#elif defined(PLATFORM_RP2350)
+#include <arch/arm-rp2350/tiku_timer_arch.h>
+#elif defined(PLATFORM_AMBIQ)
+#include <arch/ambiq/tiku_timer_arch.h>
+#else
+#error "tikukits/net/ipv4/dns: unsupported platform"
+#endif
 #include <kernel/memory/tiku_mem.h>
 #include <string.h>
 

@@ -45,7 +45,15 @@
 /*---------------------------------------------------------------------------*/
 
 #include "tiku_kits_net_slip.h"
+#if defined(PLATFORM_MSP430)
 #include <arch/msp430/tiku_uart_arch.h>
+#elif defined(PLATFORM_RP2350)
+#include <arch/arm-rp2350/tiku_uart_arch.h>
+#elif defined(PLATFORM_AMBIQ)
+#include <arch/ambiq/tiku_uart_arch.h>
+#else
+#error "tikukits/net/slip: unsupported platform — add an arch include here"
+#endif
 #include <stddef.h>
 
 /*---------------------------------------------------------------------------*/
