@@ -34,6 +34,15 @@
 #include "tiku_kits_net_icmp.h"
 #include "tiku_kits_net_ipv4.h"
 
+/* Optional handler for incoming echo replies (registered by the ping cmd). */
+static tiku_kits_net_icmp_reply_cb_t s_reply_cb;
+
+void
+tiku_kits_net_icmp_set_reply_cb(tiku_kits_net_icmp_reply_cb_t cb)
+{
+    s_reply_cb = cb;
+}
+
 /*---------------------------------------------------------------------------*/
 /* INPUT HANDLER                                                             */
 /*---------------------------------------------------------------------------*/
@@ -69,6 +78,18 @@ tiku_kits_net_icmp_input(uint8_t *buf, uint16_t len, uint16_t ihl_len)
     /* Verify ICMP checksum (should fold to 0 if valid) */
     chksum = tiku_kits_net_ipv4_chksum(icmp, icmp_len);
     if (chksum != 0) {
+        return;
+    }
+
+    /* Deliver echo replies (type 0) to a registered handler (e.g. ping). */
+    if (icmp[TIKU_KITS_NET_ICMP_OFF_TYPE] == TIKU_KITS_NET_ICMP_ECHO_REPLY) {
+        if (s_reply_cb != (tiku_kits_net_icmp_reply_cb_t)0) {
+            uint16_t id  = (uint16_t)(((uint16_t)icmp[TIKU_KITS_NET_ICMP_OFF_ID]
+                                        << 8) | icmp[TIKU_KITS_NET_ICMP_OFF_ID + 1]);
+            uint16_t seq = (uint16_t)(((uint16_t)icmp[TIKU_KITS_NET_ICMP_OFF_SEQ]
+                                        << 8) | icmp[TIKU_KITS_NET_ICMP_OFF_SEQ + 1]);
+            s_reply_cb(&buf[TIKU_KITS_NET_IPV4_OFF_SRC], id, seq);
+        }
         return;
     }
 

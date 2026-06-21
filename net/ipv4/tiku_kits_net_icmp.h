@@ -141,4 +141,22 @@ uint16_t tiku_kits_net_icmp_build_echo_request(uint8_t *buf,
 uint8_t tiku_kits_net_icmp_match_echo_reply(const uint8_t *buf, uint16_t len,
                                             uint16_t id, uint16_t *out_seq);
 
+/**
+ * @brief Callback type for delivering incoming ICMP echo replies.
+ * @param src_ip  Pointer to the 4-byte source IPv4 address.
+ * @param id      ICMP identifier from the reply.
+ * @param seq     ICMP sequence number from the reply.
+ */
+typedef void (*tiku_kits_net_icmp_reply_cb_t)(const uint8_t *src_ip,
+                                              uint16_t id, uint16_t seq);
+
+/**
+ * @brief Register a handler for incoming ICMP echo replies (type 0).
+ *
+ * When set, tiku_kits_net_icmp_input() delivers validated echo replies to
+ * @p cb instead of dropping them.  Pass NULL to clear.  Used by the `ping`
+ * command so replies arriving through the shared RX path reach it.
+ */
+void tiku_kits_net_icmp_set_reply_cb(tiku_kits_net_icmp_reply_cb_t cb);
+
 #endif /* TIKU_KITS_NET_ICMP_H_ */
