@@ -218,6 +218,57 @@
  * plus TIKU_KITS_NET_TCP_RX_BUF_SIZE bytes of FRAM for the RX
  * ring buffer.
  */
+/*
+ * Buffer placement -- a deliberate memory-class choice, not a default.
+ *
+ * The transient TCP working buffers (the shared TX retransmit pool and the
+ * per-connection RX rings) can live in persistent NVM (FRAM/MRAM: survives
+ * power loss, but slower and subject to wear) or in volatile SRAM (fast,
+ * wear-free, but lost on power-down).  TikuOS targets microwatt computers that
+ * may run on harvested energy, so this is a real engineering decision rather
+ * than an afterthought.  Default: NVM on MSP430 (where FRAM is the main store)
+ * and SRAM on stable-power Cortex-M parts; override either way per build.
+ *
+ * Note: persistence does not preserve a *live* TCP connection across a power
+ * cycle (the peer's sequence state is gone), so SRAM is the sane default for
+ * these particular buffers -- but the knob is the point.  All runtime writes
+ * unlock the NVM MPU window regardless, so SRAM placement just makes those
+ * unlocks harmless no-ops.
+ */
+#ifndef TIKU_KITS_NET_TCP_BUF_PERSIST
+#if defined(PLATFORM_MSP430)
+#define TIKU_KITS_NET_TCP_BUF_PERSIST   1
+#else
+#define TIKU_KITS_NET_TCP_BUF_PERSIST   0
+#endif
+#endif
+
+#if TIKU_KITS_NET_TCP_BUF_PERSIST
+#define TIKU_KITS_NET_TCP_BUF_ATTR \
+    __attribute__((section(".persistent"), aligned(2)))
+#else
+#define TIKU_KITS_NET_TCP_BUF_ATTR  __attribute__((aligned(2)))
+#endif
+
+/*
+ * Resource sizing.  Where the buffers are SRAM-backed (ample on Cortex-M) we
+ * default to roomier limits so a multi-KB shell response (e.g. telnet `help`)
+ * fits the TX pool without churn; the persistent/MSP430 path keeps the lean
+ * FRAM-friendly defaults below.  All sizes stay #ifndef so a build can still
+ * override either way.
+ */
+#if !TIKU_KITS_NET_TCP_BUF_PERSIST
+#ifndef TIKU_KITS_NET_TCP_MAX_CONNS
+#define TIKU_KITS_NET_TCP_MAX_CONNS         4
+#endif
+#ifndef TIKU_KITS_NET_TCP_TX_POOL_COUNT
+#define TIKU_KITS_NET_TCP_TX_POOL_COUNT     24
+#endif
+#ifndef TIKU_KITS_NET_TCP_RX_BUF_SIZE
+#define TIKU_KITS_NET_TCP_RX_BUF_SIZE       512
+#endif
+#endif
+
 #ifndef TIKU_KITS_NET_TCP_MAX_CONNS
 #define TIKU_KITS_NET_TCP_MAX_CONNS         2
 #endif
