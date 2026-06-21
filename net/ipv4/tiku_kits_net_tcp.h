@@ -222,25 +222,35 @@
  * Buffer placement -- a deliberate memory-class choice, not a default.
  *
  * The transient TCP working buffers (the shared TX retransmit pool and the
- * per-connection RX rings) can live in persistent NVM (FRAM/MRAM: survives
- * power loss, but slower and subject to wear) or in volatile SRAM (fast,
- * wear-free, but lost on power-down).  TikuOS targets microwatt computers that
- * may run on harvested energy, so this is a real engineering decision rather
- * than an afterthought.  Default: NVM on MSP430 (where FRAM is the main store)
- * and SRAM on stable-power Cortex-M parts; override either way per build.
+ * per-connection RX rings) can live in the `.persistent` section (NVM where
+ * the part has it) or in plain `.bss`.  TikuOS targets microwatt computers
+ * that may run on harvested energy, so this is a real engineering decision
+ * rather than an afterthought.
+ *
+ * What `.persistent` actually maps to is per-part, and this matters here:
+ *   - MSP430: real FRAM -- non-volatile, slower, wears.  The native store.
+ *   - Ambiq / RP2350: `.persistent` is physically SRAM (a separate volatile
+ *     region linked outside .bss; it is NOT MRAM/flash-backed despite the
+ *     name -- the known "graded-durability" gap).  So on these parts BOTH
+ *     knob settings are SRAM; `.persistent` just lands in a different,
+ *     lightly-used SRAM region than the densely-packed `.bss`.
+ *
+ * Default `.persistent` everywhere.  On MSP430 that is FRAM (the lean native
+ * choice); on Cortex-M it is SRAM (fast, wear-free -- the goal for transient
+ * buffers), and empirically the `.persistent` SRAM region is corruption-free
+ * for the TX pool whereas the same pool placed in `.bss` (PERSIST=0) is not
+ * -- a layout/aliasing fault in the packed `.bss` region, tracked separately.
+ * So `.persistent` is both the working default and, on Cortex-M, genuinely
+ * SRAM.  PERSIST=0 (raw `.bss`) remains available but carries that caveat.
  *
  * Note: persistence does not preserve a *live* TCP connection across a power
- * cycle (the peer's sequence state is gone), so SRAM is the sane default for
- * these particular buffers -- but the knob is the point.  All runtime writes
- * unlock the NVM MPU window regardless, so SRAM placement just makes those
- * unlocks harmless no-ops.
+ * cycle (the peer's sequence state is gone) -- the knob is about the memory
+ * class of the working buffers, not connection durability.  All runtime
+ * writes unlock the NVM MPU window regardless; where the section is SRAM
+ * those unlocks are harmless no-ops.
  */
 #ifndef TIKU_KITS_NET_TCP_BUF_PERSIST
-#if defined(PLATFORM_MSP430)
 #define TIKU_KITS_NET_TCP_BUF_PERSIST   1
-#else
-#define TIKU_KITS_NET_TCP_BUF_PERSIST   0
-#endif
 #endif
 
 #if TIKU_KITS_NET_TCP_BUF_PERSIST
@@ -251,13 +261,13 @@
 #endif
 
 /*
- * Resource sizing.  Where the buffers are SRAM-backed (ample on Cortex-M) we
- * default to roomier limits so a multi-KB shell response (e.g. telnet `help`)
- * fits the TX pool without churn; the persistent/MSP430 path keeps the lean
- * FRAM-friendly defaults below.  All sizes stay #ifndef so a build can still
- * override either way.
+ * Resource sizing -- keyed on the platform, not the placement knob.  Cortex-M
+ * parts (Ambiq, RP2350) have ample SRAM, so we default to roomier limits and
+ * a multi-KB shell response (e.g. telnet `help`) fits the TX pool without
+ * churn.  MSP430 keeps the lean defaults below.  All sizes stay #ifndef so a
+ * build can still override either way.
  */
-#if !TIKU_KITS_NET_TCP_BUF_PERSIST
+#if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350)
 #ifndef TIKU_KITS_NET_TCP_MAX_CONNS
 #define TIKU_KITS_NET_TCP_MAX_CONNS         4
 #endif
