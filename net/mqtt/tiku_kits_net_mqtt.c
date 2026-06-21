@@ -35,6 +35,9 @@
 
 #if TIKU_KITS_NET_MQTT_ENABLE
 
+#include <tiku.h>                                /* device/arch setup: defines
+                                                  * TIKU_CLOCK_ARCH_SECOND used
+                                                  * by the keepalive math below */
 #include <tikukits/net/ipv4/tiku_kits_net_tcp.h>
 #include <kernel/timers/tiku_clock.h>
 #include <stddef.h>
