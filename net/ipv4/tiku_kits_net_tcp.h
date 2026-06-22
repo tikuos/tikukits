@@ -359,6 +359,26 @@
 #endif
 
 /**
+ * @brief Idle timeout for transient (half-open / closing) states, in periodic
+ * intervals (~50 ms each).
+ *
+ * A connection that sits in a non-ESTABLISHED, non-TIME_WAIT live state
+ * (SYN_SENT / SYN_RCVD / FIN_WAIT_* / CLOSE_WAIT / CLOSING / LAST_ACK) past
+ * this many ticks is aborted and its slot freed.  Without it an orphaned
+ * CLOSE_WAIT (the peer closed but the local app never does) pins its slot
+ * forever, and a half-open only self-frees after the much longer
+ * retransmission-exhaustion timeout (~70 s) -- so a run that opens many short
+ * connections without a clean teardown can exhaust the table.  Default 60
+ * intervals = ~3 seconds: well above any sub-second handshake/teardown on a
+ * directly-attached SLIP link, well below the lifetime of a real session.
+ * ESTABLISHED connections are exempt (their idle clock is held at zero), so a
+ * quiet keep-alive session is never reaped.
+ */
+#ifndef TIKU_KITS_NET_TCP_IDLE_REAP_TICKS
+#define TIKU_KITS_NET_TCP_IDLE_REAP_TICKS   60
+#endif
+
+/**
  * @brief Default MSS when peer does not advertise (RFC 879).
  */
 #ifndef TIKU_KITS_NET_TCP_DEFAULT_MSS
@@ -494,6 +514,11 @@ typedef struct tiku_kits_net_tcp_conn {
 
     /* --- TIME_WAIT timer --- */
     uint16_t tw_counter;    /**< Ticks remaining in TIME_WAIT */
+
+    /* --- Idle / half-open reaper --- */
+    uint16_t idle_counter;  /**< Ticks spent in a transient (non-ESTABLISHED,
+                                 non-TIME_WAIT) state; bounds stuck half-opens
+                                 and orphaned CLOSE_WAIT slots */
 
     /* --- Peer MSS --- */
     uint16_t peer_mss;      /**< Peer's advertised MSS (from SYN) */

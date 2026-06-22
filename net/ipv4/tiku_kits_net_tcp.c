@@ -1653,6 +1653,30 @@ tiku_kits_net_tcp_periodic(void)
             continue;
         }
 
+        /* --- Idle reaper for half-open / orphaned-close states ---
+         * ESTABLISHED and LISTEN are stable: hold their idle clock at zero so a
+         * quiet but live session is never reaped. Every other live state here
+         * (SYN_SENT / SYN_RCVD / FIN_WAIT_* / CLOSE_WAIT / CLOSING / LAST_ACK)
+         * is transient -- a peer that never advances it would otherwise pin the
+         * slot. CLOSE_WAIT has no timer at all, and a half-open only self-frees
+         * after retransmission exhaustion (~70 s); free it once it has sat past
+         * the idle threshold. A connection still owned by the retransmission
+         * timer (tx_head != NULL -- e.g. a SYN_RCVD whose SYN+ACK is being
+         * retransmitted) is NOT idle: leave it to the RTO machine so the
+         * retransmit path (and tests that observe it) still work. */
+        if (c->state == TIKU_KITS_NET_TCP_STATE_ESTABLISHED ||
+            c->state == TIKU_KITS_NET_TCP_STATE_LISTEN ||
+            c->tx_head != (void *)0) {
+            c->idle_counter = 0;
+        } else if (++c->idle_counter >=
+                   TIKU_KITS_NET_TCP_IDLE_REAP_TICKS) {
+            if (c->event_cb) {
+                c->event_cb(c, TIKU_KITS_NET_TCP_EVT_ABORTED);
+            }
+            tcp_free_conn(c);
+            continue;
+        }
+
         /* --- Retransmission timeout --- */
         if (c->tx_head != (void *)0) {
             c->rto_counter++;
