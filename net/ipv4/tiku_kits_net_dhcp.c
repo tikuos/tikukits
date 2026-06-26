@@ -728,15 +728,29 @@ TIKU_PROCESS_THREAD(tiku_kits_net_dhcp_process, ev, data)
 
     TIKU_PROCESS_BEGIN();
 
-    /* Wait for the net process to initialise SLIP and the link */
-    tiku_timer_set_event(&dhcp_timer,
-                          TIKU_CLOCK_SECOND * DHCP_BOOT_DELAY_SEC);
-    TIKU_PROCESS_WAIT_EVENT_UNTIL(ev == TIKU_EVENT_TIMER);
+    /* If nobody has already kicked off an exchange, self-start one: this is
+     * the SLIP autostart path, where the net process brings the link up at
+     * boot and we then DISCOVER on our own with the default MAC.
+     *
+     * The WiFi `wifi up` path, by contrast, calls dhcp_init() + dhcp_start()
+     * with the real station MAC BEFORE starting this process, so on our first
+     * run the exchange is already in flight (DISCOVER_SENT) and we must skip
+     * straight to polling.  Re-initing here would unbind the UDP socket and
+     * re-DISCOVER with the default MAC -- racing the real exchange and, on its
+     * eventual timeout, reverting the IP to the saved default.  That double
+     * start was the "wifi up #1 -> 0.0.0.0, #2 -> bound" flakiness. */
+    if (dhcp_state != TIKU_KITS_NET_DHCP_STATE_DISCOVER_SENT &&
+        dhcp_state != TIKU_KITS_NET_DHCP_STATE_REQUESTING) {
+        /* Wait for the net process to initialise SLIP and the link */
+        tiku_timer_set_event(&dhcp_timer,
+                              TIKU_CLOCK_SECOND * DHCP_BOOT_DELAY_SEC);
+        TIKU_PROCESS_WAIT_EVENT_UNTIL(ev == TIKU_EVENT_TIMER);
 
-    /* Start DHCP with the default hardware address */
-    tiku_kits_net_dhcp_init();
-    if (tiku_kits_net_dhcp_start((void *)0) != TIKU_KITS_NET_OK) {
-        TIKU_PROCESS_EXIT();
+        /* Start DHCP with the default hardware address */
+        tiku_kits_net_dhcp_init();
+        if (tiku_kits_net_dhcp_start((void *)0) != TIKU_KITS_NET_OK) {
+            TIKU_PROCESS_EXIT();
+        }
     }
 
     /* Poll until BOUND or ERROR */

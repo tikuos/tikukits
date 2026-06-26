@@ -121,6 +121,12 @@ tiku_kits_net_ipv4_set_link(const tiku_kits_net_link_t *link)
     active_link = link;
 }
 
+const tiku_kits_net_link_t *
+tiku_kits_net_ipv4_get_link(void)
+{
+    return active_link;
+}
+
 /*---------------------------------------------------------------------------*/
 /* INPUT PIPELINE                                                            */
 /*---------------------------------------------------------------------------*/

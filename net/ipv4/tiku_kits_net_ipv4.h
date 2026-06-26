@@ -225,6 +225,17 @@ int8_t tiku_kits_net_ipv4_output(uint8_t *buf, uint16_t len);
  */
 void tiku_kits_net_ipv4_set_link(const tiku_kits_net_link_t *link);
 
+/**
+ * @brief Return the active link-layer backend, or NULL if none is set.
+ *
+ * Lets a caller install a default link only when nothing else owns it.
+ * The SLIP shell command uses this so a WiFi link installed by `wifi up`
+ * is left in place instead of being forced back to SLIP.
+ *
+ * @return The current link descriptor, or NULL when unset.
+ */
+const tiku_kits_net_link_t *tiku_kits_net_ipv4_get_link(void);
+
 /*---------------------------------------------------------------------------*/
 /* BUFFER ACCESSORS                                                          */
 /*---------------------------------------------------------------------------*/
