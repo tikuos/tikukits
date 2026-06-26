@@ -19,6 +19,7 @@
 
 #include "tiku_kits_net_wifi.h"
 #include "../ipv4/tiku_kits_net_ipv4.h"
+#include "../ipv4/tiku_kits_net_dhcp.h"   /* lease: gw + netmask for next-hop */
 #include <interfaces/wireless/tiku_wireless.h>
 #include "drivers/wifi/cyw43/whd.h"
 
@@ -433,13 +434,37 @@ wifi_send(const uint8_t *pkt, uint16_t len)
      * remaining 5.A.1 piece). */
     if (ipv4_dst_is_broadcast(&pkt[16])) {
         for (i = 0U; i < 6U; ++i) dst[i] = 0xFFU;
-    } else if (arp_cache_lookup(&pkt[16], dst)) {
-        /* dst now holds the cached MAC for pkt[16..19]. */
     } else {
-        /* Cache miss: fire an outbound ARP request so the reply populates the
-         * cache, then drop this packet -- the caller's retry resolves. */
-        arp_request_send(&pkt[16]);
-        return TIKU_KITS_NET_ERR_NOLINK;
+        /* Next-hop selection: an on-subnet dst is reached directly; an off-subnet
+         * dst (e.g. the internet) is reached via the default gateway. Resolve the
+         * NEXT HOP's MAC, not the final dst's. Subnet + gateway come from the DHCP
+         * lease; with no lease we assume on-subnet (the old behaviour). */
+        const uint8_t *nexthop = &pkt[16];
+        const tiku_kits_net_dhcp_lease_t *lease = tiku_kits_net_dhcp_get_lease();
+        if (lease != (const tiku_kits_net_dhcp_lease_t *)0) {
+            const uint8_t *our = tiku_kits_net_ipv4_get_addr();
+            uint8_t onsubnet = 1U;
+            if (our != (const uint8_t *)0) {
+                for (i = 0U; i < 4U; ++i) {
+                    if ((pkt[16U + i] & lease->mask[i]) !=
+                        (our[i]        & lease->mask[i])) {
+                        onsubnet = 0U;
+                        break;
+                    }
+                }
+            }
+            if (onsubnet == 0U) {
+                nexthop = lease->gateway;
+            }
+        }
+        if (arp_cache_lookup(nexthop, dst)) {
+            /* dst now holds the cached MAC for the next hop. */
+        } else {
+            /* Cache miss: ARP the next hop, drop this packet; the caller's retry
+             * resolves once the reply lands. */
+            arp_request_send(nexthop);
+            return TIKU_KITS_NET_ERR_NOLINK;
+        }
     }
 
     (void)eth_hdr_build(eth, dst, st.mac, ETHERTYPE_IPV4);
