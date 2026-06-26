@@ -272,6 +272,43 @@ arp_handle_in(const uint8_t *frame, uint16_t len)
     return 1;
 }
 
+/**
+ * @brief Broadcast an ARP request ("who has @p target_ip?").
+ *
+ * Outbound-first discovery (the 5.A.1 piece): when a unicast send misses the
+ * passive cache, ask the LAN for the peer's MAC. The reply is learned by
+ * wifi_rx_cb's arp_cache_learn, so the caller's retry resolves. Sender = our
+ * MAC + our (DHCP-assigned) IP, so the peer also learns us and can reply to us.
+ */
+static void
+arp_request_send(const uint8_t target_ip[4])
+{
+    uint8_t        frame[ARP_FRAME_BYTES];
+    uint8_t        bcast[6];
+    const uint8_t *our_ip;
+    uint16_t       n;
+    uint8_t        i;
+    tiku_wireless_status_t st;
+
+    our_ip = tiku_kits_net_ipv4_get_addr();
+    if (our_ip == (const uint8_t *)0) return;
+    if (tiku_wireless_status(&st) != 0 || st.up == 0U) return;
+
+    for (i = 0U; i < 6U; ++i) bcast[i] = 0xFFU;
+    n = eth_hdr_build(frame, bcast, st.mac, ETHERTYPE_ARP);
+    frame[n + 0] = 0x00U; frame[n + 1] = 0x01U;            /* htype Eth  */
+    frame[n + 2] = 0x08U; frame[n + 3] = 0x00U;            /* ptype IPv4 */
+    frame[n + 4] = 0x06U;                                  /* hlen 6     */
+    frame[n + 5] = 0x04U;                                  /* plen 4     */
+    frame[n + 6] = (uint8_t)(ARP_OP_REQUEST >> 8);
+    frame[n + 7] = (uint8_t)(ARP_OP_REQUEST & 0xFFU);
+    for (i = 0U; i < 6U; ++i) frame[n + 8U  + i] = st.mac[i];     /* sender MAC */
+    for (i = 0U; i < 4U; ++i) frame[n + 14U + i] = our_ip[i];     /* sender IP  */
+    for (i = 0U; i < 6U; ++i) frame[n + 18U + i] = 0x00U;         /* target MAC */
+    for (i = 0U; i < 4U; ++i) frame[n + 24U + i] = target_ip[i];  /* target IP  */
+    (void)whd_tx_eth(frame, ARP_FRAME_BYTES);
+}
+
 /*---------------------------------------------------------------------------*/
 /* whd_register_rx_callback hook — runs in runner-process context.           */
 /*---------------------------------------------------------------------------*/
@@ -399,6 +436,9 @@ wifi_send(const uint8_t *pkt, uint16_t len)
     } else if (arp_cache_lookup(&pkt[16], dst)) {
         /* dst now holds the cached MAC for pkt[16..19]. */
     } else {
+        /* Cache miss: fire an outbound ARP request so the reply populates the
+         * cache, then drop this packet -- the caller's retry resolves. */
+        arp_request_send(&pkt[16]);
         return TIKU_KITS_NET_ERR_NOLINK;
     }
 
