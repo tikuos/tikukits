@@ -337,14 +337,18 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
                             frame + 6U);
         }
 
-        if (rx_stage_len != 0U) {
-            rx_dropped_full += 1U;
-            return;
-        }
+        /* Copy out of the const, borrowed frame into mutable scratch, then push
+         * straight into the IP stack (ipv4_input may rewrite the buffer in
+         * place). Done here in the runner's RX callback -- exactly like the ARP
+         * reply above -- so RX works with NO poll loop draining a stage: the
+         * shell+net build owns RX in the shell and never runs the net process's
+         * active_link->poll_rx() loop. The standalone net app is unaffected
+         * (its poll_rx() simply finds the stage empty). */
         for (i = 0U; i < ip_len; ++i) {
             rx_stage[i] = frame[ETH_HDR_LEN + i];
         }
-        rx_stage_len = ip_len;
+        rx_delivered += 1U;
+        tiku_kits_net_ipv4_input(rx_stage, ip_len);
     }
 }
 
