@@ -1,0 +1,106 @@
+/*
+ * Tiku Operating System
+ * http://tiku-os.org
+ *
+ * Authors: Ambuj Varshney <ambuj@tiku-os.org>
+ *
+ * tiku_kits_crypto_x509.h - minimal X.509 (DER) certificate parser
+ *
+ * Parses the fields a TLS 1.3 client needs to authenticate a server:
+ * the signed TBSCertificate, the subject public key (RSA or EC P-256),
+ * validity window, issuer/subject DNs (for chain linking), the
+ * subjectAltName DNS list (for hostname matching), and the certificate
+ * signature + algorithm.  Zero-copy: parsed fields point into the caller's
+ * DER buffer, which must outlive the parsed struct.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at:
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.  See the License for the specific language governing
+ * permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef TIKU_KITS_CRYPTO_X509_H_
+#define TIKU_KITS_CRYPTO_X509_H_
+
+#include <stdint.h>
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define TIKU_KITS_CRYPTO_X509_OK     0
+#define TIKU_KITS_CRYPTO_X509_BAD  (-1)
+
+/** Public-key algorithm of the subject. */
+enum {
+    TIKU_X509_PK_UNKNOWN = 0,
+    TIKU_X509_PK_RSA,         /**< rsaEncryption: rsa_n / rsa_e valid     */
+    TIKU_X509_PK_EC_P256      /**< id-ecPublicKey prime256v1: ec_point    */
+};
+
+/** Signature algorithm over the TBSCertificate. */
+enum {
+    TIKU_X509_SIG_UNKNOWN = 0,
+    TIKU_X509_SIG_RSA_PKCS1_SHA256, /**< sha256WithRSAEncryption */
+    TIKU_X509_SIG_RSA_PSS_SHA256,   /**< rsassaPss / SHA-256     */
+    TIKU_X509_SIG_ECDSA_SHA256      /**< ecdsa-with-SHA256       */
+};
+
+/**
+ * @struct tiku_kits_crypto_x509_t
+ * @brief  Parsed view over a DER certificate (pointers alias the input).
+ */
+typedef struct {
+    const uint8_t *tbs;      size_t tbs_len;    /**< signed region (with hdr) */
+
+    int            pk_alg;
+    const uint8_t *rsa_n;    size_t rsa_n_len;  /**< RSA modulus (no sign 00) */
+    const uint8_t *rsa_e;    size_t rsa_e_len;  /**< RSA exponent             */
+    const uint8_t *ec_point; size_t ec_point_len;/**< EC point 04||X||Y       */
+
+    const uint8_t *issuer;   size_t issuer_len; /**< raw DER Name             */
+    const uint8_t *subject;  size_t subject_len;/**< raw DER Name             */
+
+    const uint8_t *not_before; size_t not_before_len; /**< raw time bytes     */
+    const uint8_t *not_after;  size_t not_after_len;
+    uint8_t        nb_tag, na_tag;              /**< 0x17 UTCTime/0x18 GenTime*/
+
+    const uint8_t *san;      size_t san_len;    /**< raw SAN GeneralNames     */
+
+    int            sig_alg;
+    const uint8_t *sig;      size_t sig_len;    /**< signature value (no BIT0)*/
+} tiku_kits_crypto_x509_t;
+
+/**
+ * @brief Parse a single DER certificate.
+ * @param der   Certificate bytes (DER).
+ * @param len   Length of @p der.
+ * @param out   Filled on success; fields alias @p der.
+ * @return TIKU_KITS_CRYPTO_X509_OK or _BAD.
+ */
+int tiku_kits_crypto_x509_parse(const uint8_t *der, size_t len,
+                                tiku_kits_crypto_x509_t *out);
+
+/**
+ * @brief Check a hostname against the certificate's subjectAltName DNS list
+ *        (case-insensitive, supports a leading "*." wildcard label).
+ * @return TIKU_KITS_CRYPTO_X509_OK on match, else _BAD.
+ */
+int tiku_kits_crypto_x509_match_host(const tiku_kits_crypto_x509_t *c,
+                                     const char *host);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* TIKU_KITS_CRYPTO_X509_H_ */
