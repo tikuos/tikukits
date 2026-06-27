@@ -40,6 +40,10 @@
 #define OK   TIKU_KITS_CRYPTO_TLS13_OK
 #define BAD  TIKU_KITS_CRYPTO_TLS13_BAD
 
+/* Optional milestone hook for bring-up debugging (NULL = silent). */
+void (*tiku_kits_crypto_tls13_dbg)(const char *) = 0;
+#define DBG(s) do { if (tiku_kits_crypto_tls13_dbg) tiku_kits_crypto_tls13_dbg(s); } while (0)
+
 #define REC_CCS   0x14
 #define REC_ALERT 0x15
 #define REC_HS    0x16
@@ -53,8 +57,15 @@
 #define HS_FINISHED     20
 
 #define MAX_CERTS 6
-#define HS_BUF    16384
-#define REC_BUF   16640
+/* Embedded sizing: the reassembled server flight (EncryptedExtensions +
+ * Certificate chain + CertificateVerify + Finished) and any single incoming
+ * record must fit here.  8 KB covers typical 2-3 cert chains; a server that
+ * sends a single record larger than this is rejected (acceptable trade for
+ * SRAM-constrained parts -- raise on parts with more RAM). */
+#define HS_BUF     8192
+#define REC_BUF    8192
+#define SEAL_BUF   1152   /* outgoing records: client sends are small (cap below) */
+#define APP_CHUNK  1024   /* max plaintext per client application_data record    */
 
 typedef tiku_kits_crypto_sha256_ctx_t sha_ctx;
 
@@ -163,10 +174,10 @@ static int aead_seal(const tiku_kits_crypto_tls13_io_t *io, const tiku_kits_cryp
                      const uint8_t iv[12], uint64_t seq, uint8_t inner_type,
                      const uint8_t *inner, size_t ilen)
 {
-    static uint8_t out[REC_BUF];
+    static uint8_t out[SEAL_BUF];
     uint8_t nonce[12], aad[5], hdr[5];
     size_t total = ilen + 1 + 16;
-    if (total > REC_BUF) return BAD;
+    if (total > SEAL_BUF) return BAD;
     memcpy(out, inner, ilen);
     out[ilen] = inner_type;
     mk_nonce(iv, seq, nonce);
@@ -352,6 +363,7 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
     tiku_kits_crypto_hkdf_expand_label(s_hs, "finished", NULL, 0, s_fin_key, 32);
     tiku_kits_crypto_gcm_init(&s_gcm, s_hs_key);
     conn->s_seq = 0;
+    DBG("keysched ok, reading flight");
 
     /* 4. read + decrypt the server flight (EE, Cert, CertVerify, Finished) */
     {
@@ -374,6 +386,11 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
 
                 if (mt == HS_CERT_VERIFY) { th_hash(&th, thash_cv); have_cv_hash = 1; }
                 if (mt == HS_FINISHED)    { th_hash(&th, thash); }   /* Hash(CH..CV) */
+
+                if (mt == HS_EE)   DBG("got EncryptedExtensions");
+                if (mt == HS_CERT) DBG("got Certificate, parsing");
+                if (mt == HS_CERT_VERIFY) DBG("got CertVerify, verifying sig");
+                if (mt == HS_FINISHED) DBG("got Finished, checking");
 
                 if (mt == HS_CERT) {
                     const uint8_t *cp = m + 4, *ce = m + 4 + ml; size_t ctxl;
@@ -421,8 +438,10 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
     if (!leaf_ok || nchain < 1) return BAD;
 
     /* 5. validate the certificate chain to a trusted root */
+    DBG("flight done, validating chain");
     if (tiku_kits_crypto_x509_verify_chain(chain, nchain, roots, nroots, host, now_unix) != 0)
         return BAD;
+    DBG("chain trusted, finishing");
 
     /* 6. application keys (master secret) + client Finished */
     th_hash(&th, thash);                                 /* Hash(CH..server Finished) */
@@ -466,7 +485,7 @@ int tiku_kits_crypto_tls13_write(tiku_kits_crypto_tls13_conn_t *c,
     if (c->closed) return BAD;
     tiku_kits_crypto_gcm_init(&gcm, c->c_key);
     while (off < len) {
-        size_t chunk = len - off; if (chunk > 16384) chunk = 16384;
+        size_t chunk = len - off; if (chunk > APP_CHUNK) chunk = APP_CHUNK;
         if (aead_seal(&c->io, &gcm, c->c_iv, c->c_seq, REC_APP, data + off, chunk) != OK)
             return BAD;
         c->c_seq++; off += chunk;
@@ -485,7 +504,7 @@ int tiku_kits_crypto_tls13_read(tiku_kits_crypto_tls13_conn_t *c, uint8_t *buf, 
             if (read_record(&c->io, &type, &blen) != OK) { c->closed = 1; return 0; }
             if (type == REC_CCS) continue;
             if (type != REC_APP) { c->closed = 1; return BAD; }
-            if (aead_open(&gcm, c->s_iv, c->s_seq, blen, c->rx, &ptlen, &inner) != OK)
+            if (aead_open(&gcm, c->s_iv, c->s_seq, blen, hs_buf, &ptlen, &inner) != OK)
                 { c->closed = 1; return BAD; }
             c->s_seq++;
             if (inner == REC_ALERT) { c->closed = 1; return 0; }
@@ -498,7 +517,7 @@ int tiku_kits_crypto_tls13_read(tiku_kits_crypto_tls13_conn_t *c, uint8_t *buf, 
     {
         size_t avail = c->rx_len - c->rx_off;
         size_t take = avail < max ? avail : max;
-        memcpy(buf, c->rx + c->rx_off, take);
+        memcpy(buf, hs_buf + c->rx_off, take);
         c->rx_off += take;
         return (int)take;
     }

@@ -93,7 +93,10 @@ static void dbl_mod(uint32_t *x, const uint32_t *m, int k)
 static void montmul(uint32_t *out, const uint32_t *a, const uint32_t *b,
                     const uint32_t *m, uint32_t n0, int k)
 {
-    uint32_t t[ML + 1];
+    /* static (not stack): these buffers are sized for RSA-4096 and the verify
+     * path is deep + non-reentrant -- keeping them off the stack avoids
+     * overflowing the (small) caller process stack on 32-bit targets. */
+    static uint32_t t[ML + 1];
     int i, j;
     for (i = 0; i <= k; i++) t[i] = 0;
 
@@ -118,7 +121,8 @@ static void montmul(uint32_t *out, const uint32_t *a, const uint32_t *b,
 static void modexp(uint32_t *out, const uint32_t *base, const uint32_t *m,
                    int k, const uint8_t *e, size_t elen)
 {
-    uint32_t n0, inv, rr[ML], one[ML], base_m[ML], res[ML];
+    static uint32_t rr[ML], one[ML], base_m[ML], res[ML];   /* off-stack (see montmul) */
+    uint32_t n0, inv;
     int i, started = 0; size_t bytei;
 
     /* n0 = -m^-1 mod 2^32 */
@@ -154,7 +158,7 @@ static int rsa_pubop(uint8_t *em, size_t emlen,
                      const uint8_t *e, size_t elen,
                      const uint8_t *sig, size_t siglen)
 {
-    bn nb, sb, mb;
+    static bn nb, sb, mb;          /* off-stack (see montmul) */
     int k;
     if (nlen == 0 || nlen > TIKU_KITS_CRYPTO_RSA_MAX_BYTES) return -1;
     if (siglen > nlen) return -1;
@@ -179,7 +183,7 @@ int tiku_kits_crypto_rsa_pkcs1_sha256_verify(const uint8_t *n, size_t nlen,
                                              const uint8_t *sig, size_t siglen,
                                              const uint8_t hash32[32])
 {
-    uint8_t em[TIKU_KITS_CRYPTO_RSA_MAX_BYTES];
+    static uint8_t em[TIKU_KITS_CRYPTO_RSA_MAX_BYTES];   /* off-stack */
     size_t  tlen = sizeof(SHA256_DI) + HLEN;
     size_t  i, pad_end;
 
@@ -236,9 +240,9 @@ int tiku_kits_crypto_rsa_pss_sha256_verify(const uint8_t *n, size_t nlen,
                                            const uint8_t *sig, size_t siglen,
                                            const uint8_t mhash32[32])
 {
-    uint8_t em[TIKU_KITS_CRYPTO_RSA_MAX_BYTES];
-    uint8_t dbmask[TIKU_KITS_CRYPTO_RSA_MAX_BYTES];
-    uint8_t mprime[8 + 32 + TIKU_KITS_CRYPTO_RSA_MAX_BYTES];
+    static uint8_t em[TIKU_KITS_CRYPTO_RSA_MAX_BYTES];           /* off-stack */
+    static uint8_t dbmask[TIKU_KITS_CRYPTO_RSA_MAX_BYTES];
+    static uint8_t mprime[8 + 32 + TIKU_KITS_CRYPTO_RSA_MAX_BYTES];
     uint8_t hprime[32];
     const uint8_t *H, *db;
     size_t emlen, dblen, i, slen, off;

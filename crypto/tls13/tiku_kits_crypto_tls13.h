@@ -55,14 +55,16 @@ typedef struct {
 /** Fill @p buf with @p len cryptographically-random bytes. */
 typedef void (*tiku_kits_crypto_tls13_rng_t)(uint8_t *buf, size_t len);
 
+/** Optional handshake-milestone debug hook (NULL = silent). */
+extern void (*tiku_kits_crypto_tls13_dbg)(const char *msg);
+
 /** An established TLS 1.3 connection (application-data keys + sequence). */
 typedef struct {
     tiku_kits_crypto_tls13_io_t io;
     uint8_t  c_key[16], c_iv[12];
     uint8_t  s_key[16], s_iv[12];
     uint64_t c_seq, s_seq;
-    /* buffered decrypted application data not yet returned to the caller */
-    uint8_t  rx[16640];
+    /* offsets into the shared decrypt buffer for app data not yet returned */
     size_t   rx_len, rx_off;
     int      closed;
 } tiku_kits_crypto_tls13_conn_t;
