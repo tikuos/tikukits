@@ -320,7 +320,7 @@ tiku_kits_net_http_build_request(
  * is reused as a TLS read staging buffer during the response
  * phase.  Placed in FRAM to conserve SRAM.
  */
-__attribute__((section(".persistent"), aligned(2)))
+TIKU_KITS_CRYPTO_TLS_BUF_ATTR
 static uint8_t http_req_buf[TIKU_KITS_NET_HTTP_REQ_BUF_SIZE];
 
 /*---------------------------------------------------------------------------*/

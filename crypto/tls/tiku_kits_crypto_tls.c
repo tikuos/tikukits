@@ -44,29 +44,29 @@
 /*---------------------------------------------------------------------------*/
 
 /** Handshake transcript buffer: raw bytes of CH+SH+EE+SF. */
-__attribute__((section(".persistent"), aligned(2)))
+TIKU_KITS_CRYPTO_TLS_BUF_ATTR
 static uint8_t tls_transcript_buf[
     TIKU_KITS_CRYPTO_TLS_TRANSCRIPT_SIZE];
 
 /** TLS record RX buffer (holds one complete record from TCP). */
-__attribute__((section(".persistent"), aligned(2)))
+TIKU_KITS_CRYPTO_TLS_BUF_ATTR
 static uint8_t tls_rx_buf[TIKU_KITS_CRYPTO_TLS_RECORD_BUF_SIZE];
 
 /** TLS record TX buffer (for building outgoing records). */
-__attribute__((section(".persistent"), aligned(2)))
+TIKU_KITS_CRYPTO_TLS_BUF_ATTR
 static uint8_t tls_tx_buf[TIKU_KITS_CRYPTO_TLS_RECORD_BUF_SIZE];
 
 /** PSK storage: key + identity in FRAM. */
-__attribute__((section(".persistent"), aligned(2)))
+TIKU_KITS_CRYPTO_TLS_BUF_ATTR
 static uint8_t tls_psk_key[TIKU_KITS_CRYPTO_TLS_MAX_PSK_LEN];
 
-__attribute__((section(".persistent"), aligned(2)))
+TIKU_KITS_CRYPTO_TLS_BUF_ATTR
 static uint8_t tls_psk_id[TIKU_KITS_CRYPTO_TLS_MAX_PSK_ID_LEN];
 
-__attribute__((section(".persistent"), aligned(2)))
+TIKU_KITS_CRYPTO_TLS_BUF_ATTR
 static uint16_t tls_psk_key_len;
 
-__attribute__((section(".persistent"), aligned(2)))
+TIKU_KITS_CRYPTO_TLS_BUF_ATTR
 static uint16_t tls_psk_id_len;
 
 /*---------------------------------------------------------------------------*/

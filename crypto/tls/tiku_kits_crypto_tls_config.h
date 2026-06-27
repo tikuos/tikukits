@@ -59,9 +59,54 @@
  * insecure fallback.
  */
 #ifndef TIKU_KITS_CRYPTO_TLS_RNG_FILL
+/*
+ * Default entropy binding.  Platforms with a hardware TRNG wrap it here so
+ * the TLS client works out of the box; override by defining the macro to
+ * your own `void f(uint8_t*, uint8_t)` before this header / via EXTRA_CFLAGS.
+ */
+#if defined(PLATFORM_RP2350)
+#include <arch/arm-rp2350/tiku_trng_arch.h>
+/**
+ * @brief TLS entropy source backed by the RP2350 hardware TRNG.
+ *
+ * Adapts tiku_trng_arch_read_bytes() (`int f(uint8_t*, size_t)`, which
+ * auto-initialises the TRNG on first use) to the kit's `void f(uint8_t*,
+ * uint8_t)` contract.  The void contract can't propagate a hardware-failure
+ * return; on the RP2350 the TRNG is on-die and read_bytes spins internally,
+ * so a failure here means a genuinely dead RNG -- the handshake then fails
+ * closed at the peer rather than this layer silently downgrading security.
+ */
+static inline void
+tiku_kits_crypto_tls_rng_fill_trng(uint8_t *buf, uint8_t len)
+{
+    (void)tiku_trng_arch_read_bytes(buf, (size_t)len);
+}
+#define TIKU_KITS_CRYPTO_TLS_RNG_FILL tiku_kits_crypto_tls_rng_fill_trng
+#else
 #error "TIKU_KITS_CRYPTO_TLS_RNG_FILL must be defined to a function " \
        "with signature void f(uint8_t *buf, uint8_t len) that provides " \
        "cryptographically suitable random bytes."
+#endif
+#endif
+
+/*---------------------------------------------------------------------------*/
+/* WORKING-BUFFER PLACEMENT                                                   */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * Storage attribute for the kit's per-session working buffers (record TX/RX,
+ * transcript, key schedule).  On FRAM parts (MSP430) they live in .persistent
+ * to conserve scarce SRAM.  On RP2350 they are ephemeral per-handshake and
+ * .persistent has only a 4 KB flash backup-sector budget, so default them to
+ * plain .bss (ample SRAM).  Override by defining the macro before this header.
+ */
+#ifndef TIKU_KITS_CRYPTO_TLS_BUF_ATTR
+#  if defined(PLATFORM_RP2350)
+#    define TIKU_KITS_CRYPTO_TLS_BUF_ATTR  __attribute__((aligned(2)))
+#  else
+#    define TIKU_KITS_CRYPTO_TLS_BUF_ATTR  \
+            __attribute__((section(".persistent"), aligned(2)))
+#  endif
 #endif
 
 /*---------------------------------------------------------------------------*/
