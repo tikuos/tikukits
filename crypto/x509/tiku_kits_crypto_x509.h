@@ -99,6 +99,38 @@ int tiku_kits_crypto_x509_parse(const uint8_t *der, size_t len,
 int tiku_kits_crypto_x509_match_host(const tiku_kits_crypto_x509_t *c,
                                      const char *host);
 
+/**
+ * @brief Verify that certificate @p c was signed by @p issuer.
+ *
+ * Hashes c->tbs with SHA-256 and checks c->sig under issuer's public key,
+ * dispatching on the signature algorithm (RSA PKCS#1 / RSA-PSS / ECDSA).
+ * Does NOT check names, validity, or basic constraints -- pure signature.
+ *
+ * @return TIKU_KITS_CRYPTO_X509_OK if the signature verifies, else _BAD.
+ */
+int tiku_kits_crypto_x509_verify_signed_by(const tiku_kits_crypto_x509_t *c,
+                                           const tiku_kits_crypto_x509_t *issuer);
+
+/**
+ * @brief Validate a certificate chain to a trusted root.
+ *
+ * @param chain   Parsed chain, chain[0] = leaf .. chain[n-1] = topmost sent.
+ * @param n       Number of certs in @p chain (>= 1).
+ * @param roots   Parsed trusted root certificates (the trust store).
+ * @param nroots  Number of roots.
+ * @param host    Hostname to match against the leaf SAN (NULL to skip).
+ * @param now_unix Current time, Unix seconds, for validity checks (0 to skip).
+ *
+ * Checks, in order: leaf hostname; every cert's validity window; each link
+ * (chain[i] signed by chain[i+1] and issuer==subject); and that the topmost
+ * cert is signed by some trusted root (matched by subject==issuer).
+ *
+ * @return TIKU_KITS_CRYPTO_X509_OK if the chain is trusted, else _BAD.
+ */
+int tiku_kits_crypto_x509_verify_chain(const tiku_kits_crypto_x509_t *chain, int n,
+                                       const tiku_kits_crypto_x509_t *roots, int nroots,
+                                       const char *host, uint64_t now_unix);
+
 #ifdef __cplusplus
 }
 #endif
