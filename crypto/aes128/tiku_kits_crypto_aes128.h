@@ -47,6 +47,10 @@
 /** @brief Number of AES-128 rounds per FIPS 197. */
 #define TIKU_KITS_CRYPTO_AES128_NUM_ROUNDS  10
 
+/** @brief AES-256 key size (32 bytes) and round count (14). */
+#define TIKU_KITS_CRYPTO_AES256_KEY_SIZE    32
+#define TIKU_KITS_CRYPTO_AES256_NUM_ROUNDS  14
+
 /*---------------------------------------------------------------------------*/
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
@@ -72,9 +76,11 @@
  * @endcode
  */
 typedef struct tiku_kits_crypto_aes128_ctx {
-    /** Expanded round keys: 11 x 16 = 176 bytes. */
-    uint8_t round_keys[(TIKU_KITS_CRYPTO_AES128_NUM_ROUNDS + 1)
+    /** Expanded round keys, sized for AES-256 (15 x 16 = 240 bytes); an
+     *  AES-128 schedule uses the first 176.  @ref rounds selects the count. */
+    uint8_t round_keys[(TIKU_KITS_CRYPTO_AES256_NUM_ROUNDS + 1)
                        * TIKU_KITS_CRYPTO_AES128_BLOCK_SIZE];
+    uint8_t rounds;     /**< 10 for AES-128, 14 for AES-256 */
 } tiku_kits_crypto_aes128_ctx_t;
 
 /*---------------------------------------------------------------------------*/
@@ -94,6 +100,16 @@ typedef struct tiku_kits_crypto_aes128_ctx {
  *         TIKU_KITS_CRYPTO_ERR_NULL if ctx or key is NULL.
  */
 int tiku_kits_crypto_aes128_init(tiku_kits_crypto_aes128_ctx_t *ctx,
+                                 const uint8_t *key);
+
+/**
+ * @brief Expand a 32-byte key into the AES-256 round-key schedule (FIPS 197,
+ *        Nk=8, Nr=14).  Shares the encrypt routine with AES-128 via the
+ *        context's @c rounds field.  Encrypt-only (no inverse schedule).
+ * @param ctx  Context to initialize.
+ * @param key  32-byte key.
+ */
+int tiku_kits_crypto_aes256_init(tiku_kits_crypto_aes128_ctx_t *ctx,
                                  const uint8_t *key);
 
 /**

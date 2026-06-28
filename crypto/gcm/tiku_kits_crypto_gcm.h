@@ -94,6 +94,10 @@ typedef struct tiku_kits_crypto_gcm_ctx {
  * @return TIKU_KITS_CRYPTO_OK on success,
  *         TIKU_KITS_CRYPTO_ERR_NULL if ctx or key is NULL.
  */
+/** @brief Initialise a GCM context with a 32-byte AES-256 key. */
+int tiku_kits_crypto_gcm_init256(tiku_kits_crypto_gcm_ctx_t *ctx,
+                                 const uint8_t *key);
+
 int tiku_kits_crypto_gcm_init(tiku_kits_crypto_gcm_ctx_t *ctx,
                                const uint8_t *key);
 

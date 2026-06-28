@@ -243,6 +243,45 @@ int tiku_kits_crypto_aes128_init(tiku_kits_crypto_aes128_ctx_t *ctx,
                          ^ rk[i * 16 + 11];
     }
 
+    ctx->rounds = TIKU_KITS_CRYPTO_AES128_NUM_ROUNDS;
+    return TIKU_KITS_CRYPTO_OK;
+}
+
+int tiku_kits_crypto_aes256_init(tiku_kits_crypto_aes128_ctx_t *ctx,
+                                 const uint8_t *key)
+{
+    uint8_t *rk;
+    int i;
+
+    if (ctx == NULL || key == NULL) {
+        return TIKU_KITS_CRYPTO_ERR_NULL;
+    }
+
+    rk = ctx->round_keys;
+    /* First 8 words (32 bytes) are the key itself. */
+    memcpy(rk, key, TIKU_KITS_CRYPTO_AES256_KEY_SIZE);
+
+    /* Words 8..59 (FIPS 197 Section 5.2, Nk=8). */
+    for (i = 8; i < 60; i++) {
+        uint8_t t[4], k;
+        t[0] = rk[(i - 1) * 4 + 0]; t[1] = rk[(i - 1) * 4 + 1];
+        t[2] = rk[(i - 1) * 4 + 2]; t[3] = rk[(i - 1) * 4 + 3];
+        if ((i & 7) == 0) {
+            k = t[0]; t[0] = t[1]; t[1] = t[2]; t[2] = t[3]; t[3] = k; /* RotWord */
+            t[0] = sbox[t[0]]; t[1] = sbox[t[1]];
+            t[2] = sbox[t[2]]; t[3] = sbox[t[3]];                      /* SubWord */
+            t[0] ^= rcon[i / 8 - 1];
+        } else if ((i & 7) == 4) {
+            t[0] = sbox[t[0]]; t[1] = sbox[t[1]];
+            t[2] = sbox[t[2]]; t[3] = sbox[t[3]];                      /* SubWord */
+        }
+        rk[i * 4 + 0] = rk[(i - 8) * 4 + 0] ^ t[0];
+        rk[i * 4 + 1] = rk[(i - 8) * 4 + 1] ^ t[1];
+        rk[i * 4 + 2] = rk[(i - 8) * 4 + 2] ^ t[2];
+        rk[i * 4 + 3] = rk[(i - 8) * 4 + 3] ^ t[3];
+    }
+
+    ctx->rounds = TIKU_KITS_CRYPTO_AES256_NUM_ROUNDS;
     return TIKU_KITS_CRYPTO_OK;
 }
 
@@ -455,10 +494,8 @@ int tiku_kits_crypto_aes128_encrypt(
     /* Initial round key addition */
     add_round_key(state, rk);
 
-    /* Rounds 1 .. 9: SubBytes, ShiftRows, MixColumns, AddRoundKey */
-    for (round = 1;
-         round < TIKU_KITS_CRYPTO_AES128_NUM_ROUNDS;
-         round++) {
+    /* Rounds 1 .. Nr-1: SubBytes, ShiftRows, MixColumns, AddRoundKey */
+    for (round = 1; round < ctx->rounds; round++) {
         sub_bytes(state);
         shift_rows(state);
         mix_columns(state);
@@ -468,8 +505,7 @@ int tiku_kits_crypto_aes128_encrypt(
     /* Final round (no MixColumns) */
     sub_bytes(state);
     shift_rows(state);
-    add_round_key(state,
-                  rk + TIKU_KITS_CRYPTO_AES128_NUM_ROUNDS * 16);
+    add_round_key(state, rk + ctx->rounds * 16);
 
     /* Copy state to output */
     memcpy(ciphertext, state,

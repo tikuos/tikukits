@@ -403,6 +403,26 @@ int tiku_kits_crypto_gcm_init(tiku_kits_crypto_gcm_ctx_t *ctx,
     return TIKU_KITS_CRYPTO_OK;
 }
 
+int tiku_kits_crypto_gcm_init256(tiku_kits_crypto_gcm_ctx_t *ctx,
+                                 const uint8_t *key)
+{
+    uint8_t zero_block[BLOCK_SIZE];
+    int rc;
+
+    if (ctx == NULL || key == NULL) {
+        return TIKU_KITS_CRYPTO_ERR_NULL;
+    }
+    /* AES-256 schedule; the encrypt/CTR/GHASH path is key-size agnostic
+     * (it reads the round count from the context). */
+    rc = tiku_kits_crypto_aes256_init(&ctx->aes, key);
+    if (rc != TIKU_KITS_CRYPTO_OK) {
+        return rc;
+    }
+    memset(zero_block, 0, BLOCK_SIZE);
+    tiku_kits_crypto_aes128_encrypt(&ctx->aes, zero_block, ctx->h);
+    return TIKU_KITS_CRYPTO_OK;
+}
+
 /*---------------------------------------------------------------------------*/
 
 int tiku_kits_crypto_gcm_encrypt(
