@@ -205,6 +205,14 @@ static int ske_verify(const tiku_kits_crypto_x509_t *leaf,
                       const uint8_t *sig, size_t slen)
 {
     uint8_t h[48]; size_t hl;
+    /* RSA-PSS SignatureScheme (the hash byte is 0x08, not a HashAlgorithm):
+     * 0x0804 = rsa_pss_rsae_sha256 -- the one we offer + can verify. */
+    if (hashalg == 8) {
+        if (sigalg != 4 || leaf->pk_alg != TIKU_X509_PK_RSA) return BAD;
+        sha256_of(signed_data, sdlen, h);
+        return tiku_kits_crypto_rsa_pss_sha256_verify(leaf->rsa_n, leaf->rsa_n_len,
+                   leaf->rsa_e, leaf->rsa_e_len, sig, slen, h) == 0 ? OK : BAD;
+    }
     if (hashalg == 4) { sha256_of(signed_data, sdlen, h); hl = 32; }
     else if (hashalg == 5) { sha384_of(signed_data, sdlen, h); hl = 48; }
     else return BAD;
