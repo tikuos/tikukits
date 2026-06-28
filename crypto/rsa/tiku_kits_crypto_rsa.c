@@ -173,18 +173,21 @@ static int rsa_pubop(uint8_t *em, size_t emlen,
 
 /* ---- PKCS#1 v1.5 (SHA-256) ---------------------------------------------- */
 
-/* DER DigestInfo prefix for SHA-256. */
+/* DER DigestInfo prefixes (SEQUENCE{ SEQUENCE{ hashOID, NULL }, OCTET STRING }). */
 static const uint8_t SHA256_DI[] = {
     0x30,0x31,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x01,
     0x05,0x00,0x04,0x20 };
+static const uint8_t SHA384_DI[] = {
+    0x30,0x41,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02,
+    0x05,0x00,0x04,0x30 };
 
-int tiku_kits_crypto_rsa_pkcs1_sha256_verify(const uint8_t *n, size_t nlen,
-                                             const uint8_t *e, size_t elen,
-                                             const uint8_t *sig, size_t siglen,
-                                             const uint8_t hash32[32])
+/* PKCS#1 v1.5 verify against a given DigestInfo prefix + hash. */
+static int pkcs1_check(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen,
+                       const uint8_t *sig, size_t siglen,
+                       const uint8_t *di, size_t dilen, const uint8_t *hash, size_t hlen)
 {
     static uint8_t em[TIKU_KITS_CRYPTO_RSA_MAX_BYTES];   /* off-stack */
-    size_t  tlen = sizeof(SHA256_DI) + HLEN;
+    size_t  tlen = dilen + hlen;
     size_t  i, pad_end;
 
     if (rsa_pubop(em, nlen, n, nlen, e, elen, sig, siglen) != 0)
@@ -197,11 +200,29 @@ int tiku_kits_crypto_rsa_pkcs1_sha256_verify(const uint8_t *n, size_t nlen,
         if (em[i] != 0xFF) return TIKU_KITS_CRYPTO_RSA_BAD;
     pad_end = nlen - tlen - 1;
     if (em[pad_end] != 0x00) return TIKU_KITS_CRYPTO_RSA_BAD;
-    if (memcmp(em + pad_end + 1, SHA256_DI, sizeof(SHA256_DI)) != 0)
+    if (memcmp(em + pad_end + 1, di, dilen) != 0)
         return TIKU_KITS_CRYPTO_RSA_BAD;
-    if (memcmp(em + pad_end + 1 + sizeof(SHA256_DI), hash32, HLEN) != 0)
+    if (memcmp(em + pad_end + 1 + dilen, hash, hlen) != 0)
         return TIKU_KITS_CRYPTO_RSA_BAD;
     return TIKU_KITS_CRYPTO_RSA_OK;
+}
+
+int tiku_kits_crypto_rsa_pkcs1_sha256_verify(const uint8_t *n, size_t nlen,
+                                             const uint8_t *e, size_t elen,
+                                             const uint8_t *sig, size_t siglen,
+                                             const uint8_t hash32[32])
+{
+    return pkcs1_check(n, nlen, e, elen, sig, siglen,
+                       SHA256_DI, sizeof SHA256_DI, hash32, 32);
+}
+
+int tiku_kits_crypto_rsa_pkcs1_sha384_verify(const uint8_t *n, size_t nlen,
+                                             const uint8_t *e, size_t elen,
+                                             const uint8_t *sig, size_t siglen,
+                                             const uint8_t hash48[48])
+{
+    return pkcs1_check(n, nlen, e, elen, sig, siglen,
+                       SHA384_DI, sizeof SHA384_DI, hash48, 48);
 }
 
 /* ---- PSS (MGF1-SHA-256) ------------------------------------------------- */

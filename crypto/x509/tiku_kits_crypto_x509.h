@@ -55,7 +55,8 @@ enum {
     TIKU_X509_SIG_RSA_PKCS1_SHA256, /**< sha256WithRSAEncryption */
     TIKU_X509_SIG_RSA_PSS_SHA256,   /**< rsassaPss / SHA-256     */
     TIKU_X509_SIG_ECDSA_SHA256,     /**< ecdsa-with-SHA256       */
-    TIKU_X509_SIG_ECDSA_SHA384      /**< ecdsa-with-SHA384       */
+    TIKU_X509_SIG_ECDSA_SHA384,     /**< ecdsa-with-SHA384       */
+    TIKU_X509_SIG_RSA_PKCS1_SHA384  /**< sha384WithRSAEncryption */
 };
 
 /**

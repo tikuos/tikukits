@@ -65,6 +65,21 @@ int tiku_kits_crypto_rsa_pkcs1_sha256_verify(
     const uint8_t hash32[32]);
 
 /**
+ * @brief Verify an RSASSA-PKCS1-v1_5 signature over a SHA-384 digest.
+ *
+ * Used for X.509 certificate-chain signatures (sha384WithRSAEncryption),
+ * common on Microsoft / Azure RSA chains.  All big integers are big-endian.
+ *
+ * @param hash48  The 48-byte SHA-384 digest that was signed.
+ * @return TIKU_KITS_CRYPTO_RSA_OK if valid, else TIKU_KITS_CRYPTO_RSA_BAD.
+ */
+int tiku_kits_crypto_rsa_pkcs1_sha384_verify(
+    const uint8_t *n, size_t nlen,
+    const uint8_t *e, size_t elen,
+    const uint8_t *sig, size_t siglen,
+    const uint8_t hash48[48]);
+
+/**
  * @brief Verify an RSASSA-PSS signature (MGF1-SHA-256) over a SHA-256 digest.
  *
  * Used for TLS 1.3 CertificateVerify (rsa_pss_rsae_sha256).  The salt length

@@ -66,13 +66,19 @@ int tiku_kits_crypto_x509_verify_signed_by(const tiku_kits_crypto_x509_t *c,
 {
     uint8_t h[48];
     if (c->tbs == NULL || c->sig == NULL) return BAD;
-    if (c->sig_alg == TIKU_X509_SIG_ECDSA_SHA384) sha384(c->tbs, c->tbs_len, h);
-    else                                          sha256(c->tbs, c->tbs_len, h);
+    if (c->sig_alg == TIKU_X509_SIG_ECDSA_SHA384 ||
+        c->sig_alg == TIKU_X509_SIG_RSA_PKCS1_SHA384) sha384(c->tbs, c->tbs_len, h);
+    else                                              sha256(c->tbs, c->tbs_len, h);
 
     switch (c->sig_alg) {
     case TIKU_X509_SIG_RSA_PKCS1_SHA256:
         if (iss->pk_alg != TIKU_X509_PK_RSA) return BAD;
         return tiku_kits_crypto_rsa_pkcs1_sha256_verify(
+                   iss->rsa_n, iss->rsa_n_len, iss->rsa_e, iss->rsa_e_len,
+                   c->sig, c->sig_len, h) == 0 ? OK : BAD;
+    case TIKU_X509_SIG_RSA_PKCS1_SHA384:
+        if (iss->pk_alg != TIKU_X509_PK_RSA) return BAD;
+        return tiku_kits_crypto_rsa_pkcs1_sha384_verify(
                    iss->rsa_n, iss->rsa_n_len, iss->rsa_e, iss->rsa_e_len,
                    c->sig, c->sig_len, h) == 0 ? OK : BAD;
     case TIKU_X509_SIG_RSA_PSS_SHA256:
