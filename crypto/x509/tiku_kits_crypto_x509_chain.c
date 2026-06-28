@@ -28,7 +28,9 @@
 #include "tiku_kits_crypto_x509.h"
 #include "../rsa/tiku_kits_crypto_rsa.h"
 #include "../p256/tiku_kits_crypto_p256.h"
+#include "../p384/tiku_kits_crypto_p384.h"
 #include "../sha256/tiku_kits_crypto_sha256.h"
+#include "../sha384/tiku_kits_crypto_sha384.h"
 #include <string.h>
 
 #define OK   TIKU_KITS_CRYPTO_X509_OK
@@ -42,21 +44,30 @@ static void sha256(const uint8_t *d, size_t n, uint8_t out[32])
     tiku_kits_crypto_sha256_final(&c, out);
 }
 
-/* Extract a 32-byte big-endian integer from a DER INTEGER body. */
-static void der_int32(const uint8_t *b, size_t l, uint8_t out[32])
+static void sha384(const uint8_t *d, size_t n, uint8_t out[48])
 {
-    memset(out, 0, 32);
+    tiku_kits_crypto_sha384_ctx_t c;
+    tiku_kits_crypto_sha384_init(&c);
+    tiku_kits_crypto_sha384_update(&c, d, n);
+    tiku_kits_crypto_sha384_final(&c, out);
+}
+
+/* Extract an n-byte big-endian integer from a DER INTEGER body. */
+static void der_int_n(const uint8_t *b, size_t l, uint8_t *out, size_t n)
+{
+    memset(out, 0, n);
     while (l > 1 && b[0] == 0x00) { b++; l--; }
-    if (l > 32) { b += (l - 32); l = 32; }
-    memcpy(out + (32 - l), b, l);
+    if (l > n) { b += (l - n); l = n; }
+    memcpy(out + (n - l), b, l);
 }
 
 int tiku_kits_crypto_x509_verify_signed_by(const tiku_kits_crypto_x509_t *c,
                                            const tiku_kits_crypto_x509_t *iss)
 {
-    uint8_t h[32];
+    uint8_t h[48];
     if (c->tbs == NULL || c->sig == NULL) return BAD;
-    sha256(c->tbs, c->tbs_len, h);
+    if (c->sig_alg == TIKU_X509_SIG_ECDSA_SHA384) sha384(c->tbs, c->tbs_len, h);
+    else                                          sha256(c->tbs, c->tbs_len, h);
 
     switch (c->sig_alg) {
     case TIKU_X509_SIG_RSA_PKCS1_SHA256:
@@ -81,9 +92,24 @@ int tiku_kits_crypto_x509_verify_signed_by(const tiku_kits_crypto_x509_t *c,
         rl = p[1]; rb = p + 2; p = rb + rl;
         if (p >= e || p[0] != 0x02) return BAD;
         sl = p[1]; sb = p + 2;
-        der_int32(rb, rl, r); der_int32(sb, sl, s);
+        der_int_n(rb, rl, r, 32); der_int_n(sb, sl, s, 32);
         return tiku_kits_crypto_p256_ecdsa_verify(
                    iss->ec_point + 1, iss->ec_point + 33, h, 32, r, s) == 0 ? OK : BAD;
+    }
+    case TIKU_X509_SIG_ECDSA_SHA384: {
+        const uint8_t *p = c->sig, *e = c->sig + c->sig_len, *rb, *sb;
+        uint8_t r[48], s[48]; size_t rl, sl;
+        if (iss->pk_alg != TIKU_X509_PK_EC_P384) return BAD;
+        if (iss->ec_point_len < 97 || iss->ec_point[0] != 0x04) return BAD;
+        if (e - p < 2 || p[0] != 0x30) return BAD;
+        p += 2;
+        if (p >= e || p[0] != 0x02) return BAD;
+        rl = p[1]; rb = p + 2; p = rb + rl;
+        if (p >= e || p[0] != 0x02) return BAD;
+        sl = p[1]; sb = p + 2;
+        der_int_n(rb, rl, r, 48); der_int_n(sb, sl, s, 48);
+        return tiku_kits_crypto_p384_ecdsa_verify(
+                   iss->ec_point + 1, iss->ec_point + 49, h, 48, r, s) == 0 ? OK : BAD;
     }
     default:
         return BAD;

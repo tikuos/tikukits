@@ -46,9 +46,11 @@
 static const uint8_t OID_RSA[]        = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x01};
 static const uint8_t OID_EC_PK[]      = {0x2a,0x86,0x48,0xce,0x3d,0x02,0x01};
 static const uint8_t OID_P256[]       = {0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07};
+static const uint8_t OID_P384[]       = {0x2b,0x81,0x04,0x00,0x22};
 static const uint8_t OID_RSA_SHA256[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0b};
 static const uint8_t OID_RSA_PSS[]    = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0a};
 static const uint8_t OID_ECDSA_256[]  = {0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x02};
+static const uint8_t OID_ECDSA_384[]  = {0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x03};
 static const uint8_t OID_SAN[]        = {0x55,0x1d,0x11};
 
 #define OID_EQ(b,l,O)  ((l)==sizeof(O) && memcmp((b),(O),sizeof(O))==0)
@@ -104,8 +106,9 @@ static int parse_spki(const uint8_t *b, size_t l, tiku_kits_crypto_x509_t *o)
         } else if (OID_EQ(oid, ol, OID_EC_PK)) {
             const uint8_t *cb; size_t cl;
             if (der_exp(&ap, ae, T_OID, &cb, &cl) != 0) return BAD;
-            if (!OID_EQ(cb, cl, OID_P256)) return BAD;       /* P-256 only  */
-            o->pk_alg = TIKU_X509_PK_EC_P256;
+            if      (OID_EQ(cb, cl, OID_P256)) o->pk_alg = TIKU_X509_PK_EC_P256;
+            else if (OID_EQ(cb, cl, OID_P384)) o->pk_alg = TIKU_X509_PK_EC_P384;
+            else return BAD;                                 /* unsupported curve */
         } else {
             return BAD;
         }
@@ -137,6 +140,7 @@ static int sig_alg_of(const uint8_t *b, size_t l)
     if (OID_EQ(oid, ol, OID_RSA_SHA256)) return TIKU_X509_SIG_RSA_PKCS1_SHA256;
     if (OID_EQ(oid, ol, OID_RSA_PSS))    return TIKU_X509_SIG_RSA_PSS_SHA256;
     if (OID_EQ(oid, ol, OID_ECDSA_256))  return TIKU_X509_SIG_ECDSA_SHA256;
+    if (OID_EQ(oid, ol, OID_ECDSA_384))  return TIKU_X509_SIG_ECDSA_SHA384;
     return TIKU_X509_SIG_UNKNOWN;
 }
 

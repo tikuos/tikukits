@@ -45,7 +45,8 @@ extern "C" {
 enum {
     TIKU_X509_PK_UNKNOWN = 0,
     TIKU_X509_PK_RSA,         /**< rsaEncryption: rsa_n / rsa_e valid     */
-    TIKU_X509_PK_EC_P256      /**< id-ecPublicKey prime256v1: ec_point    */
+    TIKU_X509_PK_EC_P256,     /**< id-ecPublicKey prime256v1: ec_point    */
+    TIKU_X509_PK_EC_P384      /**< id-ecPublicKey secp384r1: ec_point     */
 };
 
 /** Signature algorithm over the TBSCertificate. */
@@ -53,7 +54,8 @@ enum {
     TIKU_X509_SIG_UNKNOWN = 0,
     TIKU_X509_SIG_RSA_PKCS1_SHA256, /**< sha256WithRSAEncryption */
     TIKU_X509_SIG_RSA_PSS_SHA256,   /**< rsassaPss / SHA-256     */
-    TIKU_X509_SIG_ECDSA_SHA256      /**< ecdsa-with-SHA256       */
+    TIKU_X509_SIG_ECDSA_SHA256,     /**< ecdsa-with-SHA256       */
+    TIKU_X509_SIG_ECDSA_SHA384      /**< ecdsa-with-SHA384       */
 };
 
 /**

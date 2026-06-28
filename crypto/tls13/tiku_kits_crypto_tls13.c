@@ -35,6 +35,8 @@
 #include "../gcm/tiku_kits_crypto_gcm.h"
 #include "../rsa/tiku_kits_crypto_rsa.h"
 #include "../p256/tiku_kits_crypto_p256.h"
+#include "../p384/tiku_kits_crypto_p384.h"
+#include "../sha384/tiku_kits_crypto_sha384.h"
 #include <string.h>
 
 #define OK   TIKU_KITS_CRYPTO_TLS13_OK
@@ -216,9 +218,10 @@ static size_t build_client_hello(uint8_t *out, const uint8_t random[32],
     wr16(p,0x002b); p+=2; wr16(p,3); p+=2; *p++=0x02; *p++=0x03; *p++=0x04;
     /* supported_groups: x25519 */
     wr16(p,0x000a); p+=2; wr16(p,4); p+=2; wr16(p,2); p+=2; wr16(p,0x001d); p+=2;
-    /* signature_algorithms */
-    wr16(p,0x000d); p+=2; wr16(p,8); p+=2; wr16(p,6); p+=2;
-    wr16(p,0x0403); p+=2; wr16(p,0x0804); p+=2; wr16(p,0x0401); p+=2;
+    /* signature_algorithms: ecdsa P-256/P-384, rsa_pss, rsa_pkcs1 (SHA-256) */
+    wr16(p,0x000d); p+=2; wr16(p,10); p+=2; wr16(p,8); p+=2;
+    wr16(p,0x0403); p+=2; wr16(p,0x0503); p+=2;
+    wr16(p,0x0804); p+=2; wr16(p,0x0401); p+=2;
     /* key_share: x25519 */
     wr16(p,0x0033); p+=2; wr16(p,38); p+=2; wr16(p,36); p+=2;
     wr16(p,0x001d); p+=2; wr16(p,32); p+=2; memcpy(p,pub,32); p+=32;
@@ -265,42 +268,66 @@ static int parse_server_hello(const uint8_t *b, size_t n, uint8_t server_pub[32]
     return BAD;
 }
 
-/* extract a 32-byte big-endian integer from a DER INTEGER body */
-static void der_int32(const uint8_t *b, size_t l, uint8_t out[32])
+/* extract an n-byte big-endian integer from a DER INTEGER body */
+static void der_int_n(const uint8_t *b, size_t l, uint8_t *out, size_t n)
 {
-    memset(out, 0, 32);
+    memset(out, 0, n);
     while (l > 1 && b[0] == 0x00) { b++; l--; }
-    if (l > 32) { b += (l - 32); l = 32; }
-    memcpy(out + (32 - l), b, l);
+    if (l > n) { b += (l - n); l = n; }
+    memcpy(out + (n - l), b, l);
 }
 
-/* CertificateVerify signature check, dispatched by TLS SignatureScheme. */
+static void cv_sha256(const uint8_t *d, size_t n, uint8_t out[32])
+{ sha_ctx c; tiku_kits_crypto_sha256_init(&c); tiku_kits_crypto_sha256_update(&c, d, n); tiku_kits_crypto_sha256_final(&c, out); }
+static void cv_sha384(const uint8_t *d, size_t n, uint8_t out[48])
+{ tiku_kits_crypto_sha384_ctx_t c; tiku_kits_crypto_sha384_init(&c); tiku_kits_crypto_sha384_update(&c, d, n); tiku_kits_crypto_sha384_final(&c, out); }
+
+/* CertificateVerify check: hash the signed content with the scheme's hash,
+ * then verify with the leaf key.  Dispatched by TLS SignatureScheme. */
 static int cv_verify(const tiku_kits_crypto_x509_t *leaf, uint16_t scheme,
-                     const uint8_t *sig, uint16_t slen, const uint8_t hash[32])
+                     const uint8_t *sig, uint16_t slen,
+                     const uint8_t *content, size_t clen)
 {
+    uint8_t h[48];
     switch (scheme) {
-    case 0x0403:                               /* ecdsa_secp256r1_sha256 */
+    case 0x0403: {                             /* ecdsa_secp256r1_sha256 */
+        const uint8_t *p = sig, *e = sig + slen; uint8_t r[32], s[32]; size_t rl, sl;
         if (leaf->pk_alg != TIKU_X509_PK_EC_P256) return BAD;
         if (leaf->ec_point_len < 65 || leaf->ec_point[0] != 0x04) return BAD;
-        {
-            const uint8_t *p = sig, *e = sig + slen; uint8_t r[32], s[32]; size_t rl, sl;
-            if (e - p < 2 || p[0] != 0x30) return BAD;
-            p += 2;
-            if (p >= e || p[0] != 0x02) return BAD;
-            rl = p[1]; der_int32(p + 2, rl, r); p += 2 + rl;
-            if (p >= e || p[0] != 0x02) return BAD;
-            sl = p[1]; der_int32(p + 2, sl, s);
-            return tiku_kits_crypto_p256_ecdsa_verify(leaf->ec_point + 1, leaf->ec_point + 33,
-                                                      hash, 32, r, s) == 0 ? OK : BAD;
-        }
+        cv_sha256(content, clen, h);
+        if (e - p < 2 || p[0] != 0x30) return BAD;
+        p += 2;
+        if (p >= e || p[0] != 0x02) return BAD;
+        rl = p[1]; der_int_n(p + 2, rl, r, 32); p += 2 + rl;
+        if (p >= e || p[0] != 0x02) return BAD;
+        sl = p[1]; der_int_n(p + 2, sl, s, 32);
+        return tiku_kits_crypto_p256_ecdsa_verify(leaf->ec_point + 1, leaf->ec_point + 33,
+                                                  h, 32, r, s) == 0 ? OK : BAD;
+    }
+    case 0x0503: {                             /* ecdsa_secp384r1_sha384 */
+        const uint8_t *p = sig, *e = sig + slen; uint8_t r[48], s[48]; size_t rl, sl;
+        if (leaf->pk_alg != TIKU_X509_PK_EC_P384) return BAD;
+        if (leaf->ec_point_len < 97 || leaf->ec_point[0] != 0x04) return BAD;
+        cv_sha384(content, clen, h);
+        if (e - p < 2 || p[0] != 0x30) return BAD;
+        p += 2;
+        if (p >= e || p[0] != 0x02) return BAD;
+        rl = p[1]; der_int_n(p + 2, rl, r, 48); p += 2 + rl;
+        if (p >= e || p[0] != 0x02) return BAD;
+        sl = p[1]; der_int_n(p + 2, sl, s, 48);
+        return tiku_kits_crypto_p384_ecdsa_verify(leaf->ec_point + 1, leaf->ec_point + 49,
+                                                  h, 48, r, s) == 0 ? OK : BAD;
+    }
     case 0x0804:                               /* rsa_pss_rsae_sha256 */
         if (leaf->pk_alg != TIKU_X509_PK_RSA) return BAD;
+        cv_sha256(content, clen, h);
         return tiku_kits_crypto_rsa_pss_sha256_verify(leaf->rsa_n, leaf->rsa_n_len,
-                   leaf->rsa_e, leaf->rsa_e_len, sig, slen, hash) == 0 ? OK : BAD;
+                   leaf->rsa_e, leaf->rsa_e_len, sig, slen, h) == 0 ? OK : BAD;
     case 0x0401:                               /* rsa_pkcs1_sha256 */
         if (leaf->pk_alg != TIKU_X509_PK_RSA) return BAD;
+        cv_sha256(content, clen, h);
         return tiku_kits_crypto_rsa_pkcs1_sha256_verify(leaf->rsa_n, leaf->rsa_n_len,
-                   leaf->rsa_e, leaf->rsa_e_len, sig, slen, hash) == 0 ? OK : BAD;
+                   leaf->rsa_e, leaf->rsa_e_len, sig, slen, h) == 0 ? OK : BAD;
     default:
         return BAD;
     }
@@ -410,16 +437,14 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                     }
                 } else if (mt == HS_CERT_VERIFY) {
                     const uint8_t *cp = m + 4; uint16_t scheme = rd16(cp), slen = rd16(cp + 2);
-                    static uint8_t signed_buf[130]; uint8_t sh2[32]; int v = -1;
+                    static uint8_t signed_buf[130]; int v = -1;
                     if (nchain < 1 || !have_cv_hash) return BAD;
+                    /* RFC 8446 4.4.3: 64 spaces || context || 0x00 || transcript */
                     memset(signed_buf, 0x20, 64);
                     memcpy(signed_buf + 64, "TLS 1.3, server CertificateVerify", 33);
                     signed_buf[97] = 0x00;
                     memcpy(signed_buf + 98, thash_cv, 32);
-                    { sha_ctx s; tiku_kits_crypto_sha256_init(&s);
-                      tiku_kits_crypto_sha256_update(&s, signed_buf, 130);
-                      tiku_kits_crypto_sha256_final(&s, sh2); }
-                    v = cv_verify(&chain[0], scheme, cp + 4, slen, sh2);
+                    v = cv_verify(&chain[0], scheme, cp + 4, slen, signed_buf, 130);
                     if (v != 0) return BAD;
                     leaf_ok = 1;
                 }
