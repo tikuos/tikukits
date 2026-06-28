@@ -167,8 +167,20 @@ static int dn_eq(const tiku_kits_crypto_x509_t *a, const uint8_t *dn, size_t dl)
     return a->subject_len == dl && memcmp(a->subject, dn, dl) == 0;
 }
 
-/* Shared prefix: leaf hostname, every cert's validity, and the internal
- * links (chain[i] signed by chain[i+1] with matching issuer/subject). */
+/* RFC 5280 constraints on a cert acting as an issuer (a CA): it must assert
+ * basicConstraints cA=TRUE, must not forbid keyCertSign, and its pathLen (if
+ * present) must allow `below` intermediate certs beneath it.  This is what
+ * stops an ordinary leaf from being spliced in as a forged intermediate. */
+static int issuer_ok(const tiku_kits_crypto_x509_t *iss, int below)
+{
+    if (!iss->has_bc || !iss->is_ca) return 0;
+    if (iss->has_ku && !(iss->key_usage & TIKU_X509_KU_KEY_CERT_SIGN)) return 0;
+    if (iss->path_len >= 0 && below > iss->path_len) return 0;
+    return 1;
+}
+
+/* Shared prefix: leaf hostname + EKU, every cert's validity, and the internal
+ * links (chain[i] signed by chain[i+1], matching DN + issuer is a valid CA). */
 static int chain_links_ok(const tiku_kits_crypto_x509_t *chain, int n,
                           const char *host, uint64_t now_unix)
 {
@@ -176,11 +188,14 @@ static int chain_links_ok(const tiku_kits_crypto_x509_t *chain, int n,
     if (n < 1) return BAD;
     if (host != NULL &&
         tiku_kits_crypto_x509_match_host(&chain[0], host) != OK) return BAD;
+    /* If the leaf restricts EKU, it must permit TLS server authentication. */
+    if (chain[0].has_eku && !chain[0].eku_server) return BAD;
     if (now_unix != 0)
         for (i = 0; i < n; i++)
             if (!time_valid(&chain[i], now_unix)) return BAD;
     for (i = 0; i + 1 < n; i++) {
         if (!dn_eq(&chain[i + 1], chain[i].issuer, chain[i].issuer_len)) return BAD;
+        if (!issuer_ok(&chain[i + 1], i)) return BAD;   /* i intermediates below */
         if (tiku_kits_crypto_x509_verify_signed_by(&chain[i], &chain[i + 1]) != OK)
             return BAD;
     }

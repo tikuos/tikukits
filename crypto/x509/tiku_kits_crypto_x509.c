@@ -52,6 +52,11 @@ static const uint8_t OID_RSA_PSS[]    = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01
 static const uint8_t OID_ECDSA_256[]  = {0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x02};
 static const uint8_t OID_ECDSA_384[]  = {0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x03};
 static const uint8_t OID_SAN[]        = {0x55,0x1d,0x11};
+static const uint8_t OID_BC[]         = {0x55,0x1d,0x13};            /* basicConstraints */
+static const uint8_t OID_KU[]         = {0x55,0x1d,0x0f};            /* keyUsage         */
+static const uint8_t OID_EKU[]        = {0x55,0x1d,0x25};            /* extKeyUsage      */
+static const uint8_t OID_EKU_SERVER[] = {0x2b,0x06,0x01,0x05,0x05,0x07,0x03,0x01}; /* id-kp-serverAuth */
+static const uint8_t OID_EKU_ANY[]    = {0x55,0x1d,0x25,0x00};       /* anyExtendedKeyUsage */
 
 #define OID_EQ(b,l,O)  ((l)==sizeof(O) && memcmp((b),(O),sizeof(O))==0)
 
@@ -156,6 +161,62 @@ static void parse_san(const uint8_t *b, size_t l, tiku_kits_crypto_x509_t *o)
     }
 }
 
+/* From a cursor positioned just after an extension's OID, skip the optional
+ * critical BOOLEAN and return the extnValue OCTET STRING's contents. */
+static int ext_value(const uint8_t *p, const uint8_t *e,
+                     const uint8_t **val, size_t *vlen)
+{
+    const uint8_t *body; size_t bl; uint8_t t;
+    if (der(&p, e, &t, &body, &bl) != 0) return -1;
+    if (t == T_BOOL) {                         /* critical -> read the next TLV */
+        if (der(&p, e, &t, &body, &bl) != 0) return -1;
+    }
+    if (t != T_OCT) return -1;
+    *val = body; *vlen = bl;
+    return 0;
+}
+
+/* basicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE,
+ *                                 pathLenConstraint INTEGER (0..MAX) OPTIONAL } */
+static void parse_bc(const uint8_t *xp, const uint8_t *xe, tiku_kits_crypto_x509_t *o)
+{
+    const uint8_t *val, *seq, *s, *se, *body; size_t vlen, sl, bl; uint8_t t;
+    if (ext_value(xp, xe, &val, &vlen) != 0) return;
+    if (der_exp(&val, val + vlen, T_SEQ, &seq, &sl) != 0) return;
+    o->has_bc = 1;
+    s = seq; se = seq + sl;
+    if (s < se && der(&s, se, &t, &body, &bl) == 0 && t == T_BOOL) {
+        o->is_ca = (bl >= 1 && body[0] != 0) ? 1 : 0;
+        if (s < se && der(&s, se, &t, &body, &bl) == 0 && t == T_INT && bl >= 1)
+            o->path_len = (int)body[bl - 1];   /* pathLen is always small */
+    }
+}
+
+/* keyUsage ::= BIT STRING -- store the first content octet (KU_* bits). */
+static void parse_ku(const uint8_t *xp, const uint8_t *xe, tiku_kits_crypto_x509_t *o)
+{
+    const uint8_t *val, *bits; size_t vlen, bl;
+    if (ext_value(xp, xe, &val, &vlen) != 0) return;
+    if (der_exp(&val, val + vlen, T_BIT, &bits, &bl) != 0) return;
+    o->has_ku = 1;
+    if (bl >= 2) o->key_usage = bits[1];        /* bits[0] = unused-bit count */
+}
+
+/* extKeyUsage ::= SEQUENCE OF KeyPurposeId(OID) -- flag serverAuth / anyEKU. */
+static void parse_eku(const uint8_t *xp, const uint8_t *xe, tiku_kits_crypto_x509_t *o)
+{
+    const uint8_t *val, *seq, *s, *se, *oid; size_t vlen, sl, ol;
+    if (ext_value(xp, xe, &val, &vlen) != 0) return;
+    if (der_exp(&val, val + vlen, T_SEQ, &seq, &sl) != 0) return;
+    o->has_eku = 1;
+    s = seq; se = seq + sl;
+    while (s < se) {
+        if (der_exp(&s, se, T_OID, &oid, &ol) != 0) break;
+        if (OID_EQ(oid, ol, OID_EKU_SERVER) || OID_EQ(oid, ol, OID_EKU_ANY))
+            o->eku_server = 1;
+    }
+}
+
 static void parse_exts(const uint8_t *b, size_t l, tiku_kits_crypto_x509_t *o)
 {
     const uint8_t *p = b, *e = b + l, *seq; size_t sl;
@@ -168,8 +229,10 @@ static void parse_exts(const uint8_t *b, size_t l, tiku_kits_crypto_x509_t *o)
             {
                 const uint8_t *xp = ext, *xe = ext + el;
                 if (der_exp(&xp, xe, T_OID, &oid, &ol) != 0) continue;
-                if (OID_EQ(oid, ol, OID_SAN))
-                    parse_san(xp, (size_t)(xe - xp), o);
+                if      (OID_EQ(oid, ol, OID_SAN)) parse_san(xp, (size_t)(xe - xp), o);
+                else if (OID_EQ(oid, ol, OID_BC))  parse_bc(xp, xe, o);
+                else if (OID_EQ(oid, ol, OID_KU))  parse_ku(xp, xe, o);
+                else if (OID_EQ(oid, ol, OID_EKU)) parse_eku(xp, xe, o);
             }
         }
     }
@@ -224,6 +287,7 @@ int tiku_kits_crypto_x509_parse(const uint8_t *der_, size_t len,
     uint8_t t;
 
     memset(out, 0, sizeof *out);
+    out->path_len = -1;                          /* absent = unbounded */
 
     if (der_exp(&p, end, T_SEQ, &cbody, &cl) != 0) return BAD;   /* Certificate */
     {

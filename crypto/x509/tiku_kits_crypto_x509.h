@@ -81,7 +81,20 @@ typedef struct {
 
     int            sig_alg;
     const uint8_t *sig;      size_t sig_len;    /**< signature value (no BIT0)*/
+
+    /* path-validation extensions (RFC 5280) */
+    uint8_t        has_bc;      /**< basicConstraints present              */
+    uint8_t        is_ca;       /**< basicConstraints cA = TRUE            */
+    int            path_len;    /**< pathLenConstraint, -1 = absent        */
+    uint8_t        has_ku;      /**< keyUsage present                      */
+    uint8_t        key_usage;   /**< keyUsage first octet (see KU_* below) */
+    uint8_t        has_eku;     /**< extendedKeyUsage present              */
+    uint8_t        eku_server;  /**< EKU has serverAuth or anyExtendedKeyUsage */
 } tiku_kits_crypto_x509_t;
+
+/** keyUsage bits, as they sit in the BIT STRING's first content octet. */
+#define TIKU_X509_KU_DIGITAL_SIG   0x80   /**< digitalSignature (bit 0) */
+#define TIKU_X509_KU_KEY_CERT_SIGN 0x04   /**< keyCertSign      (bit 5) */
 
 /**
  * @brief Parse a single DER certificate.
