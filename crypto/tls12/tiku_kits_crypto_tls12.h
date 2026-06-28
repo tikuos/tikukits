@@ -47,8 +47,9 @@ extern "C" {
 /** An established TLS 1.2 connection (AES-128-GCM record state). */
 typedef struct {
     tiku_kits_crypto_tls13_io_t io;
-    uint8_t  c_key[16], c_iv[4];   /**< client write key + fixed (implicit) IV */
-    uint8_t  s_key[16], s_iv[4];   /**< server write key + fixed (implicit) IV */
+    uint8_t  c_key[32], c_iv[4];   /**< client write key (16/32) + fixed IV  */
+    uint8_t  s_key[32], s_iv[4];   /**< server write key (16/32) + fixed IV  */
+    uint8_t  is256;                /**< 1 = AES-256-GCM suite, 0 = AES-128    */
     uint64_t c_seq, s_seq;         /**< record sequence numbers               */
     size_t   rx_len, rx_off;       /**< decrypted app bytes not yet returned   */
     int      closed;
