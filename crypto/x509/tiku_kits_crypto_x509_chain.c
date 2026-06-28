@@ -202,18 +202,26 @@ static int chain_links_ok(const tiku_kits_crypto_x509_t *chain, int n,
     return OK;
 }
 
+/* Anchor by trying each chain cert (leaf-up) against the trust set: the first
+ * chain[k] whose issuer is a trusted root that verifies it terminates the path.
+ * Servers routinely send surplus certs above a root we already trust -- e.g. a
+ * cross-signed root (GTS Root R1 signed by GlobalSign) sitting above an
+ * intermediate that our own self-signed root could anchor directly.  Walking
+ * every level lets us stop at our trusted root and ignore the extras, instead
+ * of only checking whether the single topmost sent cert anchors. */
 int tiku_kits_crypto_x509_verify_chain(const tiku_kits_crypto_x509_t *chain, int n,
                                        const tiku_kits_crypto_x509_t *roots, int nroots,
                                        const char *host, uint64_t now_unix)
 {
-    int r;
+    int k, r;
     if (chain_links_ok(chain, n, host, now_unix) != OK) return BAD;
-    for (r = 0; r < nroots; r++) {
-        if (now_unix != 0 && !time_valid(&roots[r], now_unix)) continue;
-        if (!dn_eq(&roots[r], chain[n - 1].issuer, chain[n - 1].issuer_len)) continue;
-        if (tiku_kits_crypto_x509_verify_signed_by(&chain[n - 1], &roots[r]) == OK)
-            return OK;
-    }
+    for (k = 0; k < n; k++)
+        for (r = 0; r < nroots; r++) {
+            if (now_unix != 0 && !time_valid(&roots[r], now_unix)) continue;
+            if (!dn_eq(&roots[r], chain[k].issuer, chain[k].issuer_len)) continue;
+            if (tiku_kits_crypto_x509_verify_signed_by(&chain[k], &roots[r]) == OK)
+                return OK;
+        }
     return BAD;
 }
 
@@ -221,17 +229,16 @@ int tiku_kits_crypto_x509_verify_chain_store(const tiku_kits_crypto_x509_t *chai
                                              const tiku_kits_crypto_x509_root_t *store, int nstore,
                                              const char *host, uint64_t now_unix)
 {
-    const tiku_kits_crypto_x509_t *top;
-    int r;
+    int k, r;
     if (chain_links_ok(chain, n, host, now_unix) != OK) return BAD;
-    top = &chain[n - 1];
-    for (r = 0; r < nstore; r++) {
-        static tiku_kits_crypto_x509_t root;   /* parse only on a DN match */
-        if (store[r].subject_len != top->issuer_len ||
-            memcmp(store[r].subject, top->issuer, top->issuer_len) != 0) continue;
-        if (tiku_kits_crypto_x509_parse(store[r].der, store[r].der_len, &root) != OK) continue;
-        if (now_unix != 0 && !time_valid(&root, now_unix)) continue;
-        if (tiku_kits_crypto_x509_verify_signed_by(top, &root) == OK) return OK;
-    }
+    for (k = 0; k < n; k++)
+        for (r = 0; r < nstore; r++) {
+            static tiku_kits_crypto_x509_t root;   /* parse only on a DN match */
+            if (store[r].subject_len != chain[k].issuer_len ||
+                memcmp(store[r].subject, chain[k].issuer, chain[k].issuer_len) != 0) continue;
+            if (tiku_kits_crypto_x509_parse(store[r].der, store[r].der_len, &root) != OK) continue;
+            if (now_unix != 0 && !time_valid(&root, now_unix)) continue;
+            if (tiku_kits_crypto_x509_verify_signed_by(&chain[k], &root) == OK) return OK;
+        }
     return BAD;
 }
