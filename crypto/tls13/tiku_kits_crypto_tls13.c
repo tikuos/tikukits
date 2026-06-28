@@ -201,7 +201,7 @@ static int aead_seal(const tiku_kits_crypto_tls13_io_t *io, const tiku_kits_cryp
 
 static size_t build_client_hello(uint8_t *out, const uint8_t random[32],
                                  const uint8_t sid[32], const uint8_t pub[32],
-                                 const char *host)
+                                 const uint8_t p256_pub[65], const char *host)
 {
     uint8_t *p = out + 4;          /* leave room for hs header */
     uint8_t *ext, *extlen_pos;
@@ -221,15 +221,17 @@ static size_t build_client_hello(uint8_t *out, const uint8_t random[32],
     memcpy(p,host,hlen); p+=hlen;
     /* supported_versions */
     wr16(p,0x002b); p+=2; wr16(p,3); p+=2; *p++=0x02; *p++=0x03; *p++=0x04;
-    /* supported_groups: x25519 */
-    wr16(p,0x000a); p+=2; wr16(p,4); p+=2; wr16(p,2); p+=2; wr16(p,0x001d); p+=2;
+    /* supported_groups: x25519, secp256r1 */
+    wr16(p,0x000a); p+=2; wr16(p,6); p+=2; wr16(p,4); p+=2;
+    wr16(p,0x001d); p+=2; wr16(p,0x0017); p+=2;
     /* signature_algorithms: ecdsa P-256/P-384, rsa_pss, rsa_pkcs1 (SHA-256) */
     wr16(p,0x000d); p+=2; wr16(p,10); p+=2; wr16(p,8); p+=2;
     wr16(p,0x0403); p+=2; wr16(p,0x0503); p+=2;
     wr16(p,0x0804); p+=2; wr16(p,0x0401); p+=2;
-    /* key_share: x25519 */
-    wr16(p,0x0033); p+=2; wr16(p,38); p+=2; wr16(p,36); p+=2;
+    /* key_share: x25519 + secp256r1 (server picks one, no HelloRetry needed) */
+    wr16(p,0x0033); p+=2; wr16(p,107); p+=2; wr16(p,105); p+=2;
     wr16(p,0x001d); p+=2; wr16(p,32); p+=2; memcpy(p,pub,32); p+=32;
+    wr16(p,0x0017); p+=2; wr16(p,65); p+=2; memcpy(p,p256_pub,65); p+=65;
 
     elen = (size_t)(p - ext);
     wr16(extlen_pos, (uint16_t)elen);
@@ -244,7 +246,8 @@ static size_t build_client_hello(uint8_t *out, const uint8_t random[32],
 
 /* ---- ServerHello parse: extract the server x25519 key_share -------------- */
 
-static int parse_server_hello(const uint8_t *b, size_t n, uint8_t server_pub[32])
+static int parse_server_hello(const uint8_t *b, size_t n,
+                              uint8_t server_pub[65], int *group)
 {
     const uint8_t *p = b, *e = b + n; uint16_t cipher, extn; size_t sidl;
     if (n < 38) return BAD;
@@ -263,9 +266,13 @@ static int parse_server_hello(const uint8_t *b, size_t n, uint8_t server_pub[32]
             if (p + el > ee) return BAD;
             if (et == 0x0033) {            /* key_share */
                 uint16_t grp = rd16(p), kl = rd16(p + 2);
-                if (grp != 0x001d || kl != 32) return BAD;
-                memcpy(server_pub, p + 4, 32);
-                return OK;
+                if (grp == 0x001d && kl == 32) {            /* x25519 */
+                    memcpy(server_pub, p + 4, 32); *group = 0x001d; return OK;
+                }
+                if (grp == 0x0017 && kl == 65 && p[4] == 0x04) {  /* secp256r1 */
+                    memcpy(server_pub, p + 4, 65); *group = 0x0017; return OK;
+                }
+                return BAD;
             }
             p += el;
         }
@@ -349,7 +356,8 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                                    uint64_t now_unix,
                                    tiku_kits_crypto_tls13_conn_t *conn)
 {
-    uint8_t priv[32], pub[32], crand[32], sid[32], server_pub[32], ecdhe[32];
+    uint8_t priv[32], pub[32], crand[32], sid[32], server_pub[65], ecdhe[32];
+    uint8_t p256_priv[32], p256_pub[65]; int sgroup = 0;
     uint8_t early[32], derived[32], hs_secret[32], master[32];
     uint8_t c_hs[32], s_hs[32], c_hs_key[16], c_hs_iv[12], s_hs_key[16], s_hs_iv[12];
     uint8_t c_fin_key[32], s_fin_key[32];
@@ -361,11 +369,14 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
     uint8_t type; size_t blen, chlen, ptlen, parsed; uint8_t inner;
     int got_fin = 0, leaf_ok = 0;
 
-    /* 1. ephemeral key + ClientHello */
+    /* 1. ephemeral keys (x25519 + P-256) + ClientHello */
     rng(priv, 32); tiku_kits_crypto_x25519_base(pub, priv);
+    { uint8_t seed[32];                      /* P-256 ephemeral (reseed if d==0) */
+      do { rng(seed, 32); }
+      while (tiku_kits_crypto_p256_ecdh_keypair(seed, p256_priv, p256_pub) != 0); }
     rng(crand, 32); rng(sid, 32);
     tiku_kits_crypto_sha256_init(&th);
-    chlen = build_client_hello(rec, crand, sid, pub, host);
+    chlen = build_client_hello(rec, crand, sid, pub, p256_pub, host);
     th_add(&th, rec, chlen);
     if (write_plain_record(io, REC_HS, rec, chlen) != OK) return BAD;
 
@@ -377,11 +388,18 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
         if (4 + rd24(rec + 1) > blen || blen > sizeof sh) return BAD;
         memcpy(sh, rec, blen);
         th_add(&th, sh, blen);
-        if (parse_server_hello(sh + 4, rd24(sh + 1), server_pub) != OK) return BAD;
+        if (parse_server_hello(sh + 4, rd24(sh + 1), server_pub, &sgroup) != OK) return BAD;
     }
 
-    /* 3. ECDHE + key schedule (handshake secrets) */
-    tiku_kits_crypto_x25519_scalarmult(ecdhe, priv, server_pub);
+    /* 3. ECDHE + key schedule (handshake secrets) -- the server's chosen group
+     * selects which ephemeral we agree with (x25519 or secp256r1). */
+    if (sgroup == 0x001d) {
+        tiku_kits_crypto_x25519_scalarmult(ecdhe, priv, server_pub);
+    } else if (sgroup == 0x0017) {
+        if (tiku_kits_crypto_p256_ecdh_shared(p256_priv, server_pub, ecdhe) != OK) return BAD;
+    } else {
+        return BAD;
+    }
     tiku_kits_crypto_hkdf_extract(zero, 32, zero, 32, early);
     { sha_ctx e0; tiku_kits_crypto_sha256_init(&e0); tiku_kits_crypto_sha256_final(&e0, ehash); }
     derive_secret(early, "derived", ehash, derived);
