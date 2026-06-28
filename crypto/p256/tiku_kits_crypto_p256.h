@@ -66,6 +66,44 @@ int tiku_kits_crypto_p256_ecdsa_verify(
     const uint8_t r[TIKU_KITS_CRYPTO_P256_LEN],
     const uint8_t s[TIKU_KITS_CRYPTO_P256_LEN]);
 
+/** Length of an uncompressed P-256 public point: 0x04 || X(32) || Y(32). */
+#define TIKU_KITS_CRYPTO_P256_PUB_LEN  65
+
+/**
+ * @brief Generate an (ephemeral) ECDH key pair.
+ *
+ * Derives the private scalar d from @p seed (d = seed mod n) and computes the
+ * public point Q = d*G in uncompressed form.  Intended for ephemeral ECDHE:
+ * pass 32 fresh random bytes as @p seed.  The scalar multiply is best-effort
+ * constant-time (double-and-add-always).
+ *
+ * @param seed  32 random bytes (big-endian).
+ * @param priv  Output: the private scalar d (32 bytes, big-endian).
+ * @param pub   Output: Q as 0x04 || X || Y (65 bytes).
+ * @return _OK, or _BAD if d reduced to zero (reseed and retry).
+ */
+int tiku_kits_crypto_p256_ecdh_keypair(
+    const uint8_t seed[TIKU_KITS_CRYPTO_P256_LEN],
+    uint8_t priv[TIKU_KITS_CRYPTO_P256_LEN],
+    uint8_t pub[TIKU_KITS_CRYPTO_P256_PUB_LEN]);
+
+/**
+ * @brief Compute the ECDH shared secret d*Ppeer.
+ *
+ * Validates @p peer (uncompressed, coordinates < p, on the curve), multiplies
+ * by the private scalar, and outputs the X coordinate of the result -- the
+ * shared secret as used by TLS.
+ *
+ * @param priv     The private scalar (32 bytes, big-endian).
+ * @param peer     Peer public point, 0x04 || X || Y (65 bytes).
+ * @param out_x    Output: shared secret = (d*Ppeer).x (32 bytes, big-endian).
+ * @return _OK, or _BAD if the peer point is invalid.
+ */
+int tiku_kits_crypto_p256_ecdh_shared(
+    const uint8_t priv[TIKU_KITS_CRYPTO_P256_LEN],
+    const uint8_t peer[TIKU_KITS_CRYPTO_P256_PUB_LEN],
+    uint8_t out_x[TIKU_KITS_CRYPTO_P256_LEN]);
+
 #ifdef __cplusplus
 }
 #endif

@@ -375,3 +375,116 @@ int tiku_kits_crypto_p256_ecdsa_verify(const uint8_t qx[32], const uint8_t qy[32
     if (bn_geq(xmod, FN.m)) { bn t; bn_sub(t, xmod, FN.m); bn_copy(xmod, t); }
     return bn_eq(xmod, rr) ? TIKU_KITS_CRYPTO_P256_OK : TIKU_KITS_CRYPTO_P256_BAD;
 }
+
+/* ---- ECDH (secret scalar) ----------------------------------------------- */
+
+/* curve coefficient b (big-endian) */
+static const uint8_t P256_B[32] = {
+    0x5a,0xc6,0x35,0xd8,0xaa,0x3a,0x93,0xe7,0xb3,0xeb,0xbd,0x55,0x76,0x98,0x86,0xbc,
+    0x65,0x1d,0x06,0xb0,0xcc,0x53,0xb0,0xf6,0x3b,0xce,0x3c,0x3e,0x27,0xd2,0x60,0x4b };
+
+static void bn_to_be(uint8_t out[32], const bn a)
+{
+    int i;
+    for (i = 0; i < NL; i++) {
+        uint32_t w = a[NL - 1 - i];
+        out[i*4] = (uint8_t)(w >> 24); out[i*4+1] = (uint8_t)(w >> 16);
+        out[i*4+2] = (uint8_t)(w >> 8); out[i*4+3] = (uint8_t)w;
+    }
+}
+
+/* Constant-time point select: d = flag ? s : d. */
+static void pt_cselect(jpt *d, const jpt *s, uint32_t flag)
+{
+    uint32_t m = (uint32_t)0 - (flag & 1u); int i;
+    for (i = 0; i < NL; i++) {
+        d->X[i] ^= m & (d->X[i] ^ s->X[i]);
+        d->Y[i] ^= m & (d->Y[i] ^ s->Y[i]);
+        d->Z[i] ^= m & (d->Z[i] ^ s->Z[i]);
+    }
+}
+
+/* R = k*P via double-and-add-ALWAYS (no scalar-bit branch).  Best-effort
+ * constant-time: the per-bit add is always performed and merged with a masked
+ * select, so the secret scalar drives no top-level control flow.  (pt_add's
+ * internal special-case branches are not hardened -- full CT is a TODO.) */
+static void pt_mul_ct(jpt *R, const bn k, const jpt *P)
+{
+    jpt R0, R1; int i;
+    pt_set_inf(&R0);
+    for (i = NL * 32 - 1; i >= 0; i--) {
+        uint32_t bit = (k[i >> 5] >> (i & 31)) & 1u;
+        pt_double(&R0, &R0);
+        pt_add(&R1, &R0, P);
+        pt_cselect(&R0, &R1, bit);
+    }
+    *R = R0;
+}
+
+/* Affine (x,y) big-endian from a Jacobian point: x=X/Z^2, y=Y/Z^3. */
+static void pt_to_affine(const jpt *P, uint8_t x[32], uint8_t y[32])
+{
+    bn zfm, zinv, z2m, z3m, fm, p;
+    from_mont(zfm, P->Z, &FP);
+    mont_inv(zinv, zfm, &FP);               /* Z^-1 (plain)   */
+    to_mont(zfm, zinv, &FP);                /* Z^-1 (mont)    */
+    fp_sqr(z2m, zfm);                        /* Z^-2           */
+    fp_mul(fm, P->X, z2m); from_mont(p, fm, &FP); bn_to_be(x, p);
+    fp_mul(z3m, z2m, zfm);                   /* Z^-3           */
+    fp_mul(fm, P->Y, z3m); from_mont(p, fm, &FP); bn_to_be(y, p);
+}
+
+/* Is the affine point (x,y), given as plain limbs, on y^2 = x^3 - 3x + b? */
+static int pt_on_curve(const bn x, const bn y)
+{
+    bn xm, ym, lhs, rhs, t, three, bm, bp;
+    to_mont(xm, x, &FP); to_mont(ym, y, &FP);
+    fp_sqr(lhs, ym);                         /* y^2            */
+    fp_sqr(rhs, xm); fp_mul(rhs, rhs, xm);   /* x^3            */
+    bn_zero(three); three[0] = 3; to_mont(three, three, &FP);
+    fp_mul(t, three, xm);                    /* 3x             */
+    fp_sub(rhs, rhs, t);                     /* x^3 - 3x       */
+    bn_from_be(bp, P256_B); to_mont(bm, bp, &FP);
+    fp_add(rhs, rhs, bm);                    /* + b            */
+    return bn_eq(lhs, rhs);
+}
+
+int tiku_kits_crypto_p256_ecdh_keypair(const uint8_t seed[32],
+                                       uint8_t priv[32], uint8_t pub[65])
+{
+    static bn  d;
+    static jpt G, Q;
+    p256_setup();
+    bn_from_be(d, seed);                      /* d = seed mod n (one subtract) */
+    if (bn_geq(d, FN.m)) { bn t; bn_sub(t, d, FN.m); bn_copy(d, t); }
+    if (bn_is_zero(d)) return TIKU_KITS_CRYPTO_P256_BAD;   /* reseed and retry */
+    bn_to_be(priv, d);
+    bn_copy(G.X, MG_X); bn_copy(G.Y, MG_Y);
+    bn_zero(G.Z); G.Z[0] = 1; to_mont(G.Z, G.Z, &FP);
+    pt_mul_ct(&Q, d, &G);
+    if (pt_is_inf(&Q)) return TIKU_KITS_CRYPTO_P256_BAD;
+    pub[0] = 0x04; pt_to_affine(&Q, pub + 1, pub + 33);
+    return TIKU_KITS_CRYPTO_P256_OK;
+}
+
+int tiku_kits_crypto_p256_ecdh_shared(const uint8_t priv[32],
+                                      const uint8_t peer[65], uint8_t out_x[32])
+{
+    static bn  d, px, py;
+    static jpt P, S;
+    uint8_t ydummy[32];
+    p256_setup();
+    if (peer[0] != 0x04) return TIKU_KITS_CRYPTO_P256_BAD;  /* uncompressed only */
+    bn_from_be(px, peer + 1); bn_from_be(py, peer + 33);
+    if (bn_geq(px, FP.m) || bn_geq(py, FP.m)) return TIKU_KITS_CRYPTO_P256_BAD;
+    if (bn_is_zero(px) && bn_is_zero(py)) return TIKU_KITS_CRYPTO_P256_BAD;
+    if (!pt_on_curve(px, py)) return TIKU_KITS_CRYPTO_P256_BAD;
+    bn_from_be(d, priv);
+    if (bn_is_zero(d) || bn_geq(d, FN.m)) return TIKU_KITS_CRYPTO_P256_BAD;
+    to_mont(P.X, px, &FP); to_mont(P.Y, py, &FP);
+    bn_zero(P.Z); P.Z[0] = 1; to_mont(P.Z, P.Z, &FP);
+    pt_mul_ct(&S, d, &P);
+    if (pt_is_inf(&S)) return TIKU_KITS_CRYPTO_P256_BAD;
+    pt_to_affine(&S, out_x, ydummy);          /* shared secret = S.x */
+    return TIKU_KITS_CRYPTO_P256_OK;
+}
