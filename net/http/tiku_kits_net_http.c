@@ -309,7 +309,7 @@ tiku_kits_net_http_build_request(
 #include "../ipv4/tiku_kits_net_dns.h"
 #include "../ipv4/tiku_kits_net_ipv4.h"
 #include "../slip/tiku_kits_net_slip.h"
-#include <tikukits/crypto/tls/tiku_kits_crypto_tls.h>
+#include <tikukits/net/tls/psk/tiku_kits_crypto_tls.h>
 
 /*---------------------------------------------------------------------------*/
 /* FRAM-BACKED REQUEST BUFFER                                                */

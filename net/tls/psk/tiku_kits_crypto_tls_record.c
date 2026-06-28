@@ -32,7 +32,7 @@
 /*---------------------------------------------------------------------------*/
 
 #include "tiku_kits_crypto_tls_record.h"
-#include "../gcm/tiku_kits_crypto_gcm.h"
+#include "../../../crypto/gcm/tiku_kits_crypto_gcm.h"
 #include <string.h>
 
 /*---------------------------------------------------------------------------*/

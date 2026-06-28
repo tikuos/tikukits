@@ -43,7 +43,7 @@
 #include <stddef.h>
 
 #if TIKU_KITS_NET_MQTT_TLS_ENABLE
-#include <tikukits/crypto/tls/tiku_kits_crypto_tls.h>
+#include <tikukits/net/tls/psk/tiku_kits_crypto_tls.h>
 #endif
 
 /*---------------------------------------------------------------------------*/

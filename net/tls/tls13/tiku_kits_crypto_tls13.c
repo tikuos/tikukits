@@ -28,15 +28,15 @@
  */
 
 #include "tiku_kits_crypto_tls13.h"
-#include "../x25519/tiku_kits_crypto_x25519.h"
-#include "../hkdf/tiku_kits_crypto_hkdf.h"
-#include "../hmac/tiku_kits_crypto_hmac.h"
-#include "../sha256/tiku_kits_crypto_sha256.h"
-#include "../gcm/tiku_kits_crypto_gcm.h"
-#include "../rsa/tiku_kits_crypto_rsa.h"
-#include "../p256/tiku_kits_crypto_p256.h"
-#include "../p384/tiku_kits_crypto_p384.h"
-#include "../sha384/tiku_kits_crypto_sha384.h"
+#include "../../../crypto/x25519/tiku_kits_crypto_x25519.h"
+#include "../../../crypto/hkdf/tiku_kits_crypto_hkdf.h"
+#include "../../../crypto/hmac/tiku_kits_crypto_hmac.h"
+#include "../../../crypto/sha256/tiku_kits_crypto_sha256.h"
+#include "../../../crypto/gcm/tiku_kits_crypto_gcm.h"
+#include "../../../crypto/rsa/tiku_kits_crypto_rsa.h"
+#include "../../../crypto/p256/tiku_kits_crypto_p256.h"
+#include "../../../crypto/p384/tiku_kits_crypto_p384.h"
+#include "../../../crypto/sha384/tiku_kits_crypto_sha384.h"
 #include <string.h>
 
 #define OK   TIKU_KITS_CRYPTO_TLS13_OK

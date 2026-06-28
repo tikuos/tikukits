@@ -34,8 +34,8 @@
 #include "tiku_kits_crypto_tls_keysched.h"
 #include "tiku_kits_crypto_tls_record.h"
 #include "tiku_kits_crypto_tls_handshake.h"
-#include "../sha256/tiku_kits_crypto_sha256.h"
-#include "../gcm/tiku_kits_crypto_gcm.h"
+#include "../../../crypto/sha256/tiku_kits_crypto_sha256.h"
+#include "../../../crypto/gcm/tiku_kits_crypto_gcm.h"
 #include <kernel/memory/tiku_mem.h>
 #include <string.h>
 

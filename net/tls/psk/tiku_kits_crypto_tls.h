@@ -48,9 +48,9 @@
 /* INCLUDES                                                                  */
 /*---------------------------------------------------------------------------*/
 
-#include "../tiku_kits_crypto.h"
-#include "../sha256/tiku_kits_crypto_sha256.h"
-#include "../gcm/tiku_kits_crypto_gcm.h"
+#include "../../../crypto/tiku_kits_crypto.h"
+#include "../../../crypto/sha256/tiku_kits_crypto_sha256.h"
+#include "../../../crypto/gcm/tiku_kits_crypto_gcm.h"
 #include "tiku_kits_crypto_tls_config.h"
 #include <tikukits/net/ipv4/tiku_kits_net_tcp.h>
 

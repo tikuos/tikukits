@@ -25,7 +25,7 @@
 #ifndef TIKU_KITS_CRYPTO_TLS_HANDSHAKE_H_
 #define TIKU_KITS_CRYPTO_TLS_HANDSHAKE_H_
 
-#include "../tiku_kits_crypto.h"
+#include "../../../crypto/tiku_kits_crypto.h"
 #include "tiku_kits_crypto_tls_config.h"
 
 /*---------------------------------------------------------------------------*/

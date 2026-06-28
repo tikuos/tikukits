@@ -30,8 +30,8 @@
 #ifndef TIKU_KITS_CRYPTO_TLS_RECORD_H_
 #define TIKU_KITS_CRYPTO_TLS_RECORD_H_
 
-#include "../tiku_kits_crypto.h"
-#include "../gcm/tiku_kits_crypto_gcm.h"
+#include "../../../crypto/tiku_kits_crypto.h"
+#include "../../../crypto/gcm/tiku_kits_crypto_gcm.h"
 #include "tiku_kits_crypto_tls_config.h"
 
 /*---------------------------------------------------------------------------*/

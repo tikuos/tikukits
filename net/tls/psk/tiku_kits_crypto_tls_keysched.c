@@ -30,9 +30,9 @@
 /*---------------------------------------------------------------------------*/
 
 #include "tiku_kits_crypto_tls_keysched.h"
-#include "../hkdf/tiku_kits_crypto_hkdf.h"
-#include "../hmac/tiku_kits_crypto_hmac.h"
-#include "../sha256/tiku_kits_crypto_sha256.h"
+#include "../../../crypto/hkdf/tiku_kits_crypto_hkdf.h"
+#include "../../../crypto/hmac/tiku_kits_crypto_hmac.h"
+#include "../../../crypto/sha256/tiku_kits_crypto_sha256.h"
 #include <string.h>
 
 /*---------------------------------------------------------------------------*/

@@ -26,11 +26,11 @@
  */
 
 #include "tiku_kits_crypto_x509.h"
-#include "../rsa/tiku_kits_crypto_rsa.h"
-#include "../p256/tiku_kits_crypto_p256.h"
-#include "../p384/tiku_kits_crypto_p384.h"
-#include "../sha256/tiku_kits_crypto_sha256.h"
-#include "../sha384/tiku_kits_crypto_sha384.h"
+#include "../../../crypto/rsa/tiku_kits_crypto_rsa.h"
+#include "../../../crypto/p256/tiku_kits_crypto_p256.h"
+#include "../../../crypto/p384/tiku_kits_crypto_p384.h"
+#include "../../../crypto/sha256/tiku_kits_crypto_sha256.h"
+#include "../../../crypto/sha384/tiku_kits_crypto_sha384.h"
 #include <string.h>
 
 #define OK   TIKU_KITS_CRYPTO_X509_OK
