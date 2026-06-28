@@ -61,11 +61,16 @@ void (*tiku_kits_crypto_tls13_dbg)(const char *) = 0;
 #define MAX_CERTS 6
 /* Embedded sizing: the reassembled server flight (EncryptedExtensions +
  * Certificate chain + CertificateVerify + Finished) and any single incoming
- * record must fit here.  8 KB covers typical 2-3 cert chains; a server that
- * sends a single record larger than this is rejected (acceptable trade for
- * SRAM-constrained parts -- raise on parts with more RAM). */
-#define HS_BUF     8192
-#define REC_BUF    8192
+ * record must fit here.  12 KB covers large RSA chains seen in the wild
+ * (Microsoft/Azure send ~9.4 KB Certificate records); a server that sends a
+ * single record larger than this is rejected.  #ifndef so SRAM-tight builds
+ * can dial it back. */
+#ifndef HS_BUF
+#define HS_BUF     12288
+#endif
+#ifndef REC_BUF
+#define REC_BUF    12288
+#endif
 #define SEAL_BUF   1152   /* outgoing records: client sends are small (cap below) */
 #define APP_CHUNK  1024   /* max plaintext per client application_data record    */
 
