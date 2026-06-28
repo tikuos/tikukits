@@ -269,9 +269,15 @@ int tiku_kits_crypto_p384_ecdsa_verify(const uint8_t qx[48], const uint8_t qy[48
     if (bn_is_zero(rr) || bn_is_zero(ss)) return TIKU_KITS_CRYPTO_P384_BAD;
     if (bn_geq(rr, FN.m) || bn_geq(ss, FN.m)) return TIKU_KITS_CRYPTO_P384_BAD;
 
+    /* e = bits2int(hash) (FIPS 186-4 2.3.2): the leftmost min(hashlen,48)
+     * bytes of the hash, valued as a big-endian integer.  Right-align into
+     * the 48-byte field width so a hash SHORTER than the order (e.g. a
+     * SHA-256 digest under a P-384 issuer key -- DigiCert Global Root G3
+     * signing an ecdsa-with-SHA256 intermediate) keeps its value instead of
+     * being scaled up by the zero padding.  A longer hash is left-truncated. */
     memset(hb, 0, sizeof hb);
     if (hashlen > 48) hashlen = 48;
-    for (i = 0; i < hashlen; i++) hb[i] = hash[i];
+    for (i = 0; i < hashlen; i++) hb[48 - hashlen + i] = hash[i];
     bn_from_be(e, hb);
     if (bn_geq(e, FN.m)) { bn t; bn_sub(t, e, FN.m); bn_copy(e, t); }
 

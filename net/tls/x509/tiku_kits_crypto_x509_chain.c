@@ -61,14 +61,61 @@ static void der_int_n(const uint8_t *b, size_t l, uint8_t *out, size_t n)
     memcpy(out + (n - l), b, l);
 }
 
+/* Verify a DER ECDSA-Sig-Value (SEQUENCE { r INTEGER, s INTEGER }) over the
+ * digest h[hlen] using the ISSUER's EC public key.  The curve -- and hence
+ * the r/s width and which verify routine runs -- is fixed by the issuer key,
+ * INDEPENDENTLY of which hash the signature used.  That decoupling is what
+ * lets a P-384 issuer verify an ecdsa-with-SHA256 signature (e.g. DigiCert
+ * Global Root G3 over a SHA-256 intermediate) -- and a P-256 issuer verify
+ * an ecdsa-with-SHA384 one.  The verify routines apply FIPS 186-4 bits2int
+ * to a hash that is shorter/longer than the curve order. */
+static int ecdsa_verify_by_issuer(const tiku_kits_crypto_x509_t *iss,
+                                  const uint8_t *sig, size_t sig_len,
+                                  const uint8_t *h, size_t hlen)
+{
+    const uint8_t *p = sig, *e = sig + sig_len, *rb, *sb;
+    uint8_t r[48], s[48];
+    size_t  rl, sl;
+
+    if (e - p < 2 || p[0] != 0x30) return BAD;      /* SEQUENCE         */
+    p += 2;
+    if (p >= e || p[0] != 0x02) return BAD;         /* r INTEGER        */
+    rl = p[1]; rb = p + 2; p = rb + rl;
+    if (p >= e || p[0] != 0x02) return BAD;         /* s INTEGER        */
+    sl = p[1]; sb = p + 2;
+
+    if (iss->pk_alg == TIKU_X509_PK_EC_P256) {
+        if (iss->ec_point_len < 65 || iss->ec_point[0] != 0x04) return BAD;
+        der_int_n(rb, rl, r, 32); der_int_n(sb, sl, s, 32);
+        return tiku_kits_crypto_p256_ecdsa_verify(
+                   iss->ec_point + 1, iss->ec_point + 33, h, hlen, r, s)
+                   == 0 ? OK : BAD;
+    }
+    if (iss->pk_alg == TIKU_X509_PK_EC_P384) {
+        if (iss->ec_point_len < 97 || iss->ec_point[0] != 0x04) return BAD;
+        der_int_n(rb, rl, r, 48); der_int_n(sb, sl, s, 48);
+        return tiku_kits_crypto_p384_ecdsa_verify(
+                   iss->ec_point + 1, iss->ec_point + 49, h, hlen, r, s)
+                   == 0 ? OK : BAD;
+    }
+    return BAD;
+}
+
 int tiku_kits_crypto_x509_verify_signed_by(const tiku_kits_crypto_x509_t *c,
                                            const tiku_kits_crypto_x509_t *iss)
 {
     uint8_t h[48];
+    size_t  hlen;
     if (c->tbs == NULL || c->sig == NULL) return BAD;
+
+    /* The digest is fixed by the signature algorithm; for ECDSA the curve is
+     * fixed separately by the issuer key (see ecdsa_verify_by_issuer). */
     if (c->sig_alg == TIKU_X509_SIG_ECDSA_SHA384 ||
-        c->sig_alg == TIKU_X509_SIG_RSA_PKCS1_SHA384) sha384(c->tbs, c->tbs_len, h);
-    else                                              sha256(c->tbs, c->tbs_len, h);
+        c->sig_alg == TIKU_X509_SIG_RSA_PKCS1_SHA384) {
+        sha384(c->tbs, c->tbs_len, h); hlen = 48;
+    } else {
+        sha256(c->tbs, c->tbs_len, h); hlen = 32;
+    }
 
     switch (c->sig_alg) {
     case TIKU_X509_SIG_RSA_PKCS1_SHA256:
@@ -86,37 +133,9 @@ int tiku_kits_crypto_x509_verify_signed_by(const tiku_kits_crypto_x509_t *c,
         return tiku_kits_crypto_rsa_pss_sha256_verify(
                    iss->rsa_n, iss->rsa_n_len, iss->rsa_e, iss->rsa_e_len,
                    c->sig, c->sig_len, h) == 0 ? OK : BAD;
-    case TIKU_X509_SIG_ECDSA_SHA256: {
-        const uint8_t *p = c->sig, *e = c->sig + c->sig_len, *rb, *sb;
-        uint8_t r[32], s[32]; size_t rl, sl;
-        if (iss->pk_alg != TIKU_X509_PK_EC_P256) return BAD;
-        if (iss->ec_point_len < 65 || iss->ec_point[0] != 0x04) return BAD;
-        /* ECDSA-Sig-Value ::= SEQUENCE { r INTEGER, s INTEGER } */
-        if (e - p < 2 || p[0] != 0x30) return BAD;
-        p += 2;
-        if (p >= e || p[0] != 0x02) return BAD;
-        rl = p[1]; rb = p + 2; p = rb + rl;
-        if (p >= e || p[0] != 0x02) return BAD;
-        sl = p[1]; sb = p + 2;
-        der_int_n(rb, rl, r, 32); der_int_n(sb, sl, s, 32);
-        return tiku_kits_crypto_p256_ecdsa_verify(
-                   iss->ec_point + 1, iss->ec_point + 33, h, 32, r, s) == 0 ? OK : BAD;
-    }
-    case TIKU_X509_SIG_ECDSA_SHA384: {
-        const uint8_t *p = c->sig, *e = c->sig + c->sig_len, *rb, *sb;
-        uint8_t r[48], s[48]; size_t rl, sl;
-        if (iss->pk_alg != TIKU_X509_PK_EC_P384) return BAD;
-        if (iss->ec_point_len < 97 || iss->ec_point[0] != 0x04) return BAD;
-        if (e - p < 2 || p[0] != 0x30) return BAD;
-        p += 2;
-        if (p >= e || p[0] != 0x02) return BAD;
-        rl = p[1]; rb = p + 2; p = rb + rl;
-        if (p >= e || p[0] != 0x02) return BAD;
-        sl = p[1]; sb = p + 2;
-        der_int_n(rb, rl, r, 48); der_int_n(sb, sl, s, 48);
-        return tiku_kits_crypto_p384_ecdsa_verify(
-                   iss->ec_point + 1, iss->ec_point + 49, h, 48, r, s) == 0 ? OK : BAD;
-    }
+    case TIKU_X509_SIG_ECDSA_SHA256:
+    case TIKU_X509_SIG_ECDSA_SHA384:
+        return ecdsa_verify_by_issuer(iss, c->sig, c->sig_len, h, hlen);
     default:
         return BAD;
     }
