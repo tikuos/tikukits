@@ -112,6 +112,32 @@ int tiku_kits_crypto_x509_verify_signed_by(const tiku_kits_crypto_x509_t *c,
                                            const tiku_kits_crypto_x509_t *issuer);
 
 /**
+ * @struct tiku_kits_crypto_x509_root_t
+ * @brief  One entry in a baked-in trust store: a root cert's DER plus a
+ *         precomputed pointer to its subject DN (for fast anchor matching
+ *         without parsing every root).  Both pointers alias persistent data.
+ */
+typedef struct {
+    const uint8_t *der;      size_t der_len;
+    const uint8_t *subject;  size_t subject_len;   /* subject DN, inside der */
+} tiku_kits_crypto_x509_root_t;
+
+/**
+ * @brief Validate a chain against a baked-in trust store (lazy: parses only
+ *        the root that matches the chain's top issuer).
+ *
+ * Same checks as tiku_kits_crypto_x509_verify_chain(), but the trust anchor
+ * is found by matching the topmost cert's issuer DN against each store entry's
+ * subject DN (a byte compare), then parsing + verifying only that root.
+ *
+ * @return TIKU_KITS_CRYPTO_X509_OK if trusted, else _BAD.
+ */
+int tiku_kits_crypto_x509_verify_chain_store(
+    const tiku_kits_crypto_x509_t *chain, int n,
+    const tiku_kits_crypto_x509_root_t *store, int nstore,
+    const char *host, uint64_t now_unix);
+
+/**
  * @brief Validate a certificate chain to a trusted root.
  *
  * @param chain   Parsed chain, chain[0] = leaf .. chain[n-1] = topmost sent.

@@ -141,37 +141,56 @@ static int dn_eq(const tiku_kits_crypto_x509_t *a, const uint8_t *dn, size_t dl)
     return a->subject_len == dl && memcmp(a->subject, dn, dl) == 0;
 }
 
+/* Shared prefix: leaf hostname, every cert's validity, and the internal
+ * links (chain[i] signed by chain[i+1] with matching issuer/subject). */
+static int chain_links_ok(const tiku_kits_crypto_x509_t *chain, int n,
+                          const char *host, uint64_t now_unix)
+{
+    int i;
+    if (n < 1) return BAD;
+    if (host != NULL &&
+        tiku_kits_crypto_x509_match_host(&chain[0], host) != OK) return BAD;
+    if (now_unix != 0)
+        for (i = 0; i < n; i++)
+            if (!time_valid(&chain[i], now_unix)) return BAD;
+    for (i = 0; i + 1 < n; i++) {
+        if (!dn_eq(&chain[i + 1], chain[i].issuer, chain[i].issuer_len)) return BAD;
+        if (tiku_kits_crypto_x509_verify_signed_by(&chain[i], &chain[i + 1]) != OK)
+            return BAD;
+    }
+    return OK;
+}
+
 int tiku_kits_crypto_x509_verify_chain(const tiku_kits_crypto_x509_t *chain, int n,
                                        const tiku_kits_crypto_x509_t *roots, int nroots,
                                        const char *host, uint64_t now_unix)
 {
-    int i, r;
-    if (n < 1) return BAD;
-
-    if (host != NULL &&
-        tiku_kits_crypto_x509_match_host(&chain[0], host) != OK)
-        return BAD;
-
-    if (now_unix != 0) {
-        for (i = 0; i < n; i++)
-            if (!time_valid(&chain[i], now_unix)) return BAD;
-    }
-
-    /* internal links: chain[i] signed by chain[i+1] */
-    for (i = 0; i + 1 < n; i++) {
-        if (!dn_eq(&chain[i + 1], chain[i].issuer, chain[i].issuer_len))
-            return BAD;
-        if (tiku_kits_crypto_x509_verify_signed_by(&chain[i], &chain[i + 1]) != OK)
-            return BAD;
-    }
-
-    /* anchor: topmost cert must be signed by some trusted root */
+    int r;
+    if (chain_links_ok(chain, n, host, now_unix) != OK) return BAD;
     for (r = 0; r < nroots; r++) {
         if (now_unix != 0 && !time_valid(&roots[r], now_unix)) continue;
-        if (!dn_eq(&roots[r], chain[n - 1].issuer, chain[n - 1].issuer_len))
-            continue;
+        if (!dn_eq(&roots[r], chain[n - 1].issuer, chain[n - 1].issuer_len)) continue;
         if (tiku_kits_crypto_x509_verify_signed_by(&chain[n - 1], &roots[r]) == OK)
             return OK;
+    }
+    return BAD;
+}
+
+int tiku_kits_crypto_x509_verify_chain_store(const tiku_kits_crypto_x509_t *chain, int n,
+                                             const tiku_kits_crypto_x509_root_t *store, int nstore,
+                                             const char *host, uint64_t now_unix)
+{
+    const tiku_kits_crypto_x509_t *top;
+    int r;
+    if (chain_links_ok(chain, n, host, now_unix) != OK) return BAD;
+    top = &chain[n - 1];
+    for (r = 0; r < nstore; r++) {
+        static tiku_kits_crypto_x509_t root;   /* parse only on a DN match */
+        if (store[r].subject_len != top->issuer_len ||
+            memcmp(store[r].subject, top->issuer, top->issuer_len) != 0) continue;
+        if (tiku_kits_crypto_x509_parse(store[r].der, store[r].der_len, &root) != OK) continue;
+        if (now_unix != 0 && !time_valid(&root, now_unix)) continue;
+        if (tiku_kits_crypto_x509_verify_signed_by(top, &root) == OK) return OK;
     }
     return BAD;
 }

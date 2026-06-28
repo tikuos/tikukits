@@ -75,8 +75,8 @@ typedef struct {
  * @param io       Transport callbacks (connected TCP socket).
  * @param rng      Random-fill callback for the ephemeral key + ClientHello.
  * @param host     Server hostname: sent as SNI and matched against the leaf SAN.
- * @param roots    Parsed trusted root certificates (trust store).
- * @param nroots   Number of roots.
+ * @param store    Baked-in trusted-root store (DER + subject DN per entry).
+ * @param nstore   Number of roots in the store.
  * @param now_unix Current time (Unix seconds) for validity checks (0 = skip).
  * @param conn     Output connection on success.
  * @return TIKU_KITS_CRYPTO_TLS13_OK, or _BAD on any handshake/auth failure.
@@ -84,7 +84,7 @@ typedef struct {
 int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                                    tiku_kits_crypto_tls13_rng_t rng,
                                    const char *host,
-                                   const tiku_kits_crypto_x509_t *roots, int nroots,
+                                   const tiku_kits_crypto_x509_root_t *store, int nstore,
                                    uint64_t now_unix,
                                    tiku_kits_crypto_tls13_conn_t *conn);
 

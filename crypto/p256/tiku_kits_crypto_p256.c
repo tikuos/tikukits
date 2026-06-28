@@ -214,7 +214,7 @@ static void pt_set_inf(jpt *p){ bn_zero(p->X); bn_zero(p->Y); bn_zero(p->Z); }
 /* R = 2P  (a = -3 doubling). */
 static void pt_double(jpt *R, const jpt *P)
 {
-    bn delta, gamma, beta, alpha, t1, t2, x3, y3, z3;
+    static bn delta, gamma, beta, alpha, t1, t2, x3, y3, z3;
     if (pt_is_inf(P)) { *R = *P; return; }
 
     fp_sqr(delta, P->Z);
@@ -247,7 +247,7 @@ static void pt_double(jpt *R, const jpt *P)
 /* R = P + Q  (general Jacobian add-2007-bl). */
 static void pt_add(jpt *R, const jpt *P, const jpt *Q)
 {
-    bn z1z1, z2z2, u1, u2, s1, s2, h, i_, j_, r_, v, t1, t2, x3, y3, z3;
+    static bn z1z1, z2z2, u1, u2, s1, s2, h, i_, j_, r_, v, t1, t2, x3, y3, z3;
     if (pt_is_inf(P)) { *R = *Q; return; }
     if (pt_is_inf(Q)) { *R = *P; return; }
 
@@ -312,9 +312,12 @@ int tiku_kits_crypto_p256_ecdsa_verify(const uint8_t qx[32], const uint8_t qy[32
                                        const uint8_t *hash, size_t hashlen,
                                        const uint8_t r[32], const uint8_t s[32])
 {
-    bn  rr, ss, e, w, u1, u2, qxn, qyn;
-    jpt G, Q, T1, T2, Rp;
-    bn  zinv, z2, x_aff, xmod;
+    /* static (not stack): verify is non-reentrant; keeps the deep EC point
+     * math off the (small) caller stack on 32-bit targets -- same rationale
+     * as the RSA buffers. */
+    static bn  rr, ss, e, w, u1, u2, qxn, qyn;
+    static jpt G, Q, T1, T2, Rp;
+    static bn  zinv, z2, x_aff, xmod;
     uint8_t hb[32];
     size_t i;
 

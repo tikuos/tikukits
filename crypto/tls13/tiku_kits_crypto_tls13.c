@@ -313,7 +313,7 @@ static uint8_t hs_buf[HS_BUF];
 int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                                    tiku_kits_crypto_tls13_rng_t rng,
                                    const char *host,
-                                   const tiku_kits_crypto_x509_t *roots, int nroots,
+                                   const tiku_kits_crypto_x509_root_t *store, int nstore,
                                    uint64_t now_unix,
                                    tiku_kits_crypto_tls13_conn_t *conn)
 {
@@ -439,7 +439,7 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
 
     /* 5. validate the certificate chain to a trusted root */
     DBG("flight done, validating chain");
-    if (tiku_kits_crypto_x509_verify_chain(chain, nchain, roots, nroots, host, now_unix) != 0)
+    if (tiku_kits_crypto_x509_verify_chain_store(chain, nchain, store, nstore, host, now_unix) != 0)
         return BAD;
     DBG("chain trusted, finishing");
 
