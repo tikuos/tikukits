@@ -253,12 +253,38 @@
 #define TIKU_KITS_NET_TCP_BUF_PERSIST   1
 #endif
 
-#if TIKU_KITS_NET_TCP_BUF_PERSIST
-#define TIKU_KITS_NET_TCP_BUF_ATTR \
+/* Placement is split per buffer because the TX pool and the RX ring have
+ * OPPOSITE hazards: the TX retransmit pool must NOT sit in raw .bss (the
+ * layout/aliasing fault above corrupts it), so it belongs in .persistent; a
+ * LARGE RX ring must NOT sit in .persistent on Cortex-M, where that section is
+ * NOLOAD / skipped-by-zero-init -- a big *uninitialised* ring behaves
+ * non-deterministically (Apollo510 HTTPS saw random RST/stall/empty body until
+ * the ring moved to zeroed .bss).  Each placement defaults to
+ * TIKU_KITS_NET_TCP_BUF_PERSIST; override either independently with
+ * -DTIKU_KITS_NET_TCP_TX_PERSIST=... / -DTIKU_KITS_NET_TCP_RX_PERSIST=... */
+#ifndef TIKU_KITS_NET_TCP_TX_PERSIST
+#define TIKU_KITS_NET_TCP_TX_PERSIST    TIKU_KITS_NET_TCP_BUF_PERSIST
+#endif
+#ifndef TIKU_KITS_NET_TCP_RX_PERSIST
+#define TIKU_KITS_NET_TCP_RX_PERSIST    TIKU_KITS_NET_TCP_BUF_PERSIST
+#endif
+
+#if TIKU_KITS_NET_TCP_TX_PERSIST
+#define TIKU_KITS_NET_TCP_TX_BUF_ATTR \
     __attribute__((section(".persistent"), aligned(2)))
 #else
-#define TIKU_KITS_NET_TCP_BUF_ATTR  __attribute__((aligned(2)))
+#define TIKU_KITS_NET_TCP_TX_BUF_ATTR  __attribute__((aligned(2)))
 #endif
+
+#if TIKU_KITS_NET_TCP_RX_PERSIST
+#define TIKU_KITS_NET_TCP_RX_BUF_ATTR \
+    __attribute__((section(".persistent"), aligned(2)))
+#else
+#define TIKU_KITS_NET_TCP_RX_BUF_ATTR  __attribute__((aligned(2)))
+#endif
+
+/* Back-compat: the old single attr now follows the TX (conservative) placement. */
+#define TIKU_KITS_NET_TCP_BUF_ATTR      TIKU_KITS_NET_TCP_TX_BUF_ATTR
 
 /*
  * Resource sizing -- keyed on the platform, not the placement knob.  Cortex-M

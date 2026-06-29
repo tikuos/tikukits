@@ -44,18 +44,19 @@
 
 /**
  * TX segment pool backing array.  Each block stores one retransmission
- * segment (metadata + payload).  Placed in NVM or SRAM per
- * TIKU_KITS_NET_TCP_BUF_PERSIST (see tiku_kits_net_tcp.h).
+ * segment (metadata + payload).  Placed per TIKU_KITS_NET_TCP_TX_PERSIST --
+ * keep it in .persistent (the .bss layout fault corrupts the TX pool).
  */
-TIKU_KITS_NET_TCP_BUF_ATTR
+TIKU_KITS_NET_TCP_TX_BUF_ATTR
 static uint8_t tcp_tx_pool_buf[TIKU_KITS_NET_TCP_TX_POOL_COUNT *
                                 TIKU_KITS_NET_TCP_TX_SEG_BLOCK];
 
 /**
  * Per-connection RX ring buffers.  Indexed by connection table slot
- * number.  Placed in NVM or SRAM per TIKU_KITS_NET_TCP_BUF_PERSIST.
+ * number.  Placed per TIKU_KITS_NET_TCP_RX_PERSIST -- a large ring belongs in
+ * zeroed .bss, not the NOLOAD/uninitialised .persistent section on Cortex-M.
  */
-TIKU_KITS_NET_TCP_BUF_ATTR
+TIKU_KITS_NET_TCP_RX_BUF_ATTR
 static uint8_t tcp_rx_bufs[TIKU_KITS_NET_TCP_MAX_CONNS]
                            [TIKU_KITS_NET_TCP_RX_BUF_SIZE];
 
