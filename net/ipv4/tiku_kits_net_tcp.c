@@ -107,28 +107,6 @@ typedef struct tcp_txseg {
 /*---------------------------------------------------------------------------*/
 
 /*---------------------------------------------------------------------------*/
-/* NVM TRANSACTION WRAPPERS FOR BUFFER WRITES                                */
-/*---------------------------------------------------------------------------*/
-
-/*
- * The TX pool and RX rings need the NVM MPU unlock/relock ONLY when they
- * actually live in NVM (TIKU_KITS_NET_TCP_BUF_PERSIST=1 -- e.g. MSP430 FRAM,
- * where the unlock is a real write-enable).  When the buffers are SRAM-backed
- * (BUF_PERSIST=0 -- the Cortex-M / Ambiq HTTPS case) the unlock is unnecessary
- * AND costly: on Apollo, tiku_mpu_lock_nvm() flushes the entire .uninit region
- * to MRAM, so wrapping every per-packet buffer write would program kilobytes
- * of MRAM per TCP segment and stall the link.  Compile the wrappers to no-ops
- * for SRAM-backed buffers so the hot path never touches the NVM mirror.
- */
-#if TIKU_KITS_NET_TCP_BUF_PERSIST
-#define TIKU_KITS_NET_TCP_NVM_UNLOCK()  tiku_mpu_unlock_nvm()
-#define TIKU_KITS_NET_TCP_NVM_LOCK(s)   tiku_mpu_lock_nvm(s)
-#else
-#define TIKU_KITS_NET_TCP_NVM_UNLOCK()  0u
-#define TIKU_KITS_NET_TCP_NVM_LOCK(s)   ((void)(s))
-#endif
-
-/*---------------------------------------------------------------------------*/
 /* POOL HELPERS (MPU-aware)                                                  */
 /*---------------------------------------------------------------------------*/
 
@@ -136,18 +114,18 @@ static void *
 seg_alloc(void)
 {
     void *p;
-    uint16_t saved = TIKU_KITS_NET_TCP_NVM_UNLOCK();
+    uint16_t saved = tiku_mpu_unlock_nvm();
     p = tiku_pool_alloc(&seg_pool);
-    TIKU_KITS_NET_TCP_NVM_LOCK(saved);
+    tiku_mpu_lock_nvm(saved);
     return p;
 }
 
 static void
 seg_free(void *p)
 {
-    uint16_t saved = TIKU_KITS_NET_TCP_NVM_UNLOCK();
+    uint16_t saved = tiku_mpu_unlock_nvm();
     tiku_pool_free(&seg_pool, p);
-    TIKU_KITS_NET_TCP_NVM_LOCK(saved);
+    tiku_mpu_lock_nvm(saved);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -237,7 +215,7 @@ rx_write(tiku_kits_net_tcp_conn_t *c, const uint8_t *data,
         return;
     }
 
-    saved = TIKU_KITS_NET_TCP_NVM_UNLOCK();
+    saved = tiku_mpu_unlock_nvm();
 
     first = TIKU_KITS_NET_TCP_RX_BUF_SIZE - head;
     if (first > len) {
@@ -248,7 +226,7 @@ rx_write(tiku_kits_net_tcp_conn_t *c, const uint8_t *data,
         memcpy(c->rx_buf, data + first, len - first);
     }
 
-    TIKU_KITS_NET_TCP_NVM_LOCK(saved);
+    tiku_mpu_lock_nvm(saved);
 
     c->rx_head = (head + len) % TIKU_KITS_NET_TCP_RX_BUF_SIZE;
 }
@@ -649,7 +627,7 @@ tcp_tx_enqueue(tiku_kits_net_tcp_conn_t *c, uint32_t seq,
     }
 
     /* Write metadata and payload to FRAM */
-    saved = TIKU_KITS_NET_TCP_NVM_UNLOCK();
+    saved = tiku_mpu_unlock_nvm();
     seg->next = (tcp_txseg_t *)0;
     seg->seq = seq;
     seg->data_len = data_len;
@@ -658,13 +636,13 @@ tcp_tx_enqueue(tiku_kits_net_tcp_conn_t *c, uint32_t seq,
     if (data_len > 0 && data != (void *)0) {
         memcpy((uint8_t *)(seg + 1), data, data_len);
     }
-    TIKU_KITS_NET_TCP_NVM_LOCK(saved);
+    tiku_mpu_lock_nvm(saved);
 
     /* Append to TX queue */
     if (c->tx_tail != (void *)0) {
-        saved = TIKU_KITS_NET_TCP_NVM_UNLOCK();
+        saved = tiku_mpu_unlock_nvm();
         ((tcp_txseg_t *)c->tx_tail)->next = seg;
-        TIKU_KITS_NET_TCP_NVM_LOCK(saved);
+        tiku_mpu_lock_nvm(saved);
     } else {
         c->tx_head = seg;
     }
@@ -1084,20 +1062,20 @@ tiku_kits_net_tcp_init(void)
     /* Create TX segment pool over FRAM backing array.
      * MPU must be unlocked for pool creation (writes freelist
      * pointers into FRAM blocks). */
-    saved = TIKU_KITS_NET_TCP_NVM_UNLOCK();
+    saved = tiku_mpu_unlock_nvm();
     tiku_pool_create(&seg_pool,
                      tcp_tx_pool_buf,
                      TIKU_KITS_NET_TCP_TX_SEG_BLOCK,
                      TIKU_KITS_NET_TCP_TX_POOL_COUNT,
                      0x0C);
-    TIKU_KITS_NET_TCP_NVM_LOCK(saved);
+    tiku_mpu_lock_nvm(saved);
 
     /* Clear RX ring buffers in FRAM */
-    saved = TIKU_KITS_NET_TCP_NVM_UNLOCK();
+    saved = tiku_mpu_unlock_nvm();
     for (i = 0; i < TIKU_KITS_NET_TCP_MAX_CONNS; i++) {
         memset(tcp_rx_bufs[i], 0, TIKU_KITS_NET_TCP_RX_BUF_SIZE);
     }
-    TIKU_KITS_NET_TCP_NVM_LOCK(saved);
+    tiku_mpu_lock_nvm(saved);
 
 #if TIKU_KITS_NET_TCP_ECHO_ENABLE
     tiku_kits_net_tcp_listen(TIKU_KITS_NET_TCP_ECHO_PORT,
