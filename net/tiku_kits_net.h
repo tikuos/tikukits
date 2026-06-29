@@ -133,6 +133,15 @@
  *   #include "tiku_kits_net.h"
  * @endcode
  */
+/* Real-world HTTPS needs a >=576-byte MTU (MSS >=536): CDNs such as Cloudflare
+ * enforce a minimum MSS and ignore a tiny advertised one, sending segments
+ * larger than a small link MTU -- which the board's SLIP demux then truncates
+ * and drops, so the server's flight never arrives.  576 is the RFC 791 minimum
+ * that every host and CDN honours.  Overridable via -DTIKU_KITS_NET_MTU=... */
+#if (TIKU_KITS_NET_HTTP_ENABLE + 0) && !defined(TIKU_KITS_NET_MTU)
+#define TIKU_KITS_NET_MTU           576
+#endif
+
 #if TIKU_KITS_NET_DHCP_ENABLE && !defined(TIKU_KITS_NET_MTU)
 /* 300 fits the BOOTP minimum body + a couple of options, but
  * real-world DHCP servers (eg Android hotspots) pack enough

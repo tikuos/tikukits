@@ -50,6 +50,9 @@ static const uint8_t OID_P384[]       = {0x2b,0x81,0x04,0x00,0x22};
 static const uint8_t OID_RSA_SHA256[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0b};
 static const uint8_t OID_RSA_SHA384[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0c};
 static const uint8_t OID_RSA_PSS[]    = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0a};
+/* bare hash OIDs -- used to read the real hash out of RSA-PSS parameters */
+static const uint8_t OID_HASH_SHA384[]= {0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02};
+static const uint8_t OID_HASH_SHA512[]= {0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x03};
 static const uint8_t OID_ECDSA_256[]  = {0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x02};
 static const uint8_t OID_ECDSA_384[]  = {0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x03};
 static const uint8_t OID_SAN[]        = {0x55,0x1d,0x11};
@@ -139,13 +142,32 @@ static int parse_spki(const uint8_t *b, size_t l, tiku_kits_crypto_x509_t *o)
     return OK;
 }
 
+/* substring search: 1 if needle n[nl] occurs anywhere within haystack h[hl] */
+static int mem_find(const uint8_t *h, size_t hl, const uint8_t *n, size_t nl)
+{
+    size_t i;
+    if (nl == 0 || hl < nl) return 0;
+    for (i = 0; i + nl <= hl; i++)
+        if (memcmp(h + i, n, nl) == 0) return 1;
+    return 0;
+}
+
 static int sig_alg_of(const uint8_t *b, size_t l)
 {
     const uint8_t *p = b, *e = b + l, *oid; size_t ol;
     if (der_exp(&p, e, T_OID, &oid, &ol) != 0) return TIKU_X509_SIG_UNKNOWN;
     if (OID_EQ(oid, ol, OID_RSA_SHA256)) return TIKU_X509_SIG_RSA_PKCS1_SHA256;
     if (OID_EQ(oid, ol, OID_RSA_SHA384)) return TIKU_X509_SIG_RSA_PKCS1_SHA384;
-    if (OID_EQ(oid, ol, OID_RSA_PSS))    return TIKU_X509_SIG_RSA_PSS_SHA256;
+    if (OID_EQ(oid, ol, OID_RSA_PSS)) {
+        /* The PSS hash lives in the AlgorithmIdentifier parameters; only
+         * PSS-SHA256 is verifiable here, so detect SHA-384/512 and reject them
+         * cleanly (UNKNOWN -> verify_signed_by default) rather than silently
+         * mislabelling them as SHA-256. */
+        if (mem_find(b, l, OID_HASH_SHA384, sizeof OID_HASH_SHA384) ||
+            mem_find(b, l, OID_HASH_SHA512, sizeof OID_HASH_SHA512))
+            return TIKU_X509_SIG_UNKNOWN;
+        return TIKU_X509_SIG_RSA_PSS_SHA256;
+    }
     if (OID_EQ(oid, ol, OID_ECDSA_256))  return TIKU_X509_SIG_ECDSA_SHA256;
     if (OID_EQ(oid, ol, OID_ECDSA_384))  return TIKU_X509_SIG_ECDSA_SHA384;
     return TIKU_X509_SIG_UNKNOWN;

@@ -349,6 +349,21 @@ static int cv_verify(const tiku_kits_crypto_x509_t *leaf, uint16_t scheme,
 
 static uint8_t hs_buf[HS_BUF];
 
+/* Handshake diagnostics: the furthest stage reached (positive) or the failure
+ * point (negative), plus total handshake record bytes read.  A blocking caller
+ * (BASIC HTTPGET$/BROWSE) reads these after a failed connect to separate a
+ * transport failure (short / garbled server flight) from a real cert/logic one.
+ *   1 ClientHello sent   2 ServerHello ok   3 reading flight   4 flight complete
+ *   5 chain trusted     10 connected
+ *  -2 ServerHello read  -3 ServerHello bad  -5 flight read (transport)
+ *  -6 unexpected record -7 decrypt (corrupt flight)  -9 cert parse
+ * -10 cert-verify sig  -11 chain untrusted  -12 Finished  -13 flight overflow
+ * -14 client Finished send */
+int      tiku_kits_crypto_tls13_last_stage;
+uint32_t tiku_kits_crypto_tls13_last_rx;
+#define HS_DIAG(n)  (tiku_kits_crypto_tls13_last_stage = (n))
+#define HS_FAIL(n)  do { tiku_kits_crypto_tls13_last_stage = (n); return BAD; } while (0)
+
 int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                                    tiku_kits_crypto_tls13_rng_t rng,
                                    const char *host,
@@ -369,6 +384,8 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
     uint8_t type; size_t blen, chlen, ptlen, parsed; uint8_t inner;
     int got_fin = 0, leaf_ok = 0;
 
+    HS_DIAG(1); tiku_kits_crypto_tls13_last_rx = 0;
+
     /* 1. ephemeral keys (x25519 + P-256) + ClientHello */
     rng(priv, 32); tiku_kits_crypto_x25519_base(pub, priv);
     { uint8_t seed[32];                      /* P-256 ephemeral (reseed if d==0) */
@@ -381,15 +398,17 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
     if (write_plain_record(io, REC_HS, rec, chlen) != OK) return BAD;
 
     /* 2. ServerHello */
-    if (read_record(io, &type, &blen) != OK || type != REC_HS) return BAD;
-    if (blen < 4 || rec[0] != HS_SERVER_HELLO) return BAD;
+    if (read_record(io, &type, &blen) != OK || type != REC_HS) HS_FAIL(-2);
+    tiku_kits_crypto_tls13_last_rx += (uint32_t)blen;
+    if (blen < 4 || rec[0] != HS_SERVER_HELLO) HS_FAIL(-3);
     {
         static uint8_t sh[2048];
-        if (4 + rd24(rec + 1) > blen || blen > sizeof sh) return BAD;
+        if (4 + rd24(rec + 1) > blen || blen > sizeof sh) HS_FAIL(-3);
         memcpy(sh, rec, blen);
         th_add(&th, sh, blen);
-        if (parse_server_hello(sh + 4, rd24(sh + 1), server_pub, &sgroup) != OK) return BAD;
+        if (parse_server_hello(sh + 4, rd24(sh + 1), server_pub, &sgroup) != OK) HS_FAIL(-3);
     }
+    HS_DIAG(2);
 
     /* 3. ECDHE + key schedule (handshake secrets) -- the server's chosen group
      * selects which ephemeral we agree with (x25519 or secp256r1). */
@@ -413,17 +432,21 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
     tiku_kits_crypto_hkdf_expand_label(s_hs, "finished", NULL, 0, s_fin_key, 32);
     tiku_kits_crypto_gcm_init(&s_gcm, s_hs_key);
     conn->s_seq = 0;
+    HS_DIAG(3);
     DBG("keysched ok, reading flight");
 
     /* 4. read + decrypt the server flight (EE, Cert, CertVerify, Finished) */
     {
         size_t hs_len = 0; parsed = 0;
         while (!got_fin) {
-            if (read_record(io, &type, &blen) != OK) return BAD;
+            if (read_record(io, &type, &blen) != OK) HS_FAIL(-5);
             if (type == REC_CCS) continue;               /* ignore change_cipher_spec */
-            if (type != REC_APP) return BAD;
+            if (type != REC_APP) HS_FAIL(-6);
+            tiku_kits_crypto_tls13_last_rx += (uint32_t)blen;
+            if ((size_t)hs_len + blen > sizeof hs_buf)   /* never write past hs_buf */
+                HS_FAIL(-13);
             if (aead_open(&s_gcm, s_hs_iv, conn->s_seq, blen, hs_buf + hs_len, &ptlen, &inner) != OK)
-                return BAD;
+                HS_FAIL(-7);
             conn->s_seq++;
             if (inner == REC_ALERT) return BAD;
             if (inner != REC_HS) return BAD;
@@ -453,7 +476,7 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                         if (cp + clen > ce) return BAD;
                         if (tiku_kits_crypto_x509_parse(cp, clen, &chain[nchain]) == 0)
                             nchain++;
-                        else return BAD;
+                        else HS_FAIL(-9);
                         cp += clen;
                         if (cp + 2 > ce) break;
                         cp += 2 + rd16(cp);              /* cert extensions */
@@ -468,7 +491,7 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                     signed_buf[97] = 0x00;
                     memcpy(signed_buf + 98, thash_cv, 32);
                     v = cv_verify(&chain[0], scheme, cp + 4, slen, signed_buf, 130);
-                    if (v != 0) return BAD;
+                    if (v != 0) HS_FAIL(-10);
                     leaf_ok = 1;
                 }
 
@@ -476,19 +499,21 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
 
                 if (mt == HS_FINISHED) {
                     tiku_kits_crypto_hmac_sha256(s_fin_key, 32, thash, 32, mac);
-                    if (ml != 32 || memcmp(mac, m + 4, 32) != 0) return BAD;
+                    if (ml != 32 || memcmp(mac, m + 4, 32) != 0) HS_FAIL(-12);
                     got_fin = 1;
                 }
                 parsed += 4 + ml;
             }
         }
     }
-    if (!leaf_ok || nchain < 1) return BAD;
+    if (!leaf_ok || nchain < 1) HS_FAIL(-10);
+    HS_DIAG(4);
 
     /* 5. validate the certificate chain to a trusted root */
     DBG("flight done, validating chain");
     if (tiku_kits_crypto_x509_verify_chain_store(chain, nchain, store, nstore, host, now_unix) != 0)
-        return BAD;
+        HS_FAIL(-11);
+    HS_DIAG(5);
     DBG("chain trusted, finishing");
 
     /* 6. application keys (master secret) + client Finished */
@@ -513,13 +538,14 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
         { uint8_t ccs = 0x01; write_plain_record(io, REC_CCS, &ccs, 1); }
         tiku_kits_crypto_gcm_init(&c_gcm, c_hs_key);
         conn->c_seq = 0;
-        if (aead_seal(io, &c_gcm, c_hs_iv, conn->c_seq, REC_HS, fin_msg, 36) != OK) return BAD;
+        if (aead_seal(io, &c_gcm, c_hs_iv, conn->c_seq, REC_HS, fin_msg, 36) != OK) HS_FAIL(-14);
     }
 
     /* 7. switch to application-data keys; fresh sequence numbers */
     conn->io = *io;
     conn->c_seq = 0; conn->s_seq = 0;
     conn->rx_len = conn->rx_off = 0; conn->closed = 0;
+    HS_DIAG(10);
     return OK;
 }
 

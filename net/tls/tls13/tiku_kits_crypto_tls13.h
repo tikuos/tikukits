@@ -88,6 +88,18 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                                    uint64_t now_unix,
                                    tiku_kits_crypto_tls13_conn_t *conn);
 
+/* Diagnostics for the last connect attempt: the furthest handshake stage
+ * reached (positive) or the failure point (negative), and the total handshake
+ * record bytes read.  A caller reads these after a failed connect to tell a
+ * transport failure from a real cert/logic failure.  Stage codes:
+ *   1 ClientHello sent  2 ServerHello ok  3 reading flight  4 flight complete
+ *   5 chain trusted    10 connected;  -2 ServerHello read  -3 ServerHello bad
+ *  -5 flight read (transport)  -6 unexpected record  -7 decrypt (corrupt)
+ *  -9 cert parse  -10 cert-verify  -11 chain untrusted  -12 Finished
+ * -13 flight overflow  -14 client Finished send */
+extern int      tiku_kits_crypto_tls13_last_stage;
+extern uint32_t tiku_kits_crypto_tls13_last_rx;
+
 /** Encrypt and send application data.  Returns bytes sent or < 0. */
 int tiku_kits_crypto_tls13_write(tiku_kits_crypto_tls13_conn_t *c,
                                  const uint8_t *data, size_t len);
