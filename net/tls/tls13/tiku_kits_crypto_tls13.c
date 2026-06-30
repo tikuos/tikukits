@@ -61,15 +61,21 @@ void (*tiku_kits_crypto_tls13_dbg)(const char *) = 0;
 #define MAX_CERTS 6
 /* Embedded sizing: the reassembled server flight (EncryptedExtensions +
  * Certificate chain + CertificateVerify + Finished) and any single incoming
- * record must fit here.  12 KB covers large RSA chains seen in the wild
- * (Microsoft/Azure send ~9.4 KB Certificate records); a server that sends a
- * single record larger than this is rejected.  #ifndef so SRAM-tight builds
- * can dial it back. */
+ * record must fit here.  Sized to the RFC 8446 maximum TLSCiphertext.length
+ * (2^14 + 256 = 16640): a server may legally send its HTTP response -- or any
+ * post-handshake record -- as one full-size record, and read_record() rejects
+ * anything longer than REC_BUF.  The previous 12 KB (enough for large RSA
+ * Certificate flights, e.g. Microsoft/Azure's ~9.4 KB) wrongly dropped those
+ * >12 KB response records: tls13_read returned <=0 mid-stream, so HTTPGET$ read
+ * 0 bytes -- which over SLIP surfaced as `HTTP 0, 0 B rdfail=1` after the
+ * NewSessionTickets (duckduckgo.com, kernel.org; google fits under 12 KB).
+ * #ifndef so SRAM-tight builds can dial it back -- but below 16640 a compliant
+ * server that sends a full-size record becomes unreachable. */
 #ifndef HS_BUF
-#define HS_BUF     12288
+#define HS_BUF     16640
 #endif
 #ifndef REC_BUF
-#define REC_BUF    12288
+#define REC_BUF    16640
 #endif
 #define SEAL_BUF   1152   /* outgoing records: client sends are small (cap below) */
 #define APP_CHUNK  1024   /* max plaintext per client application_data record    */
@@ -361,6 +367,17 @@ static uint8_t hs_buf[HS_BUF];
  * -14 client Finished send */
 int      tiku_kits_crypto_tls13_last_stage;
 uint32_t tiku_kits_crypto_tls13_last_rx;
+/* Post-handshake read diagnostics: which condition broke tls13_read, so an
+ * empty HTTPGET$/BROWSE over SLIP -- where the red stage print is lost in the
+ * shared console/SLIP mux -- is explained from the BROWSE summary line.
+ *   0 = delivered application data;   1 = no full record from the wire;
+ *   2 = unexpected wire record type;  3 = record body failed to decrypt;
+ *   4 = peer sent a TLS alert.
+ * last_read_type/seq give the wire record type and the server application
+ * read-sequence at the break (so "broke on the Nth post-handshake record"). */
+int      tiku_kits_crypto_tls13_last_read_fail;
+uint8_t  tiku_kits_crypto_tls13_last_read_type;
+uint32_t tiku_kits_crypto_tls13_last_read_seq;
 #define HS_DIAG(n)  (tiku_kits_crypto_tls13_last_stage = (n))
 #define HS_FAIL(n)  do { tiku_kits_crypto_tls13_last_stage = (n); return BAD; } while (0)
 
@@ -575,13 +592,26 @@ int tiku_kits_crypto_tls13_read(tiku_kits_crypto_tls13_conn_t *c, uint8_t *buf, 
         uint8_t type, inner; size_t blen, ptlen;
         tiku_kits_crypto_gcm_init(&gcm, c->s_key);
         for (;;) {
-            if (read_record(&c->io, &type, &blen) != OK) { c->closed = 1; return 0; }
+            tiku_kits_crypto_tls13_last_read_seq = (uint32_t)c->s_seq;
+            if (read_record(&c->io, &type, &blen) != OK) {
+                tiku_kits_crypto_tls13_last_read_fail = 1;   /* no full record from the wire */
+                c->closed = 1; return 0;
+            }
             if (type == REC_CCS) continue;
-            if (type != REC_APP) { c->closed = 1; return BAD; }
-            if (aead_open(&gcm, c->s_iv, c->s_seq, blen, hs_buf, &ptlen, &inner) != OK)
-                { c->closed = 1; return BAD; }
+            if (type != REC_APP) {
+                tiku_kits_crypto_tls13_last_read_fail = 2;   /* unexpected wire record type */
+                tiku_kits_crypto_tls13_last_read_type = type;
+                c->closed = 1; return BAD;
+            }
+            if (aead_open(&gcm, c->s_iv, c->s_seq, blen, hs_buf, &ptlen, &inner) != OK) {
+                tiku_kits_crypto_tls13_last_read_fail = 3;   /* record body failed to decrypt */
+                c->closed = 1; return BAD;
+            }
             c->s_seq++;
-            if (inner == REC_ALERT) { c->closed = 1; return 0; }
+            if (inner == REC_ALERT) {
+                tiku_kits_crypto_tls13_last_read_fail = 4;   /* peer sent a TLS alert */
+                c->closed = 1; return 0;
+            }
             if (inner == REC_HS)    continue;        /* post-handshake (e.g. NewSessionTicket) */
             if (inner != REC_APP)   continue;
             c->rx_len = ptlen; c->rx_off = 0;
@@ -591,6 +621,7 @@ int tiku_kits_crypto_tls13_read(tiku_kits_crypto_tls13_conn_t *c, uint8_t *buf, 
     {
         size_t avail = c->rx_len - c->rx_off;
         size_t take = avail < max ? avail : max;
+        tiku_kits_crypto_tls13_last_read_fail = 0;       /* delivered application data */
         memcpy(buf, hs_buf + c->rx_off, take);
         c->rx_off += take;
         return (int)take;

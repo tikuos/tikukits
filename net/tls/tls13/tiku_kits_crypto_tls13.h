@@ -99,6 +99,11 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
  * -13 flight overflow  -14 client Finished send */
 extern int      tiku_kits_crypto_tls13_last_stage;
 extern uint32_t tiku_kits_crypto_tls13_last_rx;
+/* Post-handshake read break reason (see the .c): 0 ok / 1 no-record /
+ * 2 wire-type / 3 decrypt-fail / 4 alert, plus the wire type and read-seq. */
+extern int      tiku_kits_crypto_tls13_last_read_fail;
+extern uint8_t  tiku_kits_crypto_tls13_last_read_type;
+extern uint32_t tiku_kits_crypto_tls13_last_read_seq;
 
 /** Encrypt and send application data.  Returns bytes sent or < 0. */
 int tiku_kits_crypto_tls13_write(tiku_kits_crypto_tls13_conn_t *c,
