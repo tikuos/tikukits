@@ -49,11 +49,17 @@
 #define HS_FINISHED     20
 
 #define MAX_CERTS 6
-/* TLS-1.2-only servers are the older/enterprise tail and carry small chains,
- * so 8 KB covers the record + reassembled flight.  hsb doubles as the
- * post-handshake app-data decrypt buffer (the flight is done by then). */
+/* Holds one full incoming record (rec) and the reassembled handshake flight,
+ * which doubles as the post-handshake app-data decrypt buffer (hsb).  Sized to
+ * the largest record a compliant server may send: read_record rejects anything
+ * over TLS12_BUF, so the old 8 KB silently dropped the response of TLS-1.2-only
+ * sites that send a large body (orf.at: 115 KB, records > 8 KB -> NO RESPONSE)
+ * -- the same record-size bug fixed on the 1.3 path (REC_BUF=16640).  16640 =
+ * 2^14 + 256 covers any AES-GCM record (the only 1.2 ciphers here).  #ifndef so
+ * SRAM-tight builds can dial it back -- but below 16640 a compliant full-size
+ * record becomes unreachable. */
 #ifndef TLS12_BUF
-#define TLS12_BUF  8192
+#define TLS12_BUF  16640
 #endif
 
 /* Optional milestone hook (shared spirit with the 1.3 client). */
