@@ -143,7 +143,19 @@ udp_chksum(const uint8_t *ip_hdr, const uint8_t *udp,
 void
 tiku_kits_net_udp_init(void)
 {
+    static uint8_t inited;
     uint8_t i;
+
+    /* Idempotent (same contract as tiku_tier_init): several shell
+     * commands call this as an "ensure UDP dispatch is up" step with
+     * only file-local guards, so a second call used to WIPE the bind
+     * table -- silently unbinding long-lived servers (CoAP went deaf
+     * after the first `ntp`/`syslog` command; TikuBench net suite).
+     * First call initializes; later calls are no-ops. */
+    if (inited) {
+        return;
+    }
+    inited = 1;
 
     for (i = 0; i < TIKU_KITS_NET_UDP_MAX_BINDS; i++) {
         bind_table[i].port = 0;
