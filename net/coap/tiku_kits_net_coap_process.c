@@ -113,7 +113,14 @@ TIKU_PROCESS(tiku_kits_net_coap_process, "coap");
 #define COAP_BOOT_DELAY_SEC  1
 
 /** Poll interval for CoAP (500 ms). */
-#define COAP_POLL_TICKS      (TIKU_CLOCK_SECOND / 2)
+/* Poll cadence.  recv_cb (in udp_input, under the net-buf re-entrancy
+ * guard) only sets rx_pending; the reply is built here on the next poll,
+ * so this bounds worst-case CoAP reply latency.  SECOND/8 = 16 ticks
+ * (~125 ms at the 128 Hz kernel tick), down from SECOND/2 (~500 ms) --
+ * a 4x tighter reply without measurable cost: the poll body is a cheap
+ * rx_pending check plus the CON retransmit timer, and the process rides
+ * the always-running kernel tick, so a shorter interval adds no wakes. */
+#define COAP_POLL_TICKS      (TIKU_CLOCK_SECOND / 8)
 
 TIKU_PROCESS_THREAD(tiku_kits_net_coap_process, ev, data)
 {
