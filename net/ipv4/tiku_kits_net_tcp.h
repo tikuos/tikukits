@@ -228,29 +228,41 @@
  * rather than an afterthought.
  *
  * What `.persistent` actually maps to is per-part, and this matters here:
- *   - MSP430: real FRAM -- non-volatile, slower, wears.  The native store.
- *   - Ambiq / RP2350: `.persistent` is physically SRAM (a separate volatile
- *     region linked outside .bss; it is NOT MRAM/flash-backed despite the
- *     name -- the known "graded-durability" gap).  So on these parts BOTH
- *     knob settings are SRAM; `.persistent` just lands in a different,
- *     lightly-used SRAM region than the densely-packed `.bss`.
+ *   - MSP430: real FRAM -- non-volatile, byte-writable in place.  The
+ *     native store; big TCP buffers there are cheap and genuinely durable.
+ *   - Ambiq (apollo4l/510): `.persistent` lands in the MRAM-MIRRORED
+ *     `.uninit` region.  Every tiku_mpu_lock_nvm() relock snapshots that
+ *     WHOLE region and (when changed) programs the MRAM mirror -- so a
+ *     large, per-packet-churning TCP pool here turns every packet into a
+ *     multi-KB MRAM program with IRQs off (the June 2026 apollo510
+ *     handshake-stall outage; the flush dirty-check only helps when
+ *     .uninit is UNchanged, which a hot TX pool defeats by definition).
+ *   - RP2350: net-stack `.persistent` is EXCLUDED from the 4 KB flash
+ *     mirror by the linker (it wouldn't fit), so the tag buys nothing
+ *     there: the buffers are plain SRAM, warm-reset-only.
  *
- * Default `.persistent` everywhere.  On MSP430 that is FRAM (the lean native
- * choice); on Cortex-M it is SRAM (fast, wear-free -- the goal for transient
- * buffers), and empirically the `.persistent` SRAM region is corruption-free
- * for the TX pool whereas the same pool placed in `.bss` (PERSIST=0) is not
- * -- a layout/aliasing fault in the packed `.bss` region, tracked separately.
- * So `.persistent` is both the working default and, on Cortex-M, genuinely
- * SRAM.  PERSIST=0 (raw `.bss`) remains available but carries that caveat.
+ * Hence the default is per-PLATFORM, not global: MSP430 keeps
+ * `.persistent` (FRAM in place, the durable-sessions story); Ambiq and
+ * RP2350 default to zero-initialized `.bss` -- deterministic contents,
+ * no mirror-flush amplification, no fake durability tag.  This encodes
+ * the apollo510 law "no large/high-churn buffer in `.persistent`" at the
+ * header level instead of relying on per-build -D flags (which only the
+ * HAS_TLS=1 path used to set, leaving non-TLS net builds on the
+ * amplification path).
  *
- * Note: persistence does not preserve a *live* TCP connection across a power
- * cycle (the peer's sequence state is gone) -- the knob is about the memory
- * class of the working buffers, not connection durability.  All runtime
- * writes unlock the NVM MPU window regardless; where the section is SRAM
- * those unlocks are harmless no-ops.
+ * Note: persistence does not preserve a *live* TCP connection across a
+ * power cycle (the peer's sequence state is gone) -- the knob is about
+ * the memory class of the working buffers, not connection durability.
+ * All runtime writes unlock the NVM MPU window regardless; where the
+ * buffers are `.bss` the relock's flush dirty-check sees an unchanged
+ * `.uninit` and skips the NVM program entirely.
  */
 #ifndef TIKU_KITS_NET_TCP_BUF_PERSIST
+#if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350)
+#define TIKU_KITS_NET_TCP_BUF_PERSIST   0
+#else
 #define TIKU_KITS_NET_TCP_BUF_PERSIST   1
+#endif
 #endif
 
 #if TIKU_KITS_NET_TCP_BUF_PERSIST
