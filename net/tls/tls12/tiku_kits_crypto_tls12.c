@@ -300,6 +300,45 @@ static void th_snapshot(int use384, const tiku_kits_crypto_sha256_ctx_t *a,
 
 /* ---- handshake ---------------------------------------------------------- */
 
+/*---------------------------------------------------------------------------*/
+/* HEAVY-CRYPTO OFFLOAD (mirrors the tls13 path; same io->offload hook)       */
+/*---------------------------------------------------------------------------*/
+
+static int hs_offload(const tiku_kits_crypto_tls13_io_t *io,
+                      int (*fn)(void *), void *arg)
+{
+    return io->offload ? io->offload(fn, arg) : fn(arg);
+}
+
+struct hs_cs_p256sh { const uint8_t *priv; const uint8_t *peer; uint8_t *out; };
+static int hs_cs_p256sh(void *p)
+{
+    struct hs_cs_p256sh *a = (struct hs_cs_p256sh *)p;
+    return tiku_kits_crypto_p256_ecdh_shared(a->priv, a->peer, a->out);
+}
+
+struct hs_cs_ske {
+    const tiku_kits_crypto_x509_t *leaf; uint8_t ha; uint8_t sa;
+    const uint8_t *sd; size_t sdlen; const uint8_t *sig; size_t slen;
+};
+static int hs_cs_ske(void *p)
+{
+    struct hs_cs_ske *a = (struct hs_cs_ske *)p;
+    return ske_verify(a->leaf, a->ha, a->sa, a->sd, a->sdlen, a->sig, a->slen);
+}
+
+struct hs_cs_chain {
+    const tiku_kits_crypto_x509_t *chain; int n;
+    const tiku_kits_crypto_x509_root_t *store; int nstore;
+    const char *host; uint64_t now;
+};
+static int hs_cs_chain(void *p)
+{
+    struct hs_cs_chain *a = (struct hs_cs_chain *)p;
+    return tiku_kits_crypto_x509_verify_chain_store(a->chain, a->n, a->store,
+                                                    a->nstore, a->host, a->now);
+}
+
 int tiku_kits_crypto_tls12_connect(const tiku_kits_crypto_tls13_io_t *io,
                                    tiku_kits_crypto_tls13_rng_t rng,
                                    const char *host,
@@ -399,15 +438,21 @@ int tiku_kits_crypto_tls12_connect(const tiku_kits_crypto_tls13_io_t *io,
 
         /* 3. authenticate: chain to a trusted root + SKE signature over
          *    client_random || server_random || ECDHE params */
-        if (tiku_kits_crypto_x509_verify_chain_store(chain, nchain, store, nstore,
-                                                     host, now_unix) != OK) return BAD;
+        {
+            struct hs_cs_chain cs = { chain, nchain, store, nstore,
+                                      host, now_unix };
+            if (hs_offload(io, hs_cs_chain, &cs) != OK) return BAD;
+        }
         DBG("chain trusted");
         {
             static uint8_t sd[160];
+            struct hs_cs_ske cs;
             memcpy(sd, crand, 32); memcpy(sd + 32, srand, 32);
             memcpy(sd + 64, ske_params, ske_params_len);
-            if (ske_verify(&chain[0], ske_ha, ske_sa, sd, 64 + ske_params_len,
-                           ske_sig, ske_slen) != OK) return BAD;
+            cs.leaf = &chain[0]; cs.ha = ske_ha; cs.sa = ske_sa;
+            cs.sd = sd; cs.sdlen = 64 + ske_params_len;
+            cs.sig = ske_sig; cs.slen = ske_slen;
+            if (hs_offload(io, hs_cs_ske, &cs) != OK) return BAD;
         }
         (void)cipher_ecdsa;
         DBG("ServerKeyExchange verified");
@@ -415,7 +460,10 @@ int tiku_kits_crypto_tls12_connect(const tiku_kits_crypto_tls13_io_t *io,
 
     /* 4. ECDHE shared secret -> master secret -> key block (PRF hash + AES key
      *    length depend on the negotiated suite). */
-    if (tiku_kits_crypto_p256_ecdh_shared(priv, peer, pre) != OK) return BAD;
+    {
+        struct hs_cs_p256sh cs = { priv, peer, pre };
+        if (hs_offload(io, hs_cs_p256sh, &cs) != OK) return BAD;
+    }
     conn->is256 = (uint8_t)use384;
     memcpy(seedb, crand, 32); memcpy(seedb + 32, srand, 32);
     prf(use384, pre, 32, "master secret", seedb, 64, master, 48);

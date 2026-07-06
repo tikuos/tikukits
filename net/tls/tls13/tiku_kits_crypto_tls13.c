@@ -381,6 +381,61 @@ uint32_t tiku_kits_crypto_tls13_last_read_seq;
 #define HS_DIAG(n)  (tiku_kits_crypto_tls13_last_stage = (n))
 #define HS_FAIL(n)  do { tiku_kits_crypto_tls13_last_stage = (n); return BAD; } while (0)
 
+/*---------------------------------------------------------------------------*/
+/* HEAVY-CRYPTO OFFLOAD                                                       */
+/*                                                                            */
+/* Each CPU-bound public-key op is wrapped as a pure fn(void*) closure over   */
+/* caller stack buffers, run through io->offload when the caller set it (e.g. */
+/* onto a worker thread that the caller drives while keeping its own services */
+/* alive), else inline.  With io->offload == NULL the behavior is             */
+/* byte-identical to a build without any of this.  The closure arg lives on   */
+/* connect()'s frame, which stays put while connect() is suspended in the     */
+/* caller's drive loop, so the offloaded op reads stable memory.              */
+/*---------------------------------------------------------------------------*/
+
+static int hs_offload(const tiku_kits_crypto_tls13_io_t *io,
+                      int (*fn)(void *), void *arg)
+{
+    return io->offload ? io->offload(fn, arg) : fn(arg);
+}
+
+struct hs_cs_x25519 { uint8_t *out; const uint8_t *priv; const uint8_t *peer; };
+static int hs_cs_x25519(void *p)
+{
+    struct hs_cs_x25519 *a = (struct hs_cs_x25519 *)p;
+    tiku_kits_crypto_x25519_scalarmult(a->out, a->priv, a->peer);
+    return OK;
+}
+
+struct hs_cs_p256sh { const uint8_t *priv; const uint8_t *peer; uint8_t *out; };
+static int hs_cs_p256sh(void *p)
+{
+    struct hs_cs_p256sh *a = (struct hs_cs_p256sh *)p;
+    return tiku_kits_crypto_p256_ecdh_shared(a->priv, a->peer, a->out);
+}
+
+struct hs_cs_cv {
+    const tiku_kits_crypto_x509_t *leaf; uint16_t scheme;
+    const uint8_t *sig; uint16_t slen; const uint8_t *content; size_t clen;
+};
+static int hs_cs_cv(void *p)
+{
+    struct hs_cs_cv *a = (struct hs_cs_cv *)p;
+    return cv_verify(a->leaf, a->scheme, a->sig, a->slen, a->content, a->clen);
+}
+
+struct hs_cs_chain {
+    const tiku_kits_crypto_x509_t *chain; int n;
+    const tiku_kits_crypto_x509_root_t *store; int nstore;
+    const char *host; uint64_t now;
+};
+static int hs_cs_chain(void *p)
+{
+    struct hs_cs_chain *a = (struct hs_cs_chain *)p;
+    return tiku_kits_crypto_x509_verify_chain_store(a->chain, a->n, a->store,
+                                                    a->nstore, a->host, a->now);
+}
+
 int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                                    tiku_kits_crypto_tls13_rng_t rng,
                                    const char *host,
@@ -430,9 +485,11 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
     /* 3. ECDHE + key schedule (handshake secrets) -- the server's chosen group
      * selects which ephemeral we agree with (x25519 or secp256r1). */
     if (sgroup == 0x001d) {
-        tiku_kits_crypto_x25519_scalarmult(ecdhe, priv, server_pub);
+        struct hs_cs_x25519 cs = { ecdhe, priv, server_pub };
+        (void)hs_offload(io, hs_cs_x25519, &cs);
     } else if (sgroup == 0x0017) {
-        if (tiku_kits_crypto_p256_ecdh_shared(p256_priv, server_pub, ecdhe) != OK) return BAD;
+        struct hs_cs_p256sh cs = { p256_priv, server_pub, ecdhe };
+        if (hs_offload(io, hs_cs_p256sh, &cs) != OK) return BAD;
     } else {
         return BAD;
     }
@@ -507,7 +564,9 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
                     memcpy(signed_buf + 64, "TLS 1.3, server CertificateVerify", 33);
                     signed_buf[97] = 0x00;
                     memcpy(signed_buf + 98, thash_cv, 32);
-                    v = cv_verify(&chain[0], scheme, cp + 4, slen, signed_buf, 130);
+                    { struct hs_cs_cv cs = { &chain[0], scheme, cp + 4, slen,
+                                             signed_buf, 130 };
+                      v = hs_offload(io, hs_cs_cv, &cs); }
                     if (v != 0) HS_FAIL(-10);
                     leaf_ok = 1;
                 }
@@ -528,8 +587,11 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
 
     /* 5. validate the certificate chain to a trusted root */
     DBG("flight done, validating chain");
-    if (tiku_kits_crypto_x509_verify_chain_store(chain, nchain, store, nstore, host, now_unix) != 0)
-        HS_FAIL(-11);
+    {
+        struct hs_cs_chain cs = { chain, nchain, store, nstore, host, now_unix };
+        if (hs_offload(io, hs_cs_chain, &cs) != 0)
+            HS_FAIL(-11);
+    }
     HS_DIAG(5);
     DBG("chain trusted, finishing");
 

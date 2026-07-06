@@ -50,6 +50,20 @@ typedef struct {
     int (*send)(void *ctx, const uint8_t *buf, size_t len);
     int (*recv)(void *ctx, uint8_t *buf, size_t len);
     void *ctx;
+    /**
+     * Optional heavy-crypto offload.  When non-NULL, the handshake runs
+     * its CPU-bound public-key ops (ECDHE scalar-mult, CertVerify, the
+     * certificate-chain verify) through this hook instead of calling them
+     * inline: @p fn is a pure closure over caller buffers, @p closure its
+     * argument, and the return value is @p fn's result.  A caller can thus
+     * run the crypto on a worker thread while keeping its own timers, net
+     * pump and services alive.  NULL (the default) runs every op inline,
+     * byte-identical to a build without this field.  The callee MUST
+     * serialise crypto — the underlying primitives carry non-reentrant
+     * static scratch — so a single dedicated worker, never concurrent with
+     * any other crypto.
+     */
+    int (*offload)(int (*fn)(void *closure), void *closure);
 } tiku_kits_crypto_tls13_io_t;
 
 /** Fill @p buf with @p len cryptographically-random bytes. */
