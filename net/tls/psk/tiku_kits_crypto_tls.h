@@ -4,13 +4,21 @@
  *
  * Authors: Ambuj Varshney <ambuj@tiku-os.org>
  *
- * tiku_kits_crypto_tls.h - TLS 1.3 PSK-only client
+ * tiku_kits_crypto_tls.h - TLS 1.3 PSK client (one of three TLS clients)
  *
  * Provides a minimal TLS 1.3 client using pre-shared keys (PSK)
  * with the TLS_AES_128_GCM_SHA256 cipher suite (RFC 8446).
  *
  * No certificates, no ECDH, no RSA --- only symmetric crypto.
  * Designed for ultra-low-power MCUs with 2 KB SRAM and FRAM.
+ *
+ * This is the PSK client only.  The net/tls/ tree also carries two
+ * CERTIFICATE-based clients for the public web: net/tls/tls13
+ * (TLS 1.3, X25519 + X.509) and net/tls/tls12 (TLS 1.2 fallback,
+ * ECDHE-P256 + X.509), which validate a server chain against a
+ * caller-supplied root store.  Pick PSK when you control both ends
+ * (your own broker/gateway); pick the cert clients to reach
+ * arbitrary HTTPS servers.
  *
  * Architecture:
  *   - SRAM: connection context (~345 B during handshake, ~537 B

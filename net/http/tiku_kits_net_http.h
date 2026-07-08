@@ -6,10 +6,20 @@
  *
  * tiku_kits_net_http.h - Minimal HTTP/1.1 client
  *
- * Provides a minimal HTTP/1.1 client that runs on top of the
- * existing TLS 1.3 PSK-only transport.  Only GET and POST are
+ * Provides a minimal HTTP/1.1 client.  Only GET and POST are
  * supported.  No chunked encoding, redirects, cookies, gzip,
  * or keep-alive.
+ *
+ * TLS note: http_get()/http_post() below currently drive the
+ * PRE-SHARED-KEY TLS client (net/tls/psk), so they reach only
+ * PSK peers -- NOT the public web.  This is NOT the only TLS in
+ * the tree: certificate-based TLS 1.3 and 1.2 clients live in
+ * net/tls/{tls13,tls12} and validate real chains against a root
+ * store (the shell/BASIC HTTPGET$ path uses them today).  Routing
+ * this client over the same io vtable those clients define -- so
+ * http_get() can carry either trust model as a parameter -- is
+ * the planned unification; the request builder and response parser
+ * below are already TLS-agnostic and reusable across both.
  *
  * Architecture:
  *   - Request builder formats headers into a caller-supplied
