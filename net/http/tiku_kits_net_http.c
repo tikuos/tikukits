@@ -312,6 +312,27 @@ tiku_kits_net_http_build_request(
 #include <tikukits/net/tls/psk/tiku_kits_crypto_tls.h>
 
 /*---------------------------------------------------------------------------*/
+/* CERTIFICATE TLS (public web) -- compiled when the cert clients are linked */
+/*---------------------------------------------------------------------------*/
+/* TIKU_KITS_NET_HTTP_CERT_ENABLE + the tls13 io come from the header. */
+
+#if TIKU_KITS_NET_HTTP_CERT_ENABLE
+#include "../tls/tls12/tiku_kits_crypto_tls12.h"
+#include <kernel/timers/tiku_clock.h>
+#include <kernel/cpu/tiku_watchdog.h>
+
+/** Cooperative-blocking deadline for a cert handshake/transfer (seconds). */
+#ifndef TIKU_KITS_NET_HTTP_CERT_TIMEOUT_SEC
+#define TIKU_KITS_NET_HTTP_CERT_TIMEOUT_SEC   20u
+#endif
+
+/** SRAM staging for decrypted cert-mode response bytes before the sink. */
+#ifndef TIKU_KITS_NET_HTTP_CERT_RX_STAGING
+#define TIKU_KITS_NET_HTTP_CERT_RX_STAGING    256
+#endif
+#endif /* TIKU_KITS_NET_HTTP_CERT_ENABLE */
+
+/*---------------------------------------------------------------------------*/
 /* FRAM-BACKED REQUEST BUFFER                                                */
 /*---------------------------------------------------------------------------*/
 
@@ -401,6 +422,71 @@ http_net_poll(void)
 }
 
 /*---------------------------------------------------------------------------*/
+/* SHARED CONNECT + REQUEST-BUILD HELPERS                                    */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief Open a TCP connection to the resolved server and block until ready.
+ *
+ * Connects to @p ip : TIKU_KITS_NET_HTTP_PORT from @p src_port, polling the
+ * SLIP link until the 3-way handshake completes.  Shared by both trust models;
+ * the cert path also uses it to reopen a fresh 4-tuple for the TLS 1.2
+ * fallback.  Returns the connection, or NULL on abort/timeout (the socket is
+ * aborted before returning NULL so no slot leaks).
+ */
+static tiku_kits_net_tcp_conn_t *
+http_tcp_open(const uint8_t ip[4], uint16_t src_port)
+{
+    tiku_kits_net_tcp_conn_t *tcp;
+    uint16_t timeout;
+
+    http_ctx.tcp_event = 0;
+    tcp = tiku_kits_net_tcp_connect(
+        ip, TIKU_KITS_NET_HTTP_PORT, src_port,
+        http_tcp_recv_cb, http_tcp_event_cb);
+    if (tcp == NULL) {
+        return NULL;
+    }
+
+    for (timeout = 0;
+         timeout < TIKU_KITS_NET_HTTP_TIMEOUT;
+         timeout++) {
+        http_net_poll();
+        if (http_ctx.tcp_event
+            == TIKU_KITS_NET_TCP_EVT_CONNECTED) {
+            return tcp;
+        }
+        if (http_ctx.tcp_event
+            == TIKU_KITS_NET_TCP_EVT_ABORTED) {
+            break;
+        }
+    }
+    tiku_kits_net_tcp_abort(tcp);
+    return NULL;
+}
+
+/**
+ * @brief Format the request line + headers into the FRAM request buffer.
+ *
+ * Wraps the TLS-agnostic request builder in an MPU-unlock window (http_req_buf
+ * is in NVM on FRAM parts).  Returns the byte count; a value >= the buffer
+ * size means the request was truncated and the caller must fail.
+ */
+static uint16_t
+http_build_reqbuf(const char *method, const char *host,
+                  const char *path, const char *api_key,
+                  uint16_t body_len)
+{
+    uint16_t req_len;
+    uint16_t saved = tiku_mpu_unlock_nvm();
+    req_len = tiku_kits_net_http_build_request(
+        method, host, path, api_key, body_len,
+        http_req_buf, TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
+    tiku_mpu_lock_nvm(saved);
+    return req_len;
+}
+
+/*---------------------------------------------------------------------------*/
 /* TLS SEND HELPER                                                           */
 /*---------------------------------------------------------------------------*/
 
@@ -438,11 +524,334 @@ http_tls_send_all(const uint8_t *data, uint16_t len)
 }
 
 /*---------------------------------------------------------------------------*/
-/* CORE HTTP EXECUTE (shared by POST and GET)                                */
+/* PSK TRUST MODEL (event-driven, over the TCP callbacks)                    */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief Drive the pre-shared-key TLS transport to completion.
+ *
+ * On entry http_ctx.tcp is CONNECTED, the request is formatted in
+ * http_req_buf[0..req_len), and http_ctx.parser is initialised.  Runs the
+ * PSK handshake (which takes over the TCP callbacks), sends the request and
+ * optional body, then reads + parses the response.  Closes the TLS layer on
+ * success; leaves the TCP socket for the caller to tear down.  Returns
+ * TIKU_KITS_NET_OK or a negative HTTP error.
+ */
+static int8_t
+http_drive_psk(uint16_t req_len, const uint8_t *body,
+               uint16_t body_len)
+{
+    uint16_t timeout;
+    uint16_t n;
+    int8_t rc;
+
+    /* Handshake (PSK) -- non-blocking; advanced by polling the link. */
+    http_ctx.tls_event = 0;
+    http_ctx.tls = tiku_kits_crypto_tls_connect(
+        http_ctx.tcp, http_tls_recv_cb, http_tls_event_cb);
+    if (http_ctx.tls == NULL) {
+        return TIKU_KITS_NET_ERR_HTTP_TLS;
+    }
+
+    for (timeout = 0;
+         timeout < TIKU_KITS_NET_HTTP_TIMEOUT;
+         timeout++) {
+        http_net_poll();
+        if (http_ctx.tls_event
+            == TIKU_KITS_CRYPTO_TLS_EVT_CONNECTED) {
+            break;
+        }
+        if (http_ctx.tls_event
+            == TIKU_KITS_CRYPTO_TLS_EVT_ERROR) {
+            return TIKU_KITS_NET_ERR_HTTP_TLS;
+        }
+    }
+    if (http_ctx.tls_event
+        != TIKU_KITS_CRYPTO_TLS_EVT_CONNECTED) {
+        return TIKU_KITS_NET_ERR_HTTP_TLS;
+    }
+
+    /* Send request headers, then the body (POST only). */
+    rc = http_tls_send_all(http_req_buf, req_len);
+    if (rc != TIKU_KITS_NET_OK) {
+        return rc;
+    }
+    if (body != NULL && body_len > 0) {
+        rc = http_tls_send_all(body, body_len);
+        if (rc != TIKU_KITS_NET_OK) {
+            return rc;
+        }
+    }
+
+    /* Receive + parse.  Reuse http_req_buf as staging; both it and the
+     * caller's response_buf may be in FRAM (.persistent), so unlock the MPU
+     * around tls_read (writes http_req_buf) and parser_feed (writes
+     * response_buf). */
+    for (timeout = 0;
+         timeout < TIKU_KITS_NET_HTTP_TIMEOUT;
+         timeout++) {
+        http_net_poll();
+        {
+            uint16_t saved = tiku_mpu_unlock_nvm();
+            n = tiku_kits_crypto_tls_read(
+                http_ctx.tls, http_req_buf,
+                TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
+            if (n > 0) {
+                tiku_kits_net_http_parser_feed(
+                    &http_ctx.parser, http_req_buf, n);
+            }
+            tiku_mpu_lock_nvm(saved);
+        }
+
+        /* Connection closed: drain remaining buffered data. */
+        if (http_ctx.tls_event
+                == TIKU_KITS_CRYPTO_TLS_EVT_CLOSED
+            || http_ctx.tls_event
+                == TIKU_KITS_CRYPTO_TLS_EVT_ERROR) {
+            do {
+                uint16_t saved = tiku_mpu_unlock_nvm();
+                n = tiku_kits_crypto_tls_read(
+                    http_ctx.tls, http_req_buf,
+                    TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
+                if (n > 0) {
+                    tiku_kits_net_http_parser_feed(
+                        &http_ctx.parser, http_req_buf, n);
+                }
+                tiku_mpu_lock_nvm(saved);
+            } while (n > 0);
+            break;
+        }
+    }
+
+    tiku_kits_crypto_tls_close(http_ctx.tls);
+    return TIKU_KITS_NET_OK;
+}
+
+/*---------------------------------------------------------------------------*/
+/* CERT TRUST MODEL (public web, over the cert clients' io vtable)           */
+/*---------------------------------------------------------------------------*/
+
+#if TIKU_KITS_NET_HTTP_CERT_ENABLE
+
+/* Certificate connection state + a small SRAM staging buffer for decrypted
+ * response bytes.  Kept module-static (off the caller's stack): the heavy
+ * TLS record buffers live inside the tls13/tls12 clients themselves. */
+static tiku_kits_crypto_tls13_conn_t http_tls13;
+static tiku_kits_crypto_tls12_conn_t http_tls12;
+static uint8_t http_cert_rx[TIKU_KITS_NET_HTTP_CERT_RX_STAGING];
+
+#define HTTP_CERT_DEADLINE()                                        \
+    ((tiku_clock_time_t)(tiku_clock_time() +                        \
+        (tiku_clock_time_t)(TIKU_KITS_NET_HTTP_CERT_TIMEOUT_SEC     \
+                            * TIKU_CLOCK_SECOND)))
+#define HTTP_CERT_EXPIRED(dl)  (!TIKU_CLOCK_LT(tiku_clock_time(), (dl)))
+
+/**
+ * @brief One cooperative-blocking pump step for the cert handshake/transfer.
+ *
+ * Delivers inbound IP frames every call and advances the TCP timers at ~8 Hz
+ * (a tight loop calling tcp_periodic every iteration would burn through the
+ * connect/retransmit timeouts).  Kicks the watchdog so a legitimately slow
+ * public-web handshake survives while a genuine hang still trips the WDT.
+ */
+static void
+http_cert_pump(void)
+{
+    static tiku_clock_time_t last_tcp;
+    tiku_clock_time_t now = tiku_clock_time();
+    tiku_watchdog_kick();
+    http_net_poll();
+    if ((tiku_clock_time_t)(now - last_tcp)
+        >= (tiku_clock_time_t)(TIKU_CLOCK_SECOND / 8)) {
+        last_tcp = now;
+        tiku_kits_net_tcp_periodic();
+    }
+}
+
+/**
+ * @brief io.send -- transmit @p len bytes over TCP, pumping between segments.
+ *
+ * Chunks by the negotiated MSS (tcp_send rejects data_len > snd_mss) and gives
+ * up at the deadline.  Returns bytes sent, or < 0 on timeout.
+ */
+static int
+http_cert_send(void *ctx, const uint8_t *buf, size_t len)
+{
+    tiku_kits_net_tcp_conn_t *c = ctx;
+    size_t off = 0;
+    tiku_clock_time_t dl = HTTP_CERT_DEADLINE();
+
+    while (off < len) {
+        uint16_t mss = c->snd_mss ? c->snd_mss : TIKU_KITS_NET_TCP_MSS;
+        size_t chunk = len - off;
+        if (chunk > mss) {
+            chunk = mss;
+        }
+        if (tiku_kits_net_tcp_send(c, buf + off, (uint16_t)chunk)
+            == TIKU_KITS_NET_OK) {
+            off += chunk;
+        }
+        http_cert_pump();
+        if (HTTP_CERT_EXPIRED(dl)) {
+            return -1;
+        }
+    }
+    return (int)len;
+}
+
+/**
+ * @brief io.recv -- block (pumping) until data arrives, EOF, or the deadline.
+ *
+ * Returns bytes read, or < 0 on peer RST / timeout.
+ */
+static int
+http_cert_recv(void *ctx, uint8_t *buf, size_t len)
+{
+    tiku_kits_net_tcp_conn_t *c = ctx;
+    uint16_t want = (uint16_t)(len > 0xFFFFu ? 0xFFFFu : len);
+    tiku_clock_time_t dl = HTTP_CERT_DEADLINE();
+
+    for (;;) {
+        uint16_t got = tiku_kits_net_tcp_read(c, buf, want);
+        if (got > 0) {
+            return (int)got;
+        }
+        if (http_ctx.tcp_event == TIKU_KITS_NET_TCP_EVT_ABORTED) {
+            return -1;
+        }
+        if (http_ctx.tcp_event == TIKU_KITS_NET_TCP_EVT_CLOSED) {
+            got = tiku_kits_net_tcp_read(c, buf, want);
+            return got > 0 ? (int)got : -1;
+        }
+        http_cert_pump();
+        if (HTTP_CERT_EXPIRED(dl)) {
+            return -1;
+        }
+    }
+}
+
+/*
+ * Kit-side plumbing that lets the kit's own http_get()/http_post() reuse the
+ * shared engine below: a sink that streams decrypted bytes into the response
+ * parser, and a reconnect that reopens the kit's transport for the fallback.
+ */
+
+/* Sink: feed decrypted bytes to the parser (which caps at body_max itself, so
+ * we always keep reading).  Unlock the MPU around the feed -- response_buf may
+ * be in FRAM (.persistent). */
+static uint8_t
+http_parser_sink(void *ctx, const uint8_t *data, uint16_t len)
+{
+    tiku_kits_net_http_parser_t *p = ctx;
+    uint16_t saved = tiku_mpu_unlock_nvm();
+    tiku_kits_net_http_parser_feed(p, data, len);
+    tiku_mpu_lock_nvm(saved);
+    return 1;
+}
+
+/* Reconnect for the TLS 1.2 fallback: close the old socket, reopen a fresh
+ * 4-tuple.  @p rc_ctx is the resolved server IP (uint8_t[4]). */
+static void *
+http_kit_reconnect(void *rc_ctx, void *old_ctx)
+{
+    tiku_kits_net_tcp_close((tiku_kits_net_tcp_conn_t *)old_ctx);
+    return http_tcp_open((const uint8_t *)rc_ctx,
+                         (uint16_t)(TIKU_KITS_NET_HTTP_LOCAL_PORT + 1));
+}
+
+/*---------------------------------------------------------------------------*/
+/* SHARED CERTIFICATE HTTPS ENGINE (transport-injected; declared in header)  */
+/*---------------------------------------------------------------------------*/
+
+int8_t
+tiku_kits_net_http_cert_exchange(
+    tiku_kits_crypto_tls13_io_t *io,
+    tiku_kits_net_http_reconnect_t reconnect,
+    void *reconnect_ctx,
+    const tiku_kits_net_http_tls_t *tls,
+    const char *host,
+    const uint8_t *req,
+    uint16_t req_len,
+    const uint8_t *body,
+    uint16_t body_len,
+    tiku_kits_net_http_sink_t sink,
+    void *sink_ctx)
+{
+    int n;
+    uint8_t use12 = 0;
+
+    if (io == NULL || tls == NULL || tls->rng == NULL) {
+        return TIKU_KITS_NET_ERR_HTTP_TLS;   /* need transport + a CSPRNG */
+    }
+
+    /* TLS 1.3 handshake over the caller's already-connected transport. */
+    if (tiku_kits_crypto_tls13_connect(
+            io, tls->rng, host, tls->roots, tls->nroots,
+            tls->now_unix, &http_tls13) != 0) {
+        /* 1.3 failed (ServerHello consumed): reopen and try TLS 1.2.  The
+         * reconnect callback owns closing the spent socket; it returns the
+         * fresh one (or NULL).  Socket ownership after this call:
+         *   - no reconnect  -> io->ctx unchanged (still open) -> caller frees
+         *   - reconnect NULL -> old already freed, io->ctx = NULL -> caller
+         *                       must not double-free (it guards on NULL)
+         *   - reconnect ok   -> io->ctx = fresh socket -> caller frees it */
+        if (reconnect == NULL) {
+            return TIKU_KITS_NET_ERR_HTTP_TLS;
+        }
+        io->ctx = reconnect(reconnect_ctx, io->ctx);
+        if (io->ctx == NULL) {
+            return TIKU_KITS_NET_ERR_HTTP_TCP;
+        }
+        if (tiku_kits_crypto_tls12_connect(
+                io, tls->rng, host, tls->roots, tls->nroots,
+                tls->now_unix, &http_tls12) != 0) {
+            return TIKU_KITS_NET_ERR_HTTP_TLS;
+        }
+        use12 = 1;
+    }
+
+    /* Send request headers, then the body (if any) as a second record. */
+    n = use12
+        ? tiku_kits_crypto_tls12_write(&http_tls12, req, req_len)
+        : tiku_kits_crypto_tls13_write(&http_tls13, req, req_len);
+    if (n >= 0 && body != NULL && body_len > 0) {
+        n = use12
+            ? tiku_kits_crypto_tls12_write(&http_tls12, body, body_len)
+            : tiku_kits_crypto_tls13_write(&http_tls13, body, body_len);
+    }
+    if (n < 0) {
+        return TIKU_KITS_NET_ERR_HTTP_TLS;
+    }
+
+    /* Read + decrypt into SRAM staging (so the net pump inside tls*_read never
+     * runs under an MPU window), handing each chunk to the caller's sink.
+     * tls*_read returns 0 at close, < 0 on error. */
+    for (;;) {
+        n = use12
+            ? tiku_kits_crypto_tls12_read(&http_tls12, http_cert_rx,
+                                          sizeof http_cert_rx)
+            : tiku_kits_crypto_tls13_read(&http_tls13, http_cert_rx,
+                                          sizeof http_cert_rx);
+        if (n <= 0) {
+            break;
+        }
+        if (sink != NULL && !sink(sink_ctx, http_cert_rx, (uint16_t)n)) {
+            break;   /* sink is full */
+        }
+    }
+
+    return TIKU_KITS_NET_OK;
+}
+
+#endif /* TIKU_KITS_NET_HTTP_CERT_ENABLE */
+
+/*---------------------------------------------------------------------------*/
+/* CORE HTTP EXECUTE (shared by POST and GET, either trust model)            */
 /*---------------------------------------------------------------------------*/
 
 static int8_t
 http_execute(
+    const tiku_kits_net_http_tls_t *tls,
     const char *method,
     const char *host,
     const char *path,
@@ -453,26 +862,33 @@ http_execute(
     uint16_t response_max,
     uint16_t *response_len)
 {
+    tiku_kits_net_http_trust_t trust =
+        (tls != NULL) ? tls->trust : TIKU_KITS_NET_HTTP_PSK;
     uint16_t timeout;
     uint8_t ip[4];
     uint16_t req_len;
-    uint16_t n;
     int8_t rc;
 
+#if !TIKU_KITS_NET_HTTP_CERT_ENABLE
+    /* Fail fast (before any network work) if the caller asks for certificate
+     * trust on a build without the cert clients linked. */
+    if (trust == TIKU_KITS_NET_HTTP_CERT) {
+        return TIKU_KITS_NET_ERR_HTTP_NOSUP;
+    }
+#endif
+
     /*---------------------------------------------------------------*/
-    /* 1. DNS resolution                                             */
+    /* 1. DNS resolution (shared)                                    */
     /*---------------------------------------------------------------*/
     rc = tiku_kits_net_dns_resolve(host);
     if (rc != TIKU_KITS_NET_OK) {
         return TIKU_KITS_NET_ERR_HTTP_DNS;
     }
-
     for (timeout = 0;
          timeout < TIKU_KITS_NET_HTTP_TIMEOUT;
          timeout++) {
         http_net_poll();
         tiku_kits_net_dns_poll();
-
         if (tiku_kits_net_dns_get_state()
             == TIKU_KITS_NET_DNS_STATE_DONE) {
             break;
@@ -490,172 +906,73 @@ http_execute(
     tiku_kits_net_dns_get_addr(ip);
 
     /*---------------------------------------------------------------*/
-    /* 2. TCP connect                                                */
+    /* 2. TCP connect (shared)                                       */
     /*---------------------------------------------------------------*/
-    http_ctx.tcp_event = 0;
-    http_ctx.tcp = tiku_kits_net_tcp_connect(
-        ip,
-        TIKU_KITS_NET_HTTP_PORT,
-        TIKU_KITS_NET_HTTP_LOCAL_PORT,
-        http_tcp_recv_cb,
-        http_tcp_event_cb);
-
+    http_ctx.tcp = http_tcp_open(ip, TIKU_KITS_NET_HTTP_LOCAL_PORT);
     if (http_ctx.tcp == NULL) {
         return TIKU_KITS_NET_ERR_HTTP_TCP;
     }
 
-    for (timeout = 0;
-         timeout < TIKU_KITS_NET_HTTP_TIMEOUT;
-         timeout++) {
-        http_net_poll();
-        if (http_ctx.tcp_event
-            == TIKU_KITS_NET_TCP_EVT_CONNECTED) {
-            break;
-        }
-        if (http_ctx.tcp_event
-            == TIKU_KITS_NET_TCP_EVT_ABORTED) {
-            return TIKU_KITS_NET_ERR_HTTP_TCP;
-        }
-    }
-    if (http_ctx.tcp_event
-        != TIKU_KITS_NET_TCP_EVT_CONNECTED) {
-        tiku_kits_net_tcp_abort(http_ctx.tcp);
-        return TIKU_KITS_NET_ERR_HTTP_TCP;
-    }
-
     /*---------------------------------------------------------------*/
-    /* 3. TLS handshake                                              */
+    /* 3. Build request into the FRAM buffer (shared, TLS-agnostic)  */
     /*---------------------------------------------------------------*/
-    http_ctx.tls_event = 0;
-    http_ctx.tls = tiku_kits_crypto_tls_connect(
-        http_ctx.tcp,
-        http_tls_recv_cb,
-        http_tls_event_cb);
-
-    if (http_ctx.tls == NULL) {
-        tiku_kits_net_tcp_close(http_ctx.tcp);
-        return TIKU_KITS_NET_ERR_HTTP_TLS;
-    }
-
-    for (timeout = 0;
-         timeout < TIKU_KITS_NET_HTTP_TIMEOUT;
-         timeout++) {
-        http_net_poll();
-        if (http_ctx.tls_event
-            == TIKU_KITS_CRYPTO_TLS_EVT_CONNECTED) {
-            break;
-        }
-        if (http_ctx.tls_event
-            == TIKU_KITS_CRYPTO_TLS_EVT_ERROR) {
-            tiku_kits_net_tcp_abort(http_ctx.tcp);
-            return TIKU_KITS_NET_ERR_HTTP_TLS;
-        }
-    }
-    if (http_ctx.tls_event
-        != TIKU_KITS_CRYPTO_TLS_EVT_CONNECTED) {
-        tiku_kits_net_tcp_abort(http_ctx.tcp);
-        return TIKU_KITS_NET_ERR_HTTP_TLS;
-    }
-
-    /*---------------------------------------------------------------*/
-    /* 4. Build and send HTTP request                                */
-    /*---------------------------------------------------------------*/
-    {
-        uint16_t saved = tiku_mpu_unlock_nvm();
-        req_len = tiku_kits_net_http_build_request(
-            method, host, path, api_key, body_len,
-            http_req_buf,
-            TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
-        tiku_mpu_lock_nvm(saved);
-    }
-
+    req_len = http_build_reqbuf(method, host, path, api_key, body_len);
     if (req_len >= TIKU_KITS_NET_HTTP_REQ_BUF_SIZE) {
-        tiku_kits_crypto_tls_close(http_ctx.tls);
         tiku_kits_net_tcp_close(http_ctx.tcp);
         return TIKU_KITS_NET_ERR_OVERFLOW;
     }
 
-    rc = http_tls_send_all(http_req_buf, req_len);
-    if (rc != TIKU_KITS_NET_OK) {
-        tiku_kits_crypto_tls_close(http_ctx.tls);
-        tiku_kits_net_tcp_close(http_ctx.tcp);
-        return rc;
-    }
-
-    /* Send body (POST only) */
-    if (body != NULL && body_len > 0) {
-        rc = http_tls_send_all(body, body_len);
-        if (rc != TIKU_KITS_NET_OK) {
-            tiku_kits_crypto_tls_close(http_ctx.tls);
-            tiku_kits_net_tcp_close(http_ctx.tcp);
-            return rc;
-        }
-    }
-
     /*---------------------------------------------------------------*/
-    /* 5. Receive and parse response                                 */
+    /* 4. Response parser (shared)                                   */
     /*---------------------------------------------------------------*/
     tiku_kits_net_http_parser_init(
         &http_ctx.parser, response_buf, response_max);
 
-    for (timeout = 0;
-         timeout < TIKU_KITS_NET_HTTP_TIMEOUT;
-         timeout++) {
-        http_net_poll();
-
-        /* Read decrypted data (reuse req_buf as staging).
-         * Both http_req_buf and the caller's response_buf may
-         * be in FRAM (.persistent), so MPU must be unlocked
-         * for tls_read (writes to http_req_buf) and
-         * parser_feed (writes to response_buf). */
-        {
-            uint16_t saved = tiku_mpu_unlock_nvm();
-            n = tiku_kits_crypto_tls_read(
-                http_ctx.tls, http_req_buf,
-                TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
-
-            if (n > 0) {
-                tiku_kits_net_http_parser_feed(
-                    &http_ctx.parser, http_req_buf, n);
-            }
-            tiku_mpu_lock_nvm(saved);
-        }
-
-        /* Connection closed: read remaining buffered data */
-        if (http_ctx.tls_event
-                == TIKU_KITS_CRYPTO_TLS_EVT_CLOSED
-            || http_ctx.tls_event
-                == TIKU_KITS_CRYPTO_TLS_EVT_ERROR) {
-            do {
-                uint16_t saved = tiku_mpu_unlock_nvm();
-                n = tiku_kits_crypto_tls_read(
-                    http_ctx.tls, http_req_buf,
-                    TIKU_KITS_NET_HTTP_REQ_BUF_SIZE);
-                if (n > 0) {
-                    tiku_kits_net_http_parser_feed(
-                        &http_ctx.parser,
-                        http_req_buf, n);
-                }
-                tiku_mpu_lock_nvm(saved);
-            } while (n > 0);
-            break;
-        }
+    /*---------------------------------------------------------------*/
+    /* 5. Drive the selected trust model's TLS transport             */
+    /*---------------------------------------------------------------*/
+    if (trust == TIKU_KITS_NET_HTTP_CERT) {
+#if TIKU_KITS_NET_HTTP_CERT_ENABLE
+        /* Drive the shared engine over the kit's own SLIP transport: io.send/
+         * recv pump the link, http_kit_reconnect reopens for the 1.2 fallback,
+         * and the parser sink streams the body into response_buf. */
+        tiku_kits_crypto_tls13_io_t io;
+        io.send    = http_cert_send;
+        io.recv    = http_cert_recv;
+        io.ctx     = http_ctx.tcp;
+        io.offload = tls->offload;   /* NULL -> heavy crypto runs inline */
+        rc = tiku_kits_net_http_cert_exchange(
+            &io, http_kit_reconnect, ip, tls, host,
+            http_req_buf, req_len, body, body_len,
+            http_parser_sink, &http_ctx.parser);
+        http_ctx.tcp = io.ctx;       /* engine may have reconnected */
+#else
+        rc = TIKU_KITS_NET_ERR_HTTP_NOSUP;
+#endif
+    } else {
+        rc = http_drive_psk(req_len, body, body_len);
     }
 
     /*---------------------------------------------------------------*/
-    /* 6. Cleanup                                                    */
+    /* 6. Tear down TCP: graceful close on success, abort on failure */
     /*---------------------------------------------------------------*/
-    tiku_kits_crypto_tls_close(http_ctx.tls);
-    tiku_kits_net_tcp_close(http_ctx.tcp);
+    if (http_ctx.tcp != NULL) {
+        if (rc == TIKU_KITS_NET_OK) {
+            tiku_kits_net_tcp_close(http_ctx.tcp);
+        } else {
+            tiku_kits_net_tcp_abort(http_ctx.tcp);
+        }
+    }
+    if (rc != TIKU_KITS_NET_OK) {
+        return rc;
+    }
 
     if (response_len != NULL) {
         *response_len = http_ctx.parser.body_len;
     }
-
     if (http_ctx.parser.status_code != 200) {
         return TIKU_KITS_NET_ERR_HTTP_STATUS;
     }
-
     return TIKU_KITS_NET_OK;
 }
 
@@ -672,6 +989,7 @@ http_execute(
  */
 int8_t
 tiku_kits_net_http_post(
+    const tiku_kits_net_http_tls_t *tls,
     const char *host,
     const char *path,
     const char *api_key,
@@ -686,7 +1004,7 @@ tiku_kits_net_http_post(
         return TIKU_KITS_NET_ERR_NULL;
     }
     return http_execute(
-        "POST", host, path, api_key,
+        tls, "POST", host, path, api_key,
         json_body, body_len,
         response_buf, response_max, response_len);
 }
@@ -699,6 +1017,7 @@ tiku_kits_net_http_post(
  */
 int8_t
 tiku_kits_net_http_get(
+    const tiku_kits_net_http_tls_t *tls,
     const char *host,
     const char *path,
     const char *api_key,
@@ -711,7 +1030,7 @@ tiku_kits_net_http_get(
         return TIKU_KITS_NET_ERR_NULL;
     }
     return http_execute(
-        "GET", host, path, api_key,
+        tls, "GET", host, path, api_key,
         NULL, 0,
         response_buf, response_max, response_len);
 }

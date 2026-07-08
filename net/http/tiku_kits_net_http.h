@@ -10,16 +10,20 @@
  * supported.  No chunked encoding, redirects, cookies, gzip,
  * or keep-alive.
  *
- * TLS note: http_get()/http_post() below currently drive the
- * PRE-SHARED-KEY TLS client (net/tls/psk), so they reach only
- * PSK peers -- NOT the public web.  This is NOT the only TLS in
- * the tree: certificate-based TLS 1.3 and 1.2 clients live in
- * net/tls/{tls13,tls12} and validate real chains against a root
- * store (the shell/BASIC HTTPGET$ path uses them today).  Routing
- * this client over the same io vtable those clients define -- so
- * http_get() can carry either trust model as a parameter -- is
- * the planned unification; the request builder and response parser
- * below are already TLS-agnostic and reusable across both.
+ * TLS trust model: http_get()/http_post() take a
+ * tiku_kits_net_http_tls_t that selects one of two trust models for
+ * the connection, so a single entry point reaches either a private
+ * peer or the public web:
+ *   - PSK  -- the pre-shared-key TLS client (net/tls/psk); reaches
+ *             only peers that share the key (your own gateway/broker).
+ *   - CERT -- the certificate-based TLS 1.3/1.2 clients
+ *             (net/tls/{tls13,tls12}); validate the server chain
+ *             against a caller-supplied X.509 root store, reaching
+ *             arbitrary HTTPS servers.  Requires the kit built with
+ *             the cert clients (HAS_TLS => TIKU_KITS_NET_HTTP_CERT_ENABLE).
+ * Both models share the request builder and response parser below
+ * (they are TLS-agnostic) and drive TCP through the same io vtable
+ * the cert clients define.  A NULL descriptor selects PSK.
  *
  * Architecture:
  *   - Request builder formats headers into a caller-supplied
@@ -33,12 +37,17 @@
  *     header assembly and doubles as TLS read staging after
  *     the request is sent.
  *
- * Usage:
+ * Usage (public-web POST to the Anthropic API over certificate TLS):
  *   @code
+ *     static const tiku_kits_net_http_tls_t tls = {
+ *         .trust = TIKU_KITS_NET_HTTP_CERT,
+ *         .roots = my_roots, .nroots = MY_NROOTS,
+ *         .rng   = my_csprng,          // platform CSPRNG
+ *     };
  *     uint8_t resp[512];
  *     uint16_t resp_len;
  *     int8_t rc = tiku_kits_net_http_post(
- *         "api.anthropic.com", "/v1/messages",
+ *         &tls, "api.anthropic.com", "/v1/messages",
  *         "sk-ant-...", json, json_len,
  *         resp, sizeof(resp), &resp_len);
  *   @endcode
@@ -67,7 +76,9 @@
 /*---------------------------------------------------------------------------*/
 
 #include "../tiku_kits_net.h"
+#include "../tls/x509/tiku_kits_crypto_x509.h"  /* CERT root store */
 #include <stdint.h>
+#include <stddef.h>
 
 /*---------------------------------------------------------------------------*/
 /* COMPILE GUARD                                                             */
@@ -75,6 +86,15 @@
 
 #ifndef TIKU_KITS_NET_HTTP_ENABLE
 #define TIKU_KITS_NET_HTTP_ENABLE   0
+#endif
+
+/*
+ * CERT trust model needs the certificate clients (net/tls/tls13, tls12) linked.
+ * The Makefile sets this to 1 when HAS_TLS does that.  Default off -> the kit
+ * stays PSK-only and makes no reference to the cert clients.
+ */
+#ifndef TIKU_KITS_NET_HTTP_CERT_ENABLE
+#define TIKU_KITS_NET_HTTP_CERT_ENABLE 0
 #endif
 
 /*---------------------------------------------------------------------------*/
@@ -137,6 +157,9 @@
 
 /** TLS handshake failed. */
 #define TIKU_KITS_NET_ERR_HTTP_TLS      (-14)
+
+/** Requested trust model not compiled in (e.g. CERT without HAS_TLS). */
+#define TIKU_KITS_NET_ERR_HTTP_NOSUP    (-15)
 
 /*---------------------------------------------------------------------------*/
 /* RESPONSE PARSER                                                           */
@@ -242,6 +265,104 @@ uint16_t tiku_kits_net_http_build_request(
     uint16_t buf_max);
 
 /*---------------------------------------------------------------------------*/
+/* TLS TRUST MODEL                                                           */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief Which TLS trust model http_get()/http_post() drive over.
+ */
+typedef enum {
+    TIKU_KITS_NET_HTTP_PSK  = 0,  /**< pre-shared key (own peer)  */
+    TIKU_KITS_NET_HTTP_CERT = 1,  /**< X.509 vs. root store (web) */
+} tiku_kits_net_http_trust_t;
+
+/**
+ * @struct tiku_kits_net_http_tls_t
+ * @brief  Selects and parameterises the TLS trust model for a request.
+ *
+ * PSK  -- uses the key installed with tiku_kits_crypto_tls_set_psk(); the
+ *         cert fields are ignored.  Reaches only peers that share the key.
+ * CERT -- validates the server certificate chain against @roots (X.509),
+ *         drawing handshake randomness from @rng.  Reaches the public web.
+ *         The kit must be built with TIKU_KITS_NET_HTTP_CERT_ENABLE (which
+ *         the Makefile sets when HAS_TLS links the tls13/tls12 clients);
+ *         otherwise a CERT request returns TIKU_KITS_NET_ERR_HTTP_NOSUP.
+ *
+ * A NULL descriptor is treated as PSK (the historical default).
+ */
+typedef struct {
+    tiku_kits_net_http_trust_t trust;
+
+    /* --- CERT mode only (ignored for PSK) --- */
+    const tiku_kits_crypto_x509_root_t *roots;   /**< trusted-root store      */
+    int      nroots;                             /**< entries in @roots       */
+    void   (*rng)(uint8_t *buf, size_t len);     /**< CSPRNG (required, CERT) */
+    uint64_t now_unix;                           /**< Unix secs; 0 = skip     */
+    int    (*offload)(int (*fn)(void *closure),  /**< heavy-crypto offload;   */
+                      void *closure);            /**< NULL = run inline */
+} tiku_kits_net_http_tls_t;
+
+/*---------------------------------------------------------------------------*/
+/* CERTIFICATE HTTPS ENGINE (shared, transport-injected)                     */
+/*---------------------------------------------------------------------------*/
+
+#if TIKU_KITS_NET_HTTP_CERT_ENABLE
+
+#include "../tls/tls13/tiku_kits_crypto_tls13.h"  /* io vtable (CERT) */
+
+/**
+ * @brief Consumer for decrypted response bytes.
+ *
+ * Called with each plaintext chunk as it is decrypted.  Return 1 to keep
+ * reading, 0 to stop (e.g. the output buffer is full).
+ */
+typedef uint8_t (*tiku_kits_net_http_sink_t)(
+    void *ctx, const uint8_t *data, uint16_t len);
+
+/**
+ * @brief Reopen the transport for the TLS 1.2 fallback.
+ *
+ * The failed TLS 1.3 attempt consumes the ServerHello, so 1.2 must run on a
+ * fresh connection.  Close @p old_ctx, open a new socket (a fresh 4-tuple), and
+ * return the new transport handle for io->ctx, or NULL on failure.
+ */
+typedef void *(*tiku_kits_net_http_reconnect_t)(
+    void *reconnect_ctx, void *old_ctx);
+
+/**
+ * @brief Drive certificate-based HTTPS over a caller-supplied transport.
+ *
+ * The shared engine behind the kit's own http_get()/http_post() and any
+ * app-level HTTPS path (e.g. BASIC HTTPGET$).  Over the already-connected
+ * @p io it runs the TLS 1.3 handshake; on failure it calls @p reconnect and
+ * retries with TLS 1.2, validating the chain against @p tls (roots/rng/
+ * now_unix).  It then sends @p req (headers) and @p body (may be NULL), and
+ * reads + decrypts the response, handing every plaintext chunk to @p sink.
+ *
+ * Transport, connect/reopen, and response consumption are all injected, so the
+ * caller keeps its own DNS/connect/pump, request format, and parse policy.
+ * @p io->ctx is updated in place on reconnect; the CALLER owns the final
+ * socket's teardown (io->ctx) and installs the transport's own offload on
+ * io->offload before calling.
+ *
+ * @return TIKU_KITS_NET_OK, or a negative TIKU_KITS_NET_ERR_HTTP_* error.
+ */
+int8_t tiku_kits_net_http_cert_exchange(
+    tiku_kits_crypto_tls13_io_t *io,
+    tiku_kits_net_http_reconnect_t reconnect,
+    void *reconnect_ctx,
+    const tiku_kits_net_http_tls_t *tls,
+    const char *host,
+    const uint8_t *req,
+    uint16_t req_len,
+    const uint8_t *body,
+    uint16_t body_len,
+    tiku_kits_net_http_sink_t sink,
+    void *sink_ctx);
+
+#endif /* TIKU_KITS_NET_HTTP_CERT_ENABLE */
+
+/*---------------------------------------------------------------------------*/
 /* HTTP CLIENT                                                               */
 /*---------------------------------------------------------------------------*/
 
@@ -261,6 +382,7 @@ uint16_t tiku_kits_net_http_build_request(
  * returns TIKU_KITS_NET_ERR_HTTP_STATUS and the caller can
  * retrieve the status code via get_status_code().
  *
+ * @param tls           Trust model (NULL = PSK); CERT reaches the public web
  * @param host          Hostname to connect to
  * @param path          Request path
  * @param api_key       API key (NULL to omit)
@@ -272,6 +394,7 @@ uint16_t tiku_kits_net_http_build_request(
  * @return TIKU_KITS_NET_OK on 200, negative error otherwise
  */
 int8_t tiku_kits_net_http_post(
+    const tiku_kits_net_http_tls_t *tls,
     const char *host,
     const char *path,
     const char *api_key,
@@ -286,6 +409,7 @@ int8_t tiku_kits_net_http_post(
  *
  * Same as http_post but sends a GET request with no body.
  *
+ * @param tls           Trust model (NULL = PSK); CERT reaches the public web
  * @param host          Hostname to connect to
  * @param path          Request path
  * @param api_key       API key (NULL to omit)
@@ -295,6 +419,7 @@ int8_t tiku_kits_net_http_post(
  * @return TIKU_KITS_NET_OK on 200, negative error otherwise
  */
 int8_t tiku_kits_net_http_get(
+    const tiku_kits_net_http_tls_t *tls,
     const char *host,
     const char *path,
     const char *api_key,
