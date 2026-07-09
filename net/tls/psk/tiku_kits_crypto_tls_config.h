@@ -68,6 +68,11 @@
 #include <arch/arm-rp2350/tiku_trng_arch.h>
 #elif defined(PLATFORM_AMBIQ)
 #include <arch/ambiq/tiku_trng_arch.h>
+#elif defined(PLATFORM_MSP430)
+/* No hardware TRNG: a SHA-256-conditioned software entropy source
+ * (oscillator-ratio jitter + ADC thermal noise). Same read_bytes()
+ * contract, so the adapter below is identical. */
+#include <arch/msp430/tiku_trng_arch.h>
 #else
 #error "TIKU_KITS_CRYPTO_TLS_RNG_FILL must be defined to a function " \
        "with signature void f(uint8_t *buf, uint8_t len) that provides " \
