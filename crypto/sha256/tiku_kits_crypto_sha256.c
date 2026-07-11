@@ -30,6 +30,9 @@
 /*---------------------------------------------------------------------------*/
 
 #include "tiku_kits_crypto_sha256.h"
+#if defined(PLATFORM_NORDIC)
+#include <arch/nordic/tiku_crypto_arch.h>   /* CRACEN offload + mode knob */
+#endif
 #include <string.h>
 
 /*---------------------------------------------------------------------------*/
@@ -350,6 +353,18 @@ int tiku_kits_crypto_sha256_hash(
     if (data == NULL || digest == NULL) {
         return TIKU_KITS_CRYPTO_ERR_NULL;
     }
+
+#if defined(PLATFORM_NORDIC)
+    /* CRACEN CryptoMaster offload (75x measured): the runtime mode knob
+     * selects hardware-with-software-fallback (auto) or software-only; the
+     * software body below stays the reference implementation and the
+     * fallback for oversize inputs or an engine error. */
+    if (tiku_crypto_hw_mode() == TIKU_CRYPTO_HW_MODE_AUTO &&
+        tiku_crypto_arch_sha256(data, len, digest) == 0) {
+        return TIKU_KITS_CRYPTO_OK;
+    }
+    tiku_crypto_hw_count_sw();
+#endif
 
     rc = tiku_kits_crypto_sha256_init(&ctx);
     if (rc != TIKU_KITS_CRYPTO_OK) {
