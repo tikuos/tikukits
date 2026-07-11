@@ -43,6 +43,8 @@
 #include <arch/arm-rp2350/tiku_timer_arch.h>
 #elif defined(PLATFORM_AMBIQ)
 #include <arch/ambiq/tiku_timer_arch.h>
+#elif defined(PLATFORM_NORDIC)
+#include <arch/nordic/tiku_timer_arch.h>
 #else
 #error "tikukits/net/ipv4/dns: unsupported platform"
 #endif

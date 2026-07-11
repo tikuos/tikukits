@@ -258,7 +258,12 @@
  * `.uninit` and skips the NVM program entirely.
  */
 #ifndef TIKU_KITS_NET_TCP_BUF_PERSIST
-#if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350)
+#if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350) || \
+    defined(PLATFORM_NORDIC)
+/* Nordic joins the .bss group for the inverse reason: its .persistent is
+ * REAL RRAM behind the RRAMC WEN gate (not a mirror), so a churning TCP
+ * pool there is NVM wear plus a precise bus fault on any unbracketed
+ * store -- and with 256 KB of SRAM there is no reason to take either. */
 #define TIKU_KITS_NET_TCP_BUF_PERSIST   0
 #else
 #define TIKU_KITS_NET_TCP_BUF_PERSIST   1
@@ -274,12 +279,13 @@
 
 /*
  * Resource sizing -- keyed on the platform, not the placement knob.  Cortex-M
- * parts (Ambiq, RP2350) have ample SRAM, so we default to roomier limits and
- * a multi-KB shell response (e.g. telnet `help`) fits the TX pool without
- * churn.  MSP430 keeps the lean defaults below.  All sizes stay #ifndef so a
- * build can still override either way.
+ * parts (Ambiq, RP2350, Nordic) have ample SRAM, so we default to roomier
+ * limits and a multi-KB shell response (e.g. telnet `help`) fits the TX pool
+ * without churn.  MSP430 keeps the lean defaults below.  All sizes stay
+ * #ifndef so a build can still override either way.
  */
-#if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350)
+#if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350) || \
+    defined(PLATFORM_NORDIC)
 #ifndef TIKU_KITS_NET_TCP_MAX_CONNS
 #define TIKU_KITS_NET_TCP_MAX_CONNS         4
 #endif

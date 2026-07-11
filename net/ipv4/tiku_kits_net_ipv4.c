@@ -45,6 +45,8 @@
 #include <arch/arm-rp2350/tiku_device_select.h>
 #elif defined(PLATFORM_AMBIQ)
 #include <arch/ambiq/tiku_device_select.h>
+#elif defined(PLATFORM_NORDIC)
+#include <arch/nordic/tiku_device_select.h>
 #else
 #error "tikukits/net/ipv4: unsupported platform"
 #endif

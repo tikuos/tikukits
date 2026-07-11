@@ -318,6 +318,20 @@ tiku_kits_net_http_build_request(
 
 #if TIKU_KITS_NET_HTTP_CERT_ENABLE
 #include "../tls/tls12/tiku_kits_crypto_tls12.h"
+/* TIKU_CLOCK_ARCH_SECOND must be in scope before tiku_clock.h's macros are
+ * used (same explicit routing as ipv4/tiku_kits_net_dns.c -- on Ambiq it
+ * happened to arrive transitively, on Nordic nothing else pulls it in). */
+#if defined(PLATFORM_MSP430)
+#include <arch/msp430/tiku_timer_arch.h>
+#elif defined(PLATFORM_RP2350)
+#include <arch/arm-rp2350/tiku_timer_arch.h>
+#elif defined(PLATFORM_AMBIQ)
+#include <arch/ambiq/tiku_timer_arch.h>
+#elif defined(PLATFORM_NORDIC)
+#include <arch/nordic/tiku_timer_arch.h>
+#else
+#error "tikukits/net/http: unsupported platform"
+#endif
 #include <kernel/timers/tiku_clock.h>
 #include <kernel/cpu/tiku_watchdog.h>
 
