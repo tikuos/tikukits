@@ -76,6 +76,12 @@ typedef struct tiku_kits_crypto_gcm_ctx {
     tiku_kits_crypto_aes128_ctx_t aes;
     /** GHASH subkey H = AES(K, 0^128). */
     uint8_t h[16];
+#if defined(PLATFORM_NORDIC)
+    /** Raw key + size, retained for the CRACEN hardware path (which the
+     *  software round-key schedule cannot reconstruct). */
+    uint8_t key[32];
+    uint8_t key_sz;
+#endif
 } tiku_kits_crypto_gcm_ctx_t;
 
 /*---------------------------------------------------------------------------*/
