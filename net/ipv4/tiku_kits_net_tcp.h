@@ -284,6 +284,18 @@
  * without churn.  MSP430 keeps the lean defaults below.  All sizes stay
  * #ifndef so a build can still override either way.
  */
+#if defined(PLATFORM_NORDIC)
+/* The advertised receive window (rx_free of this buffer) must comfortably
+ * exceed the peer's segment size: the https builds run MTU 576 (MSS 536),
+ * and with this stack's in-order-only reassembly a 512 B window -- SMALLER
+ * than one MSS -- tail-truncates every window-boundary segment, turning an
+ * 11 KB TLS server flight into a chain of peer-RTO retransmit stalls slow
+ * enough that impatient CDNs RST the handshake.  ~4 MSS keeps the flight
+ * streaming. */
+#ifndef TIKU_KITS_NET_TCP_RX_BUF_SIZE
+#define TIKU_KITS_NET_TCP_RX_BUF_SIZE       2048
+#endif
+#endif
 #if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350) || \
     defined(PLATFORM_NORDIC)
 #ifndef TIKU_KITS_NET_TCP_MAX_CONNS
