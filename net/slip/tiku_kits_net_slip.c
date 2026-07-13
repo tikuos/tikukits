@@ -58,6 +58,24 @@
 #endif
 #include <stddef.h>
 
+/* The SLIP wire follows the console. On an RP2350 native-USB console build
+ * the USB CDC port is the only wired serial -- the host tools (tikuconsole,
+ * slmux) connect there and expect SLIP frames on that same port, and the
+ * UART0 pins are typically unwired.  Everywhere else (and in `both` mode,
+ * where USB is a print mirror) SLIP keeps riding the physical UART.  The
+ * CDC getters also pump the polled USB stack as a side effect, so the
+ * APP=net poll loop services enumeration/EP0 for free. */
+#if defined(TIKU_CONSOLE_USB) && !defined(TIKU_CONSOLE_BOTH)
+#include <arch/arm-rp2350/tiku_usb_cdc_arch.h>
+#define SLIP_WIRE_PUTC(c)    tiku_usb_cdc_putc(c)
+#define SLIP_WIRE_RX_READY() tiku_usb_cdc_rx_ready()
+#define SLIP_WIRE_GETC()     tiku_usb_cdc_getc()
+#else
+#define SLIP_WIRE_PUTC(c)    tiku_uart_putc(c)
+#define SLIP_WIRE_RX_READY() tiku_uart_rx_ready()
+#define SLIP_WIRE_GETC()     tiku_uart_getc()
+#endif
+
 /*---------------------------------------------------------------------------*/
 /* RX STATE MACHINE                                                          */
 /*---------------------------------------------------------------------------*/
@@ -107,7 +125,7 @@ tiku_kits_net_slip_init(void)
  *   - NUL (0x00)  ->  ESC (0xDB) + ESC_NUL (0xDE)  [if enabled]
  *
  * A trailing END byte marks the frame boundary.  All bytes are
- * written synchronously via tiku_uart_putc(), so this function
+ * written synchronously via SLIP_WIRE_PUTC(), so this function
  * blocks until the entire frame has been queued to the UART.
  *
  * The NUL escape is a non-standard extension that works around
@@ -126,17 +144,17 @@ tiku_kits_net_slip_send(const uint8_t *pkt, uint16_t len)
     }
 
     /* Leading END flushes any garbage on the line */
-    tiku_uart_putc((char)TIKU_KITS_NET_SLIP_END);
+    SLIP_WIRE_PUTC((char)TIKU_KITS_NET_SLIP_END);
 
     for (i = 0; i < len; i++) {
         switch (pkt[i]) {
         case TIKU_KITS_NET_SLIP_END:
-            tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC);
-            tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC_END);
+            SLIP_WIRE_PUTC((char)TIKU_KITS_NET_SLIP_ESC);
+            SLIP_WIRE_PUTC((char)TIKU_KITS_NET_SLIP_ESC_END);
             break;
         case TIKU_KITS_NET_SLIP_ESC:
-            tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC);
-            tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC_ESC);
+            SLIP_WIRE_PUTC((char)TIKU_KITS_NET_SLIP_ESC);
+            SLIP_WIRE_PUTC((char)TIKU_KITS_NET_SLIP_ESC_ESC);
             break;
 #if TIKU_KITS_NET_SLIP_ESC_NUL_ENABLE
         case 0x00:
@@ -144,18 +162,18 @@ tiku_kits_net_slip_send(const uint8_t *pkt, uint16_t len)
              * backchannel UART trigger a target reset in eZ-FET
              * firmware v31501001.  Escaping NUL prevents this.
              * Disabled when using FT232/slattach (kernel SLIP). */
-            tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC);
-            tiku_uart_putc((char)TIKU_KITS_NET_SLIP_ESC_NUL);
+            SLIP_WIRE_PUTC((char)TIKU_KITS_NET_SLIP_ESC);
+            SLIP_WIRE_PUTC((char)TIKU_KITS_NET_SLIP_ESC_NUL);
             break;
 #endif
         default:
-            tiku_uart_putc((char)pkt[i]);
+            SLIP_WIRE_PUTC((char)pkt[i]);
             break;
         }
     }
 
     /* Trailing END marks the frame boundary */
-    tiku_uart_putc((char)TIKU_KITS_NET_SLIP_END);
+    SLIP_WIRE_PUTC((char)TIKU_KITS_NET_SLIP_END);
 
     return TIKU_KITS_NET_OK;
 }
@@ -194,8 +212,8 @@ tiku_kits_net_slip_poll_rx(uint8_t *buf, uint16_t buf_size, uint16_t *pos)
     int ch;
     uint8_t byte;
 
-    while (tiku_uart_rx_ready()) {
-        ch = tiku_uart_getc();
+    while (SLIP_WIRE_RX_READY()) {
+        ch = SLIP_WIRE_GETC();
         if (ch < 0) {
             break;
         }
