@@ -246,6 +246,8 @@ typedef struct tiku_kits_net_dhcp_lease {
     uint8_t  mask[4];     /**< Subnet mask */
     uint8_t  gateway[4];  /**< Default gateway */
     uint8_t  server[4];   /**< DHCP server IP */
+    uint8_t  dns[4];      /**< DNS resolver (option 6, first entry;
+                               0.0.0.0 when the server sent none) */
     uint32_t lease_sec;   /**< Lease duration (seconds) */
 } tiku_kits_net_dhcp_lease_t;
 

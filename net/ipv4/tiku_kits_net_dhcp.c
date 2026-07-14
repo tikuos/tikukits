@@ -163,6 +163,17 @@ parse_options(const uint8_t *opts, uint16_t opts_len)
             }
             break;
 
+        case TIKU_KITS_NET_DHCP_OPT_DNS:
+            if (len >= 4) {
+                /* First resolver in the list wins; campus/corporate
+                 * networks often block outbound UDP/53 to public
+                 * resolvers, so the lease-provided one is preferred
+                 * over the 8.8.8.8 fallback at query time (see
+                 * tiku_kits_net_dns_default_server). */
+                memcpy(lease.dns, &opts[i + 2], 4);
+            }
+            break;
+
         case TIKU_KITS_NET_DHCP_OPT_SERVER_ID:
             if (len >= 4) {
                 memcpy(lease.server, &opts[i + 2], 4);

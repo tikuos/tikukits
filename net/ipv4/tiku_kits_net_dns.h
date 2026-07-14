@@ -173,6 +173,12 @@ void tiku_kits_net_dns_init(void);
 int8_t tiku_kits_net_dns_set_server(const uint8_t *addr);
 
 /**
+ * @brief Fill @p out with the best default resolver: the DHCP lease's
+ *        DNS server (option 6) when bound and present, else 8.8.8.8.
+ */
+void tiku_kits_net_dns_default_server(uint8_t out[4]);
+
+/**
  * @brief Start a DNS A-record query for @p hostname.
  *
  * Checks the cache first; if a valid entry exists, transitions

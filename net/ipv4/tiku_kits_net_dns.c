@@ -34,6 +34,9 @@
 
 #include "tiku_kits_net_dns.h"
 #include "tiku_kits_net_udp.h"
+#if defined(TIKU_KITS_NET_DHCP_ENABLE) && TIKU_KITS_NET_DHCP_ENABLE
+#include "tiku_kits_net_dhcp.h"   /* lease-provided resolver */
+#endif
 #include "tiku_kits_net_ipv4.h"
 #include <tikukits/net/tiku_kits_net.h>
 #include <kernel/timers/tiku_clock.h>
@@ -600,6 +603,33 @@ int8_t tiku_kits_net_dns_set_server(const uint8_t *addr)
     memcpy(dns_server, addr, 4);
     dns_server_set = 1;
     return TIKU_KITS_NET_OK;
+}
+
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief Pick the best default resolver for this network.
+ *
+ * Prefers the DHCP-lease-provided DNS server (option 6) when a lease
+ * is bound and carried one: campus/corporate networks often block
+ * outbound UDP/53 to public resolvers, so hardcoding 8.8.8.8 made
+ * every hostname lookup fail there.  Falls back to Google public DNS
+ * when there is no lease (SLIP builds, static setups) or the server
+ * sent no option 6.
+ */
+void tiku_kits_net_dns_default_server(uint8_t out[4])
+{
+#if defined(TIKU_KITS_NET_DHCP_ENABLE) && TIKU_KITS_NET_DHCP_ENABLE
+    if (tiku_kits_net_dhcp_get_state() == TIKU_KITS_NET_DHCP_STATE_BOUND) {
+        const tiku_kits_net_dhcp_lease_t *l = tiku_kits_net_dhcp_get_lease();
+        if (l != (const tiku_kits_net_dhcp_lease_t *)0 &&
+            (l->dns[0] | l->dns[1] | l->dns[2] | l->dns[3]) != 0) {
+            memcpy(out, l->dns, 4);
+            return;
+        }
+    }
+#endif
+    out[0] = 8; out[1] = 8; out[2] = 8; out[3] = 8;
 }
 
 /*---------------------------------------------------------------------------*/
