@@ -125,30 +125,39 @@ typedef struct {
 } mqtt_ctx_t;
 
 /*---------------------------------------------------------------------------*/
-/* STATIC DATA -- FRAM-backed buffers                                        */
+/* STATIC DATA -- session buffers (capacity-placed, NOT durability)          */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Every array below is SESSION state: tiku_kits_net_mqtt_init() clears the
+ * credentials/will, and the TX/RX buffers churn per packet.  The placement is
+ * about CAPACITY only -- on MSP430 they spill to .persistent FRAM to conserve
+ * the 8 KB SRAM (the historical home of this kit); every other part has ample
+ * SRAM, and .persistent there is the durable-small budget with real costs
+ * (mirror reprogramming on Ambiq/RP2350, RRAM wear + reserve pressure on
+ * Nordic).  Same pattern as TIKU_KITS_NET_TCP_BUF_ATTR.  Durable *retained*
+ * credentials would be a persist-cell feature, deliberately not this.
+ */
+#ifdef PLATFORM_MSP430
+#define MQTT_BUF_ATTR __attribute__((section(".persistent")))
+#else
+#define MQTT_BUF_ATTR
+#endif
+
 /** TX buffer for building outgoing MQTT packets. */
-static uint8_t mqtt_tx_buf[TIKU_KITS_NET_MQTT_TX_BUF_SIZE]
-    __attribute__((section(".persistent")));
+static MQTT_BUF_ATTR uint8_t mqtt_tx_buf[TIKU_KITS_NET_MQTT_TX_BUF_SIZE];
 
 /** RX buffer for incoming MQTT packet payloads. */
-static uint8_t mqtt_rx_buf[TIKU_KITS_NET_MQTT_RX_BUF_SIZE]
-    __attribute__((section(".persistent")));
+static MQTT_BUF_ATTR uint8_t mqtt_rx_buf[TIKU_KITS_NET_MQTT_RX_BUF_SIZE];
 
-/** Credential storage. */
-static char mqtt_client_id[TIKU_KITS_NET_MQTT_MAX_CLIENT_ID + 1]
-    __attribute__((section(".persistent")));
-static char mqtt_username[TIKU_KITS_NET_MQTT_MAX_USERNAME + 1]
-    __attribute__((section(".persistent")));
-static char mqtt_password[TIKU_KITS_NET_MQTT_MAX_PASSWORD + 1]
-    __attribute__((section(".persistent")));
+/** Credential storage (session-scoped; init() clears). */
+static MQTT_BUF_ATTR char mqtt_client_id[TIKU_KITS_NET_MQTT_MAX_CLIENT_ID + 1];
+static MQTT_BUF_ATTR char mqtt_username[TIKU_KITS_NET_MQTT_MAX_USERNAME + 1];
+static MQTT_BUF_ATTR char mqtt_password[TIKU_KITS_NET_MQTT_MAX_PASSWORD + 1];
 
-/** Will storage. */
-static char mqtt_will_topic[TIKU_KITS_NET_MQTT_MAX_WILL_TOPIC + 1]
-    __attribute__((section(".persistent")));
-static uint8_t mqtt_will_msg[TIKU_KITS_NET_MQTT_MAX_WILL_MSG]
-    __attribute__((section(".persistent")));
+/** Will storage (session-scoped). */
+static MQTT_BUF_ATTR char mqtt_will_topic[TIKU_KITS_NET_MQTT_MAX_WILL_TOPIC + 1];
+static MQTT_BUF_ATTR uint8_t mqtt_will_msg[TIKU_KITS_NET_MQTT_MAX_WILL_MSG];
 
 /*---------------------------------------------------------------------------*/
 /* STATIC DATA -- SRAM (fast-access state)                                   */

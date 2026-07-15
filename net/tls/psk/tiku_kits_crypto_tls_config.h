@@ -107,17 +107,22 @@ tiku_kits_crypto_tls_rng_fill_trng(uint8_t *buf, uint8_t len)
 
 /**
  * Storage attribute for the kit's per-session working buffers (record TX/RX,
- * transcript, key schedule).  On FRAM parts (MSP430) they live in .persistent
- * to conserve scarce SRAM.  On RP2350 they are ephemeral per-handshake and
- * .persistent has only a 4 KB flash backup-sector budget, so default them to
- * plain .bss (ample SRAM).  Override by defining the macro before this header.
+ * transcript, key schedule).  These are EPHEMERAL per-handshake state -- the
+ * placement is about CAPACITY, not durability.  On FRAM parts (MSP430) they
+ * live in .persistent purely to conserve scarce 8 KB SRAM.  Every other part
+ * has ample SRAM, and .persistent there is the durable-small budget with real
+ * costs: RP2350 = 4 KB flash mirror sector; Ambiq = the 64 KB MRAM-mirrored
+ * .uninit, so per-handshake churn reprograms the mirror at every relock (the
+ * handshake-stall amplification); Nordic = the small RRAM reserve + wear.
+ * So: plain .bss everywhere except MSP430.  Override by defining the macro
+ * before this header.
  */
 #ifndef TIKU_KITS_CRYPTO_TLS_BUF_ATTR
-#  if defined(PLATFORM_RP2350)
-#    define TIKU_KITS_CRYPTO_TLS_BUF_ATTR  __attribute__((aligned(2)))
-#  else
+#  if defined(PLATFORM_MSP430)
 #    define TIKU_KITS_CRYPTO_TLS_BUF_ATTR  \
             __attribute__((section(".persistent"), aligned(2)))
+#  else
+#    define TIKU_KITS_CRYPTO_TLS_BUF_ATTR  __attribute__((aligned(2)))
 #  endif
 #endif
 

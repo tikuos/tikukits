@@ -122,7 +122,13 @@ static struct dns_cache_entry dns_cache[TIKU_KITS_NET_DNS_CACHE_SIZE];
  * accommodates longer hostnames or additional answer records that
  * we skip past.
  */
+/* Session buffer: capacity placement only (MSP430 FRAM spill; ample-SRAM
+ * parts stay in .bss -- same pattern as TIKU_KITS_NET_TCP_BUF_ATTR). */
+#ifdef PLATFORM_MSP430
 __attribute__((section(".persistent"), aligned(2)))
+#else
+__attribute__((aligned(2)))
+#endif
 static uint8_t dns_rx_buf[100];
 
 /** Length of data in dns_rx_buf (set by UDP callback). */
