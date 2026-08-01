@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_udp.c - UDP datagram protocol (RFC 768)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements port binding, datagram input with echo service,
  * datagram output with pseudo-header checksum, and the static
  * binding table.  All state is statically allocated.
@@ -14,8 +18,6 @@
  * as ICMP: swap IPs, swap ports, zero the checksum, and call
  * ipv4_output on the same buffer.  This avoids a second buffer
  * copy and keeps RAM cost at zero beyond the 17-byte module state.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/
@@ -59,9 +61,7 @@ static uint8_t in_rx;
 /* UDP PSEUDO-HEADER CHECKSUM                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute the UDP checksum including the IPv4 pseudo-header.
- *
+/*
  * The pseudo-header is a 12-byte virtual prefix constructed from the
  * IPv4 header: source IP (4), destination IP (4), zero (1),
  * protocol (1, always 17), and UDP length (2).  The checksum covers
@@ -70,10 +70,13 @@ static uint8_t in_rx;
  * checksum alone would miss (e.g. a packet delivered to the wrong
  * host due to a bit flip in the destination address that happens
  * to produce a valid IPv4 header checksum).
- *
  * Uses the same ones-complement algorithm as the IPv4 checksum
  * (RFC 1071): accumulate 16-bit words in a 32-bit sum, handle an
  * odd trailing byte, fold carry, and complement.
+ */
+
+/**
+ * @brief Compute the UDP checksum including the IPv4 pseudo-header.
  *
  * @param ip_hdr   Pointer to the IPv4 header (for src/dst IP)
  * @param udp      Pointer to the UDP header
@@ -222,20 +225,21 @@ tiku_kits_net_udp_unbind(uint16_t port)
 /* INPUT                                                                     */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Three validation steps (silent drop on any failure):
+ * 1. At least 8 bytes of UDP data present after the IPv4 header
+ * 2. UDP length field >= 8 and <= actual bytes available
+ * 3. If checksum field != 0, verify via pseudo-header checksum
+ * After validation, the destination port is checked:
+ * - Echo port 7 (if enabled): in-place reply (swap IPs, swap
+ * ports, zero checksum, transmit via ipv4_output)
+ * - Binding table: linear scan for matching dport, invoke
+ * callback with the in_rx guard set
+ * - No match: silently dropped
+ */
+
 /**
  * @brief Validate and dispatch an incoming UDP datagram.
- *
- * Three validation steps (silent drop on any failure):
- *   1. At least 8 bytes of UDP data present after the IPv4 header
- *   2. UDP length field >= 8 and <= actual bytes available
- *   3. If checksum field != 0, verify via pseudo-header checksum
- *
- * After validation, the destination port is checked:
- *   - Echo port 7 (if enabled): in-place reply (swap IPs, swap
- *     ports, zero checksum, transmit via ipv4_output)
- *   - Binding table: linear scan for matching dport, invoke
- *     callback with the in_rx guard set
- *   - No match: silently dropped
  */
 void
 tiku_kits_net_udp_input(uint8_t *buf, uint16_t len, uint16_t ihl_len)
@@ -373,9 +377,7 @@ tiku_kits_net_udp_input(uint8_t *buf, uint16_t len, uint16_t ihl_len)
 /* OUTPUT                                                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Construct and transmit a UDP datagram.
- *
+/*
  * Builds the complete packet (IPv4 header + UDP header + payload)
  * in the shared net_buf obtained from ipv4_get_buf().  The IPv4
  * header is a minimal 20-byte header (IHL=5, no options).  The
@@ -383,9 +385,12 @@ tiku_kits_net_udp_input(uint8_t *buf, uint16_t len, uint16_t ihl_len)
  * per RFC 768; if the result is 0 it is transmitted as 0xFFFF
  * (RFC 768 requirement to distinguish "no checksum" from "valid
  * checksum that happens to be zero").
- *
  * ipv4_output() handles the IPv4 header checksum recomputation
  * and link-layer transmission.
+ */
+
+/**
+ * @brief Construct and transmit a UDP datagram.
  */
 int8_t
 tiku_kits_net_udp_send(const uint8_t *dst_addr,

@@ -50,13 +50,15 @@ static int emit_raw(tiku_kits_codec_json_writer_t *w,
     return TIKU_KITS_CODEC_OK;
 }
 
-/**
- * @brief Emit a comma separator if needed at the current depth.
- *
+/*
  * After the first value at a given nesting level, every subsequent
  * value must be preceded by a comma.  This function checks the
  * need_comma flag and emits one if set, then sets the flag for the
  * next value.
+ */
+
+/**
+ * @brief Emit a comma separator if needed at the current depth.
  */
 static int emit_separator(tiku_kits_codec_json_writer_t *w)
 {

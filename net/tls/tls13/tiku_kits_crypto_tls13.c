@@ -6,13 +6,15 @@
  *
  * tiku_kits_crypto_tls13.c - TLS 1.3 client (ECDHE + X.509 certificate)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Single-connection TLS 1.3 client: X25519 key exchange, TLS_AES_128_GCM_
  * SHA256, server authentication via the Certificate + CertificateVerify
  * messages validated against a trust store.  Reuses the x25519, hkdf, gcm,
  * sha256, hmac, x509 and rsa/p256 verify kits.  Single-connection: the
  * handshake reassembly buffer is a file-scope static.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_crypto_tls13.h"

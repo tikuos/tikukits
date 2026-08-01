@@ -6,19 +6,23 @@
  *
  * tiku_kits_crypto_tls_keysched.h - TLS 1.3 key schedule
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements the TLS 1.3 key derivation functions (RFC 8446
  * Section 7.1) for PSK-only mode using HKDF-SHA256.
  *
  * Key schedule flow (PSK-only, no ECDHE):
  *
- *   PSK --> HKDF-Extract --> Early Secret
- *     |-> binder_key (for PSK binder in ClientHello)
- *     |-> HKDF-Extract --> Handshake Secret
- *         |-> client_hs_traffic_secret (CH..SH transcript)
- *         |-> server_hs_traffic_secret (CH..SH transcript)
- *         |-> HKDF-Extract --> Master Secret
- *             |-> client_app_traffic_secret (CH..SF transcript)
- *             |-> server_app_traffic_secret (CH..SF transcript)
+ * PSK --> HKDF-Extract --> Early Secret
+ * |-> binder_key (for PSK binder in ClientHello)
+ * |-> HKDF-Extract --> Handshake Secret
+ * |-> client_hs_traffic_secret (CH..SH transcript)
+ * |-> server_hs_traffic_secret (CH..SH transcript)
+ * |-> HKDF-Extract --> Master Secret
+ * |-> client_app_traffic_secret (CH..SF transcript)
+ * |-> server_app_traffic_secret (CH..SF transcript)
  *
  * Each traffic secret is expanded to key (16B) + IV (12B).
  *
@@ -26,9 +30,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_TLS_KEYSCHED_H_

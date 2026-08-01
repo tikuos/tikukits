@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_syslog.c - Syslog client implementation (RFC 3164)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Lightweight BSD Syslog client that sends log messages as UDP
  * datagrams to a remote syslog collector on port 514.  Messages
  * are fire-and-forget -- no acknowledgement or retransmission.
@@ -16,17 +20,15 @@
  * the implementation simple.
  *
  * RAM budget:
- *   - Server IP:    4 bytes
- *   - Hostname:     9 bytes (8 chars + NUL)
- *   - Tag:          9 bytes (8 chars + NUL)
- *   - Facility:     1 byte
- *   - Server set:   1 byte
- *   - Total:       24 bytes (no additional buffers at rest)
+ * - Server IP:    4 bytes
+ * - Hostname:     9 bytes (8 chars + NUL)
+ * - Tag:          9 bytes (8 chars + NUL)
+ * - Facility:     1 byte
+ * - Server set:   1 byte
+ * - Total:       24 bytes (no additional buffers at rest)
  *
  * The message assembly buffer lives on the stack during send()
  * and is sized to TIKU_KITS_NET_UDP_MAX_PAYLOAD (100 bytes).
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/
@@ -249,20 +251,20 @@ tiku_kits_net_syslog_set_tag(const char *tag)
 /* SEND                                                                      */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Assemble and send a BSD syslog message.
- *
+/*
  * Message format (RFC 3164):
- *   <PRI>HOSTNAME TAG: MSG
- *
+ * <PRI>HOSTNAME TAG: MSG
  * The PRI field is the decimal encoding of (facility*8 + severity)
  * enclosed in angle brackets.  No timestamp is included -- the
  * receiving collector will add its own receive timestamp.
- *
  * Assembly is done in a stack-local buffer sized to the maximum
  * UDP payload.  If the formatted message exceeds this limit, the
  * MSG portion is truncated (the PRI, hostname, and tag are always
  * preserved).
+ */
+
+/**
+ * @brief Assemble and send a BSD syslog message.
  */
 int8_t
 tiku_kits_net_syslog_send(uint8_t severity, const char *msg)

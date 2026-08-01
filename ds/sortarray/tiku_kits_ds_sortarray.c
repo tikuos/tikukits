@@ -24,35 +24,34 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Binary search for a value in sorted data
- *
+/*
  * Implements a classic iterative binary search over an ascending-sorted
  * array.  The search space is halved on each iteration by comparing the
  * midpoint element against the target value:
- *   - If data[mid] < value, the target must lie in the upper half.
- *   - If data[mid] > value, the target must lie in the lower half.
- *   - If data[mid] == value, the target is found.
- *
+ * - If data[mid] < value, the target must lie in the upper half.
+ * - If data[mid] > value, the target must lie in the lower half.
+ * - If data[mid] == value, the target is found.
  * When the target is found, the function walks backwards from the
  * match to locate the *first* occurrence among duplicates.  This
  * guarantees that find() always returns the lowest index and that
  * remove() always deletes the earliest duplicate.
- *
  * When the target is not found, the returned index is the correct
  * insertion point -- the position where the value would need to be
  * placed to maintain ascending order.
+ */
+
+/**
+ * @brief Binary search for a value in sorted data
  *
  * @note The midpoint is computed as @c lo+(hi-lo)/2 rather than
- *       @c (lo+hi)/2 to avoid potential uint16_t overflow when
- *       lo and hi are both large.
- *
+ * @c (lo+hi)/2 to avoid potential uint16_t overflow when
+ * lo and hi are both large.
  * @param data  Sorted array of elements
  * @param size  Number of valid elements in the array
  * @param value Value to search for
  * @param found Output: set to 1 if an exact match is found, 0 otherwise
  * @return Index of the first occurrence if found, or the insertion
- *         point if not found
+ * point if not found
  */
 static uint16_t binary_search(const tiku_kits_ds_elem_t *data,
                               uint16_t size,
@@ -89,13 +88,15 @@ static uint16_t binary_search(const tiku_kits_ds_elem_t *data,
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a sorted array with the given capacity
- *
+/*
  * Zeros the entire backing buffer so that uninitialised reads return
  * a deterministic value.  The runtime capacity is clamped to
  * TIKU_KITS_DS_SORTARRAY_MAX_SIZE at compile time so that the static
  * buffer is never overrun.
+ */
+
+/**
+ * @brief Initialize a sorted array with the given capacity
  */
 int tiku_kits_ds_sortarray_init(struct tiku_kits_ds_sortarray *sa,
                                 uint16_t capacity)
@@ -120,14 +121,16 @@ int tiku_kits_ds_sortarray_init(struct tiku_kits_ds_sortarray *sa,
 /* INSERTION / REMOVAL                                                       */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * The insertion proceeds in three steps:
+ * 1. Binary search to find the correct position -- O(log n).
+ * 2. If duplicates exist, advance past them so the new element
+ * is placed after all existing equal values (stable insertion).
+ * 3. Shift elements right and write the new value -- O(n).
+ */
+
 /**
  * @brief Insert a value in sorted (ascending) order
- *
- * The insertion proceeds in three steps:
- *   1. Binary search to find the correct position -- O(log n).
- *   2. If duplicates exist, advance past them so the new element
- *      is placed after all existing equal values (stable insertion).
- *   3. Shift elements right and write the new value -- O(n).
  */
 int tiku_kits_ds_sortarray_insert(struct tiku_kits_ds_sortarray *sa,
                                   tiku_kits_ds_elem_t value)

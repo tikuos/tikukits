@@ -6,6 +6,10 @@
  *
  * tiku_kits_sigfeatures_histogram.h - Fixed-width histogram / binning
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Accumulates samples into N fixed-width bins to build a distribution
  * estimate without storing raw data. Practical with N=8 or N=16 bins
  * on MSP430. Useful for signal classification, anomaly detection, and
@@ -16,8 +20,6 @@
  * bound are counted as overflow.
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_SIGFEATURES_HISTOGRAM_H_
@@ -33,22 +35,23 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum number of histogram bins the accumulator can hold.
- *
+/*
  * This compile-time constant defines the upper bound on the number
  * of bins.  Each histogram instance reserves this many uint16_t
  * counters in its static storage, so choose a value that balances
  * memory usage against distribution resolution.
- *
  * N=8 or N=16 is practical on MSP430 (16--32 bytes of bin
  * storage).  N=32 gives richer distributions at the cost of
  * 64 bytes.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of histogram bins the accumulator can hold.
+ *
  * @code
- *   #define TIKU_KITS_SIGFEATURES_HISTOGRAM_MAX_BINS 32
- *   #include "tiku_kits_sigfeatures_histogram.h"
+ * #define TIKU_KITS_SIGFEATURES_HISTOGRAM_MAX_BINS 32
+ * #include "tiku_kits_sigfeatures_histogram.h"
  * @endcode
  */
 #ifndef TIKU_KITS_SIGFEATURES_HISTOGRAM_MAX_BINS
@@ -59,35 +62,35 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_sigfeatures_histogram
- * @brief Fixed-width histogram accumulator with underflow/overflow tracking
- *
+/*
  * Accumulates samples into N fixed-width bins to build a
  * distribution estimate without storing raw data.  This is a
  * compact representation suitable for signal classification,
  * anomaly detection, and feature vectors on memory-constrained
  * embedded targets.
- *
  * Bin k covers the half-open interval
- *   [bin_min + k * bin_width,  bin_min + (k+1) * bin_width).
+ * [bin_min + k * bin_width,  bin_min + (k+1) * bin_width).
  * Samples below bin_min increment @c underflow; samples at or
  * above the upper bound increment @c overflow.  The total count
  * (underflow + sum(bins) + overflow) is tracked in @c total for
  * quick normalisation.
- *
- * @note The bin array is statically sized to MAX_BINS.  The
- *       runtime @c num_bins (passed to init) may be smaller;
- *       unused trailing slots are ignored.
- *
  * Example:
+ */
+
+/**
+ * @brief Fixed-width histogram accumulator with underflow/overflow tracking
+ *
+ * @struct tiku_kits_sigfeatures_histogram
+ * @note The bin array is statically sized to MAX_BINS.  The
+ * runtime @c num_bins (passed to init) may be smaller;
+ * unused trailing slots are ignored.
  * @code
- *   struct tiku_kits_sigfeatures_histogram h;
- *   // 8 bins covering [0, 800), each bin width 100
- *   tiku_kits_sigfeatures_histogram_init(&h, 8, 0, 100);
- *   tiku_kits_sigfeatures_histogram_push(&h, 150);  // bin 1
- *   tiku_kits_sigfeatures_histogram_push(&h, 350);  // bin 3
- *   tiku_kits_sigfeatures_histogram_push(&h, 900);  // overflow
+ * struct tiku_kits_sigfeatures_histogram h;
+ * // 8 bins covering [0, 800), each bin width 100
+ * tiku_kits_sigfeatures_histogram_init(&h, 8, 0, 100);
+ * tiku_kits_sigfeatures_histogram_push(&h, 150);  // bin 1
+ * tiku_kits_sigfeatures_histogram_push(&h, 350);  // bin 3
+ * tiku_kits_sigfeatures_histogram_push(&h, 900);  // overflow
  * @endcode
  */
 struct tiku_kits_sigfeatures_histogram {
@@ -105,23 +108,25 @@ struct tiku_kits_sigfeatures_histogram {
 /* Initialization                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a histogram with the given bin configuration
- *
+/*
  * Configures the number of bins, range origin, and bin width, then
  * zeros all counters (bins, total, underflow, overflow).  After
  * init the histogram covers the range
  * [min_val, min_val + bin_width * num_bins).
+ */
+
+/**
+ * @brief Initialize a histogram with the given bin configuration
  *
  * @param h         Histogram to initialize (must not be NULL)
  * @param num_bins  Number of bins (1..HISTOGRAM_MAX_BINS)
  * @param min_val   Lower bound of the first bin
  * @param bin_width Width of each bin (must be > 0)
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if h is NULL,
- *         TIKU_KITS_SIGFEATURES_ERR_SIZE if num_bins is 0 or
- *         exceeds MAX_BINS,
- *         TIKU_KITS_SIGFEATURES_ERR_PARAM if bin_width <= 0
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if h is NULL,
+ * TIKU_KITS_SIGFEATURES_ERR_SIZE if num_bins is 0 or
+ * exceeds MAX_BINS,
+ * TIKU_KITS_SIGFEATURES_ERR_PARAM if bin_width <= 0
  */
 int tiku_kits_sigfeatures_histogram_init(
     struct tiku_kits_sigfeatures_histogram *h,
@@ -129,17 +134,19 @@ int tiku_kits_sigfeatures_histogram_init(
     tiku_kits_sigfeatures_elem_t min_val,
     tiku_kits_sigfeatures_elem_t bin_width);
 
-/**
- * @brief Reset a histogram, clearing all counts but keeping bin config
- *
+/*
  * Zeros all bin counters, total, underflow, and overflow while
  * preserving num_bins, bin_min, and bin_width.  Useful for starting
  * a new accumulation window without reconfiguring the binning
  * parameters.
+ */
+
+/**
+ * @brief Reset a histogram, clearing all counts but keeping bin config
  *
  * @param h Histogram to reset (must not be NULL)
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if h is NULL
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if h is NULL
  */
 int tiku_kits_sigfeatures_histogram_reset(
     struct tiku_kits_sigfeatures_histogram *h);
@@ -148,22 +155,23 @@ int tiku_kits_sigfeatures_histogram_reset(
 /* Sample input                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push a sample into the histogram
- *
+/*
  * Determines which bin the sample falls into via integer division:
- *     bin_idx = (value - bin_min) / bin_width
+ * bin_idx = (value - bin_min) / bin_width
  * and increments the corresponding counter.  If the value is below
  * bin_min the underflow counter is incremented; if the computed
  * bin index is >= num_bins the overflow counter is incremented.
  * The total counter is always incremented.
- *
  * O(1) per call -- a single subtraction and division.
+ */
+
+/**
+ * @brief Push a sample into the histogram
  *
  * @param h     Histogram (must not be NULL)
  * @param value Sample value to accumulate
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if h is NULL
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if h is NULL
  */
 int tiku_kits_sigfeatures_histogram_push(
     struct tiku_kits_sigfeatures_histogram *h,

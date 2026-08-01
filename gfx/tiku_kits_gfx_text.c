@@ -6,23 +6,25 @@
  *
  * tiku_kits_gfx_text.c - Bitmap text rendering on a gfx surface
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Renders monospaced and proportional bitmap fonts with optional
  * scaling, multi-line wrapping, and horizontal alignment.
  *
  * Word-wrap algorithm:
- *   For each rect width, scan str to find the longest prefix that
- *   fits and ends at a word boundary. If no boundary is found
- *   within the available width, break at the last character that
- *   fits (character-wise breaking for over-long words). Render the
- *   line, advance y, and repeat from the position after the break.
+ * For each rect width, scan str to find the longest prefix that
+ * fits and ends at a word boundary. If no boundary is found
+ * within the available width, break at the last character that
+ * fits (character-wise breaking for over-long words). Render the
+ * line, advance y, and repeat from the position after the break.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #include "tiku_kits_gfx_text.h"

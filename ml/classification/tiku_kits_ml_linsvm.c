@@ -6,13 +6,15 @@
  *
  * tiku_kits_ml_linsvm.c - Linear Support Vector Machine classifier
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Platform-independent implementation of online binary linear SVM
  * using Pegasos-style stochastic sub-gradient descent on the hinge
  * loss with L2 regularization. All computation uses integer /
  * fixed-point arithmetic with int64_t intermediates.
  * No heap allocation.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/
@@ -25,13 +27,15 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute the linear combination z = w0 + w1*x1 + ... + wn*xn
- *
+/*
  * Weights are Q(shift) and features are plain integers, so each
  * product w_j * x_j is Q(shift).  The sum is accumulated in int64_t
  * to prevent overflow when many large-valued features contribute,
  * then truncated to int32_t for the caller.
+ */
+
+/**
+ * @brief Compute the linear combination z = w0 + w1*x1 + ... + wn*xn
  */
 static int32_t dot_product(const struct tiku_kits_ml_linsvm *svm,
                            const tiku_kits_ml_elem_t *x)
@@ -50,13 +54,15 @@ static int32_t dot_product(const struct tiku_kits_ml_linsvm *svm,
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a linear SVM model
- *
+/*
  * Validates parameters, zeros the weight vector, and sets default
  * hyperparameters: learning rate ~0.1 and lambda ~0.01 in Q(shift).
  * Both defaults are clamped to a minimum of 1 to ensure at least
  * one quantum of update per step.
+ */
+
+/**
+ * @brief Initialize a linear SVM model
  */
 int tiku_kits_ml_linsvm_init(struct tiku_kits_ml_linsvm *svm,
                                uint8_t n_features,
@@ -171,17 +177,18 @@ int tiku_kits_ml_linsvm_set_lambda(struct tiku_kits_ml_linsvm *svm,
 /* TRAINING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Train the model with one sample using SGD on the hinge loss
- *
+/*
  * Computes the forward pass f(x) = w . x + bias, then checks the
  * margin y * f(x) against 1.0 in Q(shift).  If the margin is
  * violated, weights receive both the hinge-loss gradient and L2
  * regularization; otherwise only regularization is applied.
- *
  * All intermediate products use int64_t to prevent overflow.
  * The double right-shift (>> shift >> shift) converts the
  * lr * lambda * w product from Q(3*shift) back to Q(shift).
+ */
+
+/**
+ * @brief Train the model with one sample using SGD on the hinge loss
  */
 int tiku_kits_ml_linsvm_train(struct tiku_kits_ml_linsvm *svm,
                                 const tiku_kits_ml_elem_t *x,

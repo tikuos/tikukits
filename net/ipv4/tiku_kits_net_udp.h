@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_udp.h - UDP datagram protocol (RFC 768)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Provides port-based demultiplexing with a static binding table,
  * an optional built-in echo service (port 7, RFC 862), and a send
  * API for constructing outgoing datagrams.  Uses byte-offset macros
@@ -23,8 +27,6 @@
  *
  * RAM cost: 17 bytes total (16 for binding table + 1 for guard flag).
  * No additional buffers -- all I/O reuses the shared net_buf.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_UDP_H_
@@ -40,14 +42,17 @@
 /* UDP HEADER BYTE OFFSETS                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @defgroup TIKU_KITS_NET_UDP_OFFSETS UDP Header Byte Offsets
- * @brief Offsets into the UDP portion of the packet (starts after IHL).
- *
+/*
  * The UDP header is exactly 8 bytes: source port, destination port,
  * length, and checksum.  All multi-byte fields are in network byte
  * order (big-endian) within the packet buffer.  Payload data begins
  * immediately at offset 8.
+ */
+
+/**
+ * @brief Offsets into the UDP portion of the packet (starts after IHL).
+ *
+ * @defgroup TIKU_KITS_NET_UDP_OFFSETS UDP Header Byte Offsets
  * @{
  */
 #define TIKU_KITS_NET_UDP_OFF_SPORT    0   /**< Source Port (16b) */
@@ -61,31 +66,35 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum number of simultaneous port bindings.
- *
+/*
  * Each slot costs 4 bytes (2-byte port + 2-byte function pointer on
  * MSP430).  The default of 4 slots uses 16 bytes of RAM and is
  * sufficient for most embedded applications (e.g. one command port,
  * one telemetry port, one NTP port, one spare).
- *
  * Override at compile time to adjust:
+ */
+
+/**
+ * @brief Maximum number of simultaneous port bindings.
+ *
  * @code
- *   #define TIKU_KITS_NET_UDP_MAX_BINDS 8
- *   #include "tiku_kits_net_udp.h"
+ * #define TIKU_KITS_NET_UDP_MAX_BINDS 8
+ * #include "tiku_kits_net_udp.h"
  * @endcode
  */
 #ifndef TIKU_KITS_NET_UDP_MAX_BINDS
 #define TIKU_KITS_NET_UDP_MAX_BINDS    4
 #endif
 
-/**
- * @brief Enable the built-in UDP echo service on port 7 (RFC 862).
- *
+/*
  * When enabled, datagrams addressed to port 7 are echoed back
  * in-place (same pattern as ICMP echo) without consuming a bind
  * slot.  This provides a simple liveness check alongside ICMP ping.
  * Set to 0 at compile time to disable and save code space.
+ */
+
+/**
+ * @brief Enable the built-in UDP echo service on port 7 (RFC 862).
  */
 #ifndef TIKU_KITS_NET_UDP_ECHO_ENABLE
 #define TIKU_KITS_NET_UDP_ECHO_ENABLE  1
@@ -138,14 +147,15 @@ typedef void (*tiku_kits_net_udp_recv_cb_t)(
 /* INITIALISATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialise the UDP subsystem.
- *
+/*
  * Clears all binding table slots (port=0, cb=NULL) and resets the
  * re-entrancy guard.  Called once during net process startup
  * (tiku_kits_net_ipv4.c), before the poll loop begins.
- *
  * Safe to call again at runtime to unbind all ports and reset state.
+ */
+
+/**
+ * @brief Initialise the UDP subsystem.
  */
 void tiku_kits_net_udp_init(void);
 
@@ -153,25 +163,26 @@ void tiku_kits_net_udp_init(void);
 /* PORT BINDING                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Bind a receive callback to a UDP port.
- *
+/*
  * Registers @p cb to be invoked whenever a datagram arrives with
  * a destination port matching @p port.  The binding table is scanned
  * linearly (O(MAX_BINDS)) to check for duplicates and find a free
  * slot.
- *
  * Port 0 is reserved as the "free" sentinel and cannot be bound.
  * The echo port (7) can be bound, in which case the explicit binding
  * takes priority only if echo is disabled; with echo enabled, port 7
  * datagrams are handled by the echo service before the table lookup.
+ */
+
+/**
+ * @brief Bind a receive callback to a UDP port.
  *
  * @param port  Port number in host byte order (must be > 0)
  * @param cb    Receive callback (must not be NULL)
  * @return TIKU_KITS_NET_OK on success,
- *         TIKU_KITS_NET_ERR_PARAM if @p cb is NULL, @p port is 0,
- *         or @p port is already bound,
- *         TIKU_KITS_NET_ERR_OVERFLOW if all binding slots are full.
+ * TIKU_KITS_NET_ERR_PARAM if @p cb is NULL, @p port is 0,
+ * or @p port is already bound,
+ * TIKU_KITS_NET_ERR_OVERFLOW if all binding slots are full.
  */
 int8_t tiku_kits_net_udp_bind(uint16_t port,
                                tiku_kits_net_udp_recv_cb_t cb);
@@ -192,22 +203,22 @@ int8_t tiku_kits_net_udp_unbind(uint16_t port);
 /* INPUT                                                                     */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Process an incoming UDP datagram.
- *
+/*
  * Called by the IPv4 input pipeline when protocol == 17 (UDP).
  * Performs three validation steps (silent drop on any failure):
- *   1. UDP data portion must be >= 8 bytes (header fits)
- *   2. Length field must be >= 8 and <= actual data available
- *   3. If checksum field is non-zero, verify the pseudo-header
- *      checksum (RFC 768: checksum=0 means "not computed")
- *
+ * 1. UDP data portion must be >= 8 bytes (header fits)
+ * 2. Length field must be >= 8 and <= actual data available
+ * 3. If checksum field is non-zero, verify the pseudo-header
+ * checksum (RFC 768: checksum=0 means "not computed")
  * After validation, the destination port is checked:
- *   - Port 7 (echo, if enabled): reply in-place and return
- *   - Otherwise: linear scan of the binding table for a match
- *   - No match: silently drop (no ICMP port-unreachable)
- *
+ * - Port 7 (echo, if enabled): reply in-place and return
+ * - Otherwise: linear scan of the binding table for a match
+ * - No match: silently drop (no ICMP port-unreachable)
  * The buffer may be modified in-place during echo processing.
+ */
+
+/**
+ * @brief Process an incoming UDP datagram.
  *
  * @param buf      Full IP packet buffer (modified for echo replies)
  * @param len      Total packet length (IPv4 header + UDP)
@@ -220,9 +231,7 @@ void tiku_kits_net_udp_input(uint8_t *buf, uint16_t len,
 /* OUTPUT                                                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Send a UDP datagram.
- *
+/*
  * Constructs a complete IPv4 + UDP packet in the shared net_buf
  * and transmits it via tiku_kits_net_ipv4_output().  The function
  * builds the 20-byte IPv4 header (ver=4, IHL=5, proto=17) and
@@ -230,24 +239,27 @@ void tiku_kits_net_udp_input(uint8_t *buf, uint16_t len,
  * pseudo-header checksum (per RFC 768, result 0 is sent as 0xFFFF),
  * and then calls ipv4_output which recomputes the IPv4 header
  * checksum and passes the packet to the active link layer.
+ */
+
+/**
+ * @brief Send a UDP datagram.
  *
  * @warning Must NOT be called from inside a receive callback.
  * The shared net_buf holds the incoming packet during callback
  * execution, so writing to it would corrupt the RX data.  The
  * re-entrancy guard (in_rx flag) detects this and returns
  * TIKU_KITS_NET_ERR_PARAM.
- *
  * @param dst_addr     Destination IP address (4 bytes, network order)
  * @param dst_port     Destination port in host byte order
  * @param src_port     Source port in host byte order
  * @param payload      Payload bytes to send (may be NULL if len==0)
  * @param payload_len  Payload length (max TIKU_KITS_NET_UDP_MAX_PAYLOAD)
  * @return TIKU_KITS_NET_OK on success,
- *         TIKU_KITS_NET_ERR_PARAM if called from a callback,
- *         TIKU_KITS_NET_ERR_NULL if @p dst_addr is NULL or
- *         @p payload is NULL with payload_len > 0,
- *         TIKU_KITS_NET_ERR_OVERFLOW if payload exceeds max,
- *         TIKU_KITS_NET_ERR_NOLINK if no link backend is set.
+ * TIKU_KITS_NET_ERR_PARAM if called from a callback,
+ * TIKU_KITS_NET_ERR_NULL if @p dst_addr is NULL or
+ * @p payload is NULL with payload_len > 0,
+ * TIKU_KITS_NET_ERR_OVERFLOW if payload exceeds max,
+ * TIKU_KITS_NET_ERR_NOLINK if no link backend is set.
  */
 int8_t tiku_kits_net_udp_send(const uint8_t *dst_addr,
                                uint16_t dst_port,

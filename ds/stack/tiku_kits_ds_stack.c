@@ -23,13 +23,15 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a stack with the given capacity.
- *
+/*
  * Zeros the entire backing buffer so that any subsequent reads of
  * unpopulated slots return a deterministic value.  The runtime
  * capacity is clamped to TIKU_KITS_DS_STACK_MAX_SIZE at compile
  * time so that the static buffer is never overrun.
+ */
+
+/**
+ * @brief Initialize a stack with the given capacity.
  */
 int tiku_kits_ds_stack_init(struct tiku_kits_ds_stack *stk,
                             uint16_t capacity)
@@ -127,13 +129,15 @@ int tiku_kits_ds_stack_peek(const struct tiku_kits_ds_stack *stk,
 /* STATE OPERATIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Clear the stack by resetting top to zero.
- *
+/*
  * Logically removes all elements without zeroing the backing
  * buffer.  Old values remain in memory but are inaccessible
  * through the public API because all access functions bounds-check
  * against top.
+ */
+
+/**
+ * @brief Clear the stack by resetting top to zero.
  */
 int tiku_kits_ds_stack_clear(struct tiku_kits_ds_stack *stk)
 {

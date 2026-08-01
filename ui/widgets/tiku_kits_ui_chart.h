@@ -6,21 +6,23 @@
  *
  * tiku_kits_ui_chart.h - 2D chart widget (line / scatter / both)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Plots N (x, y) points inside a rectangle with optional axes,
  * gridlines, and value labels. Designed for sensor logs, simple
  * dashboards, and any scenario where a sparkline isn't enough.
  *
  * Two data conventions:
- *   - x_values == NULL: indices 0..n-1 (time-series style).
- *   - x_values != NULL: paired (x_values[i], y_values[i]) points.
+ * - x_values == NULL: indices 0..n-1 (time-series style).
+ * - x_values != NULL: paired (x_values[i], y_values[i]) points.
  *
  * Domain selection:
- *   - x_min == x_max: auto-scale to the input data.
- *   - y_min == y_max: same.
+ * - x_min == x_max: auto-scale to the input data.
+ * - y_min == y_max: same.
  *
  * Style flags can be OR-combined: LINE | DOTS draws both.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_CHART_H_

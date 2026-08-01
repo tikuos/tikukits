@@ -6,32 +6,36 @@
  *
  * tiku_kits_gfx_image.h - Multi-format bitmap images
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Generalises the simple `tiku_kits_gfx_bitmap()` primitive to a
  * tagged image type that supports several common bit-packings:
  *
- *   1BPP_ROW_MSB  1 bit/pixel, row-major, MSB = leftmost
- *                 Same format as tiku_kits_gfx_bitmap; default for
- *                 hand-rolled assets and font_bake.py output.
+ * 1BPP_ROW_MSB  1 bit/pixel, row-major, MSB = leftmost
+ * Same format as tiku_kits_gfx_bitmap; default for
+ * hand-rolled assets and font_bake.py output.
  *
- *   1BPP_ROW_LSB  1 bit/pixel, row-major, LSB = leftmost
- *                 X-Bitmap (XBM) format -- output of common
- *                 conversion tools.
+ * 1BPP_ROW_LSB  1 bit/pixel, row-major, LSB = leftmost
+ * X-Bitmap (XBM) format -- output of common
+ * conversion tools.
  *
- *   1BPP_RLE      1 bit/pixel run-length encoded.
- *                 Each byte: bit 7 = color, bits 0..6 = run length
- *                 minus 1 (so runs of 1..128 pixels). Pixels are
- *                 emitted row-major; runs may cross row boundaries.
- *                 Best for icons with large solid regions.
+ * 1BPP_RLE      1 bit/pixel run-length encoded.
+ * Each byte: bit 7 = color, bits 0..6 = run length
+ * minus 1 (so runs of 1..128 pixels). Pixels are
+ * emitted row-major; runs may cross row boundaries.
+ * Best for icons with large solid regions.
  *
- *   2BPP_BWR      2 bits/pixel, native to 3-color e-paper.
- *                 Values: 00 = WHITE, 01 = BLACK, 10 = RED,
- *                 11 = transparent (skip). Row-major, packed
- *                 4 pixels per byte (high two bits = leftmost).
+ * 2BPP_BWR      2 bits/pixel, native to 3-color e-paper.
+ * Values: 00 = WHITE, 01 = BLACK, 10 = RED,
+ * 11 = transparent (skip). Row-major, packed
+ * 4 pixels per byte (high two bits = leftmost).
  *
- *   4BPP_GRAY     4 bits/pixel, 0..15 grayscale. Row-major, packed
- *                 2 pixels per byte (high nibble = leftmost). Used
- *                 to ship antialiased icons; on 1-bit panels the
- *                 blit thresholds at 8.
+ * 4BPP_GRAY     4 bits/pixel, 0..15 grayscale. Row-major, packed
+ * 2 pixels per byte (high nibble = leftmost). Used
+ * to ship antialiased icons; on 1-bit panels the
+ * blit thresholds at 8.
  *
  * All blit ops self-clip against the surface bounds; out-of-range
  * pixels are silently dropped.
@@ -45,9 +49,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #ifndef TIKU_KITS_GFX_IMAGE_H_
@@ -71,16 +73,18 @@ typedef enum {
 /* IMAGE DESCRIPTOR                                                          */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Field meanings:
+ * - width, height  Pixel dimensions.
+ * - format         One of TIKU_KITS_GFX_IMG_*.
+ * - data           Pointer to the pixel byte stream.
+ * - data_len       Length of the byte stream in bytes. Used for
+ * bounds-checking RLE traversal; for fixed-size
+ * formats may be set to ceil(W * H * bpp / 8).
+ */
+
 /**
  * @brief Static description of a bitmap image.
- *
- * Field meanings:
- *   - width, height  Pixel dimensions.
- *   - format         One of TIKU_KITS_GFX_IMG_*.
- *   - data           Pointer to the pixel byte stream.
- *   - data_len       Length of the byte stream in bytes. Used for
- *                    bounds-checking RLE traversal; for fixed-size
- *                    formats may be set to ceil(W * H * bpp / 8).
  */
 typedef struct {
     uint16_t                    width;
@@ -105,18 +109,19 @@ typedef enum {
 /* RAW PIXEL ACCESS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Return the raw (format-encoded) pixel value at (x, y).
- *
+/*
  * Range:
- *   1BPP*  -> 0 or 1
- *   2BPP   -> 0..3
- *   4BPP   -> 0..15
+ * 1BPP*  -> 0 or 1
+ * 2BPP   -> 0..3
+ * 4BPP   -> 0..15
  * Out-of-range coordinates return 0.
- *
  * For RLE images this is O(width * height) in the worst case (the
  * implementation walks from the start of the stream). Use blit
  * primitives for sequential access -- they iterate the stream once.
+ */
+
+/**
+ * @brief Return the raw (format-encoded) pixel value at (x, y).
  */
 uint8_t tiku_kits_gfx_image_pixel(const tiku_kits_gfx_image_t *img,
                                    uint16_t x, uint16_t y);
@@ -125,30 +130,34 @@ uint8_t tiku_kits_gfx_image_pixel(const tiku_kits_gfx_image_t *img,
 /* BLIT OPERATIONS                                                           */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Color mapping per format:
+ * 1BPP*  -- set pixels (raw 1) painted with @p fg_color;
+ * unset pixels (raw 0) are transparent.
+ * 2BPP   -- 0 -> WHITE, 1 -> BLACK, 2 -> RED, 3 -> transparent
+ * (intrinsic colours; @p fg_color is ignored).
+ * 4BPP   -- pixels with raw value >= 8 painted with @p fg_color;
+ * lighter pixels are transparent.
+ */
+
 /**
  * @brief Blit @p img onto @p s with its top-left at (dst_x, dst_y).
- *
- * Color mapping per format:
- *   1BPP*  -- set pixels (raw 1) painted with @p fg_color;
- *             unset pixels (raw 0) are transparent.
- *   2BPP   -- 0 -> WHITE, 1 -> BLACK, 2 -> RED, 3 -> transparent
- *             (intrinsic colours; @p fg_color is ignored).
- *   4BPP   -- pixels with raw value >= 8 painted with @p fg_color;
- *             lighter pixels are transparent.
  */
 void tiku_kits_gfx_image_blit(const tiku_kits_gfx_surface_t *s,
                                int16_t dst_x, int16_t dst_y,
                                const tiku_kits_gfx_image_t *img,
                                uint8_t fg_color);
 
-/**
- * @brief Like blit() but with an explicit transparent value.
- *
+/*
  * Pixels whose raw format-encoded value equals @p mask_value are
  * skipped; all others are painted using the same colour mapping
  * as blit(). Use to override the default transparent value (e.g.
  * to make a 1bpp image's "0" pixels paint with bg_color instead
  * of being transparent, set mask_value = 255 -- never matches).
+ */
+
+/**
+ * @brief Like blit() but with an explicit transparent value.
  */
 void tiku_kits_gfx_image_blit_masked(const tiku_kits_gfx_surface_t *s,
                                       int16_t dst_x, int16_t dst_y,
@@ -166,13 +175,15 @@ void tiku_kits_gfx_image_blit_scaled(const tiku_kits_gfx_surface_t *s,
                                       const tiku_kits_gfx_image_t *img,
                                       uint8_t fg_color);
 
-/**
- * @brief Blit rotated by 0 / 90 / 180 / 270 degrees CCW.
- *
+/*
  * Top-left of the rotated image is placed at (dst_x, dst_y). For
  * 90/270 rotations the rotated image's pixel dimensions are
  * (img->height, img->width) -- caller is responsible for the
  * coordinate math when laying out a rotated asset.
+ */
+
+/**
+ * @brief Blit rotated by 0 / 90 / 180 / 270 degrees CCW.
  */
 void tiku_kits_gfx_image_blit_rotated(const tiku_kits_gfx_surface_t *s,
                                        int16_t dst_x, int16_t dst_y,

@@ -6,6 +6,10 @@
  *
  * tiku_kits_ml_knn.h - k-Nearest Neighbors classifier
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Platform-independent k-NN classifier for embedded systems.
  * Stores training samples in a static buffer and classifies new
  * points by majority vote among the k nearest neighbors, using
@@ -17,7 +21,7 @@
  *
  * Distance is computed as:
  *
- *     d(a,b) = sum_j (a[j] - b[j])^2
+ * d(a,b) = sum_j (a[j] - b[j])^2
  *
  * using int64_t accumulation to prevent overflow on 16-bit targets.
  *
@@ -27,8 +31,6 @@
  * neighbor among tied classes.
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_ML_KNN_H_
@@ -44,54 +46,60 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Element type for feature values.
- *
+/*
  * Defaults to int32_t for integer-only targets (no FPU required).
  * All ML sub-modules share this type so that feature vectors can be
  * passed between classifiers without casting.
- *
  * Override before including this header to change the type:
+ */
+
+/**
+ * @brief Element type for feature values.
+ *
  * @code
- *   #define TIKU_KITS_ML_ELEM_TYPE int16_t
- *   #include "tiku_kits_ml_knn.h"
+ * #define TIKU_KITS_ML_ELEM_TYPE int16_t
+ * #include "tiku_kits_ml_knn.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_ELEM_TYPE
 #define TIKU_KITS_ML_ELEM_TYPE int32_t
 #endif
 
-/**
- * @brief Maximum number of input features per sample.
- *
+/*
  * Determines the dimensionality of each stored feature vector.
  * Each sample reserves this many element slots in the static
  * data buffer, so choose a value that covers your data without
  * wasting memory.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of input features per sample.
+ *
  * @code
- *   #define TIKU_KITS_ML_KNN_MAX_FEATURES 16
- *   #include "tiku_kits_ml_knn.h"
+ * #define TIKU_KITS_ML_KNN_MAX_FEATURES 16
+ * #include "tiku_kits_ml_knn.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_KNN_MAX_FEATURES
 #define TIKU_KITS_ML_KNN_MAX_FEATURES 8
 #endif
 
-/**
- * @brief Maximum number of stored training samples.
- *
+/*
  * When the buffer is full, new samples overwrite the oldest entry
  * (ring-buffer semantics), enabling online / sliding-window
  * operation without explicit buffer management.  Total static
  * memory usage is approximately
  * MAX_SAMPLES * (MAX_FEATURES * sizeof(elem_t) + 1) bytes.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of stored training samples.
+ *
  * @code
- *   #define TIKU_KITS_ML_KNN_MAX_SAMPLES 64
- *   #include "tiku_kits_ml_knn.h"
+ * #define TIKU_KITS_ML_KNN_MAX_SAMPLES 64
+ * #include "tiku_kits_ml_knn.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_KNN_MAX_SAMPLES
@@ -114,17 +122,19 @@
 #define TIKU_KITS_ML_KNN_MAX_CLASSES 8
 #endif
 
-/**
- * @brief Default value of k (number of neighbors to consider).
- *
+/*
  * Using an odd value avoids ties in the common binary-classification
  * case.  Can be overridden at init time or changed later via
  * set_k().
- *
  * Override before including this header to change the default:
+ */
+
+/**
+ * @brief Default value of k (number of neighbors to consider).
+ *
  * @code
- *   #define TIKU_KITS_ML_KNN_DEFAULT_K 5
- *   #include "tiku_kits_ml_knn.h"
+ * #define TIKU_KITS_ML_KNN_DEFAULT_K 5
+ * #include "tiku_kits_ml_knn.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_KNN_DEFAULT_K
@@ -140,47 +150,43 @@
  */
 typedef TIKU_KITS_ML_ELEM_TYPE tiku_kits_ml_elem_t;
 
-/**
- * @struct tiku_kits_ml_knn
- * @brief k-Nearest Neighbors classifier with ring-buffer storage
- *
+/*
  * A lazy-learning classifier that stores training samples in a flat
  * static buffer and classifies query points by majority vote among
  * the k closest stored samples, using squared Euclidean distance.
- *
  * Two indices manage the ring buffer:
- *   - @c write_idx -- points to the next slot that will be written.
- *     Advances after each add() call and wraps at MAX_SAMPLES.
- *   - @c n_samples -- tracks how many distinct samples are stored
- *     (capped at MAX_SAMPLES).  Once full, add() overwrites the
- *     oldest sample without incrementing n_samples.
- *
- * @note Distance is computed as sum_j(a[j]-b[j])^2 in int64_t to
- *       prevent overflow on 16-bit targets.  No FPU or sqrt()
- *       required because only relative ordering matters.
- *
- * @note Because all storage lives inside the struct, no heap
- *       allocation is needed -- just declare the model as a static
- *       or local variable.
- *
+ * - @c write_idx -- points to the next slot that will be written.
+ * Advances after each add() call and wraps at MAX_SAMPLES.
+ * - @c n_samples -- tracks how many distinct samples are stored
+ * (capped at MAX_SAMPLES).  Once full, add() overwrites the
+ * oldest sample without incrementing n_samples.
  * Example:
+ * tiku_kits_ml_knn_init(&knn, 2, 3);  // 2 features, k=3
+ * // Add training data
+ * tiku_kits_ml_elem_t a[] = {1, 1};
+ * tiku_kits_ml_knn_add(&knn, a, 0);
+ * tiku_kits_ml_elem_t b[] = {2, 2};
+ * tiku_kits_ml_knn_add(&knn, b, 0);
+ * tiku_kits_ml_elem_t c[] = {10, 10};
+ * tiku_kits_ml_knn_add(&knn, c, 1);
+ * // Predict
+ * tiku_kits_ml_elem_t q[] = {3, 3};
+ * tiku_kits_ml_knn_predict(&knn, q, &cls);  // cls = 0
+ */
+
+/**
+ * @brief k-Nearest Neighbors classifier with ring-buffer storage
+ *
+ * @struct tiku_kits_ml_knn
+ * @note Distance is computed as sum_j(a[j]-b[j])^2 in int64_t to
+ * prevent overflow on 16-bit targets.  No FPU or sqrt()
+ * required because only relative ordering matters.
+ * @note Because all storage lives inside the struct, no heap
+ * allocation is needed -- just declare the model as a static
+ * or local variable.
  * @code
- *   struct tiku_kits_ml_knn knn;
- *   uint8_t cls;
- *
- *   tiku_kits_ml_knn_init(&knn, 2, 3);  // 2 features, k=3
- *
- *   // Add training data
- *   tiku_kits_ml_elem_t a[] = {1, 1};
- *   tiku_kits_ml_knn_add(&knn, a, 0);
- *   tiku_kits_ml_elem_t b[] = {2, 2};
- *   tiku_kits_ml_knn_add(&knn, b, 0);
- *   tiku_kits_ml_elem_t c[] = {10, 10};
- *   tiku_kits_ml_knn_add(&knn, c, 1);
- *
- *   // Predict
- *   tiku_kits_ml_elem_t q[] = {3, 3};
- *   tiku_kits_ml_knn_predict(&knn, q, &cls);  // cls = 0
+ * struct tiku_kits_ml_knn knn;
+ * uint8_t cls;
  * @endcode
  */
 struct tiku_kits_ml_knn {
@@ -227,18 +233,20 @@ int tiku_kits_ml_knn_init(struct tiku_kits_ml_knn *knn,
                             uint8_t n_features,
                             uint8_t k);
 
-/**
- * @brief Reset all stored samples without changing configuration
- *
+/*
  * Logically removes all samples by resetting n_samples and
  * write_idx to 0.  The backing data buffer is not zeroed for
  * efficiency -- old values remain but are inaccessible because
  * predict() only considers indices < n_samples.  Preserves
  * n_features and k.
+ */
+
+/**
+ * @brief Reset all stored samples without changing configuration
  *
  * @param knn Model to reset (must not be NULL)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if knn is NULL
+ * TIKU_KITS_ML_ERR_NULL if knn is NULL
  */
 int tiku_kits_ml_knn_reset(struct tiku_kits_ml_knn *knn);
 
@@ -267,20 +275,22 @@ int tiku_kits_ml_knn_set_k(struct tiku_kits_ml_knn *knn,
 /* TRAINING (SAMPLE STORAGE)                                                 */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Add one training sample to the model
- *
+/*
  * Copies the feature vector and label into the next ring-buffer
  * slot and advances the write pointer.  If the buffer is full,
  * the oldest sample is silently overwritten, enabling online /
  * sliding-window operation.  O(n_features) -- one copy per feature.
+ */
+
+/**
+ * @brief Add one training sample to the model
  *
  * @param knn   Model (must not be NULL)
  * @param x     Feature vector of length n_features (must not be NULL)
  * @param label Class label (0..TIKU_KITS_ML_KNN_MAX_CLASSES - 1)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if knn or x is NULL,
- *         TIKU_KITS_ML_ERR_PARAM if label >= MAX_CLASSES
+ * TIKU_KITS_ML_ERR_NULL if knn or x is NULL,
+ * TIKU_KITS_ML_ERR_PARAM if label >= MAX_CLASSES
  */
 int tiku_kits_ml_knn_add(struct tiku_kits_ml_knn *knn,
                             const tiku_kits_ml_elem_t *x,
@@ -290,27 +300,28 @@ int tiku_kits_ml_knn_add(struct tiku_kits_ml_knn *knn,
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Classify a feature vector by majority vote of k neighbors
- *
+/*
  * Computes the squared Euclidean distance from the query to every
  * stored sample, maintains a sorted list of the min(k, n_samples)
  * nearest neighbors, then tallies votes per class.  The class with
  * the most votes wins; ties are broken in favour of the class whose
  * nearest representative is closest to the query point.
- *
  * O(n_samples * n_features) for distance computation plus
  * O(n_samples * k) for insertion into the sorted neighbor list.
+ */
+
+/**
+ * @brief Classify a feature vector by majority vote of k neighbors
  *
  * @param knn    Model with at least 1 stored sample
- *               (must not be NULL)
+ * (must not be NULL)
  * @param x      Feature vector of length n_features
- *               (must not be NULL)
+ * (must not be NULL)
  * @param result Output pointer where the predicted class label is
- *               written (must not be NULL)
+ * written (must not be NULL)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if knn, x, or result is NULL,
- *         TIKU_KITS_ML_ERR_SIZE if no training samples are stored
+ * TIKU_KITS_ML_ERR_NULL if knn, x, or result is NULL,
+ * TIKU_KITS_ML_ERR_SIZE if no training samples are stored
  */
 int tiku_kits_ml_knn_predict(const struct tiku_kits_ml_knn *knn,
                                const tiku_kits_ml_elem_t *x,

@@ -6,57 +6,61 @@
  *
  * tiku_kits_net_mqtt.h - MQTT 3.1.1 client
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Provides an event-driven MQTT 3.1.1 client for TikuOS embedded
  * networking.  Supports QoS 0 and QoS 1 publish/subscribe over
  * TCP, with optional TLS 1.3 PSK transport (MQTTS).
  *
  * Design constraints for ultra-low-power embedded targets:
- *   - Static allocation only (no heap)
- *   - Single connection (one broker at a time)
- *   - QoS 0 and QoS 1 only (no QoS 2)
- *   - Clean session only (no persistent session state)
- *   - FRAM-backed TX/RX buffers
- *   - Event-driven via callbacks (non-blocking)
+ * - Static allocation only (no heap)
+ * - Single connection (one broker at a time)
+ * - QoS 0 and QoS 1 only (no QoS 2)
+ * - Clean session only (no persistent session state)
+ * - FRAM-backed TX/RX buffers
+ * - Event-driven via callbacks (non-blocking)
  *
  * Memory budget (defaults):
- *   SRAM:  ~60 bytes (context + parser)
- *   FRAM:  TX_BUF + RX_BUF + credentials + will
- *          = 192 + 192 + ~73 + ~65 = ~522 bytes
+ * SRAM:  ~60 bytes (context + parser)
+ * FRAM:  TX_BUF + RX_BUF + credentials + will
+ * = 192 + 192 + ~73 + ~65 = ~522 bytes
  *
  * Usage:
- *   @code
- *     tiku_kits_net_mqtt_init();
+ * @code
+ * tiku_kits_net_mqtt_init();
  *
- *     uint8_t broker[] = {172, 16, 7, 1};
- *     tiku_kits_net_mqtt_set_server(broker, 1883);
- *     tiku_kits_net_mqtt_set_credentials("my_device",
- *         NULL, NULL);
+ * uint8_t broker[] = {172, 16, 7, 1};
+ * tiku_kits_net_mqtt_set_server(broker, 1883);
+ * tiku_kits_net_mqtt_set_credentials("my_device",
+ * NULL, NULL);
  *
- *     tiku_kits_net_mqtt_connect(my_msg_cb, my_event_cb);
- *     // In my_event_cb(EVT_CONNECTED):
- *     tiku_kits_net_mqtt_subscribe("cmd/#", 1);
- *     tiku_kits_net_mqtt_publish("sensors/temp",
- *         data, len, 0, 0);
+ * tiku_kits_net_mqtt_connect(my_msg_cb, my_event_cb);
+ * // In my_event_cb(EVT_CONNECTED):
+ * tiku_kits_net_mqtt_subscribe("cmd/#", 1);
+ * tiku_kits_net_mqtt_publish("sensors/temp",
+ * data, len, 0, 0);
  *
- *     // Call periodically (~once per second):
- *     tiku_kits_net_mqtt_periodic();
- *   @endcode
+ * // Call periodically (~once per second):
+ * tiku_kits_net_mqtt_periodic();
+ * @endcode
  *
  * For TLS (MQTTS):
- *   @code
- *     // Enable at compile time:
- *     //   #define TIKU_KITS_NET_MQTT_TLS_ENABLE 1
- *     // Set PSK before connecting:
- *     tiku_kits_crypto_tls_set_psk(key, 16, "mqtt", 4);
- *     tiku_kits_net_mqtt_set_server(broker, 8883);
- *     tiku_kits_net_mqtt_connect(msg_cb, event_cb);
- *   @endcode
+ * @code
+ * // Enable at compile time:
+ * //   #define TIKU_KITS_NET_MQTT_TLS_ENABLE 1
+ * // Set PSK before connecting:
+ * tiku_kits_crypto_tls_set_psk(key, 16, "mqtt", 4);
+ * tiku_kits_net_mqtt_set_server(broker, 8883);
+ * tiku_kits_net_mqtt_connect(msg_cb, event_cb);
+ * @endcode
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -64,8 +68,6 @@
  * either express or implied.  See the License for the specific
  * language governing permissions and limitations under the
  * License.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_MQTT_H_
@@ -90,13 +92,15 @@
 /* TLS OPTION                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Enable TLS 1.3 PSK transport for MQTT (MQTTS).
- *
+/*
  * When enabled, the client performs a TLS handshake after TCP
  * connect and before sending the MQTT CONNECT packet.  The
  * application must call tiku_kits_crypto_tls_set_psk() before
  * tiku_kits_net_mqtt_connect().
+ */
+
+/**
+ * @brief Enable TLS 1.3 PSK transport for MQTT (MQTTS).
  */
 #ifndef TIKU_KITS_NET_MQTT_TLS_ENABLE
 #define TIKU_KITS_NET_MQTT_TLS_ENABLE   0
@@ -162,15 +166,16 @@
 #define TIKU_KITS_NET_MQTT_MAX_INFLIGHT     4
 #endif
 
-/**
- * @brief Keepalive interval in seconds.
- *
+/*
  * Client sends PINGREQ if no packet has been sent within
  * this interval.  Broker disconnects if nothing received
  * within 1.5x.  Set to 0 to disable keepalive.
- *
  * Must satisfy: keepalive * TIKU_CLOCK_SECOND < 65536
  * (16-bit clock overflow constraint).
+ */
+
+/**
+ * @brief Keepalive interval in seconds.
  */
 #ifndef TIKU_KITS_NET_MQTT_KEEPALIVE_SEC
 #define TIKU_KITS_NET_MQTT_KEEPALIVE_SEC    60
@@ -317,14 +322,16 @@
 /* CALLBACK TYPES                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Incoming PUBLISH message callback.
- *
+/*
  * Invoked when a PUBLISH is received from the broker.  The
  * topic and payload pointers reference the internal RX buffer
  * and are valid only for the duration of the callback -- copy
  * if needed.  For QoS 1, PUBACK is sent automatically after
  * the callback returns.
+ */
+
+/**
+ * @brief Incoming PUBLISH message callback.
  *
  * @param topic        Topic string (NOT NUL-terminated)
  * @param topic_len    Topic length in bytes
@@ -424,19 +431,21 @@ int8_t tiku_kits_net_mqtt_set_will(
 /* CONNECTION                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initiate MQTT connection to the configured broker.
- *
+/*
  * Non-blocking.  Starts the TCP handshake (and optionally
  * TLS).  On completion, event_cb fires with EVT_CONNECTED
  * or EVT_ERROR.  Server and credentials must be configured
  * before calling.
+ */
+
+/**
+ * @brief Initiate MQTT connection to the configured broker.
  *
  * @param msg_cb    Incoming PUBLISH callback
  * @param event_cb  Connection event callback
  * @return TIKU_KITS_NET_OK if connect initiated,
- *         TIKU_KITS_NET_ERR_MQTT_STATE if not disconnected,
- *         TIKU_KITS_NET_ERR_MQTT_TCP if TCP connect failed
+ * TIKU_KITS_NET_ERR_MQTT_STATE if not disconnected,
+ * TIKU_KITS_NET_ERR_MQTT_TCP if TCP connect failed
  */
 int8_t tiku_kits_net_mqtt_connect(
     tiku_kits_net_mqtt_msg_cb_t msg_cb,

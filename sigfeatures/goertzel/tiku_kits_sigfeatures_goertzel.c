@@ -74,14 +74,16 @@ int tiku_kits_sigfeatures_goertzel_reset(
 /* SAMPLE INPUT                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push one sample through the Goertzel filter
- *
+/*
  * Applies the second-order IIR recurrence:
- *   s0 = x[n] + (coeff_q14 * s1 >> 14) - s2
+ * s0 = x[n] + (coeff_q14 * s1 >> 14) - s2
  * then shifts s2 <- s1, s1 <- s0.  The multiplication is widened
  * to int64_t before the right-shift to prevent overflow on 16-bit
  * targets.
+ */
+
+/**
+ * @brief Push one sample through the Goertzel filter
  */
 int tiku_kits_sigfeatures_goertzel_push(
     struct tiku_kits_sigfeatures_goertzel *g,
@@ -133,13 +135,15 @@ int tiku_kits_sigfeatures_goertzel_complete(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute the squared magnitude of the target DFT bin
- *
+/*
  * Evaluates |X[k]|^2 = s1^2 + s2^2 - coeff*s1*s2 using the
  * final feedback register values.  The coeff*s1 product is
  * computed in Q14 then multiplied by s2 in int64_t to prevent
  * overflow.  The result is not normalized by N.
+ */
+
+/**
+ * @brief Compute the squared magnitude of the target DFT bin
  */
 int tiku_kits_sigfeatures_goertzel_magnitude_sq(
     const struct tiku_kits_sigfeatures_goertzel *g,

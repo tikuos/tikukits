@@ -6,6 +6,10 @@
  *
  * tiku_kits_crypto_tls.h - TLS 1.3 PSK client (one of three TLS clients)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Provides a minimal TLS 1.3 client using pre-shared keys (PSK)
  * with the TLS_AES_128_GCM_SHA256 cipher suite (RFC 8446).
  *
@@ -21,20 +25,18 @@
  * arbitrary HTTPS servers.
  *
  * Architecture:
- *   - SRAM: connection context (~345 B during handshake, ~537 B
- *     during application data with both GCM contexts active)
- *   - FRAM (.persistent): transcript buffer (512 B), record
- *     RX/TX buffers (300 B each), PSK storage (64 B)
- *   - Builds on existing AES-128, SHA-256, HMAC, and TCP
+ * - SRAM: connection context (~345 B during handshake, ~537 B
+ * during application data with both GCM contexts active)
+ * - FRAM (.persistent): transcript buffer (512 B), record
+ * RX/TX buffers (300 B each), PSK storage (64 B)
+ * - Builds on existing AES-128, SHA-256, HMAC, and TCP
  *
  * Usage:
- *   1. Call tiku_kits_crypto_tls_init() once at boot
- *   2. Set PSK with tiku_kits_crypto_tls_set_psk()
- *   3. Establish TCP connection, then call tls_connect()
- *   4. Send/receive application data via tls_send()/tls_read()
- *   5. Close with tls_close()
- *
- * SPDX-License-Identifier: Apache-2.0
+ * 1. Call tiku_kits_crypto_tls_init() once at boot
+ * 2. Set PSK with tiku_kits_crypto_tls_set_psk()
+ * 3. Establish TCP connection, then call tls_connect()
+ * 4. Send/receive application data via tls_send()/tls_read()
+ * 5. Close with tls_close()
  */
 
 #ifndef TIKU_KITS_CRYPTO_TLS_H_
@@ -91,16 +93,18 @@ typedef void (*tiku_kits_crypto_tls_event_cb_t)(
 /* CONNECTION CONTEXT                                                        */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_crypto_tls_conn
- * @brief TLS 1.3 connection state.
- *
+/*
  * Lives in SRAM for fast access to hot crypto state.  Large
  * buffers (transcript, record data) are in FRAM and accessed
  * via static module-level arrays.
- *
  * Memory: ~345 bytes during handshake (only rx_gcm active),
  * ~537 bytes during application data (both GCM contexts).
+ */
+
+/**
+ * @brief TLS 1.3 connection state.
+ *
+ * @struct tiku_kits_crypto_tls_conn
  */
 typedef struct tiku_kits_crypto_tls_conn {
     /* --- Underlying TCP connection --- */
@@ -171,16 +175,17 @@ int tiku_kits_crypto_tls_set_psk(const uint8_t *key,
 /* HANDSHAKE                                                                 */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Start TLS 1.3 handshake over an established TCP connection.
- *
+/*
  * Takes ownership of the TCP connection's recv/event callbacks.
  * The TLS layer intercepts TCP data, drives the handshake state
  * machine, and delivers decrypted application data to the
  * provided callbacks once the handshake completes.
- *
  * The TCP connection must already be in the ESTABLISHED state
  * (3-way handshake complete).
+ */
+
+/**
+ * @brief Start TLS 1.3 handshake over an established TCP connection.
  *
  * @param tcp_conn   Established TCP connection
  * @param recv_cb    Application data callback
@@ -232,13 +237,15 @@ uint16_t tiku_kits_crypto_tls_read(
 /* CLOSE                                                                     */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initiate TLS close (send close_notify alert).
- *
+/*
  * Sends an encrypted close_notify alert and transitions to
  * CLOSING state.  The underlying TCP connection is not closed;
  * the application should close TCP separately after TLS close
  * completes.
+ */
+
+/**
+ * @brief Initiate TLS close (send close_notify alert).
  *
  * @param conn  TLS connection
  * @return TIKU_KITS_CRYPTO_OK on success

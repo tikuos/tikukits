@@ -6,6 +6,10 @@
  *
  * tiku_kits_time_ntp_process.c - NTP protothread process
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * A self-contained protothread that sends an NTP request to the host
  * (172.16.7.1) after the network stack is initialised, polls for the
  * response, and prints the received UTC time over UART.
@@ -13,8 +17,6 @@
  * Designed to run alongside tiku_kits_net_process in APP=net.
  * The NTP request is triggered by a 3-second boot delay to ensure
  * the network stack and SLIP link are fully operational.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <kernel/process/tiku_process.h>

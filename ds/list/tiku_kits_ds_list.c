@@ -24,14 +24,16 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Allocate a node from the free list
- *
+/*
  * Pops the head of the free chain and returns its pool index.
  * O(1) -- no traversal needed because the free head is tracked
  * explicitly.  The allocated node's next pointer is reset to
  * LIST_NONE so it does not carry stale free-chain links into
  * the active chain.
+ */
+
+/**
+ * @brief Allocate a node from the free list
  */
 static uint8_t pool_alloc(struct tiku_kits_ds_list *list)
 {
@@ -286,14 +288,16 @@ int tiku_kits_ds_list_pop_front(struct tiku_kits_ds_list *list,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Remove the node at the given pool index
- *
+/*
  * O(n) worst case -- must traverse the active chain to find the
  * predecessor so the predecessor's next pointer can be patched.
  * Head removal is a special O(1) case handled first to avoid the
  * traversal when possible.  The removed node is returned to the
  * free pool.
+ */
+
+/**
+ * @brief Remove the node at the given pool index
  */
 int tiku_kits_ds_list_remove(struct tiku_kits_ds_list *list,
                               uint8_t node_idx)
@@ -339,13 +343,15 @@ int tiku_kits_ds_list_remove(struct tiku_kits_ds_list *list,
 /* SEARCH AND ACCESS                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Linear search for the first occurrence of a value
- *
+/*
  * Walks the active chain from head to tail and returns the pool
  * index of the first node whose data matches @p value.  O(n) worst
  * case.  The search is inherently linear because the list is
  * unsorted.
+ */
+
+/**
+ * @brief Linear search for the first occurrence of a value
  */
 int tiku_kits_ds_list_find(const struct tiku_kits_ds_list *list,
                             tiku_kits_ds_elem_t value,
@@ -453,13 +459,15 @@ uint8_t tiku_kits_ds_list_head(const struct tiku_kits_ds_list *list)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Return the next-node index for a given node
- *
+/*
  * Validates that @p node_idx is in the active chain before
  * returning its successor.  This O(n) validation prevents callers
  * from accidentally following freed-chain links by supplying a
  * stale index.
+ */
+
+/**
+ * @brief Return the next-node index for a given node
  */
 uint8_t tiku_kits_ds_list_next(const struct tiku_kits_ds_list *list,
                                 uint8_t node_idx)

@@ -6,28 +6,30 @@
  *
  * tiku_kits_gfx_text.h - Bitmap font + text rendering for the gfx kit
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Renders 1-bit-per-pixel bitmap fonts on any tiku_kits_gfx_surface.
  * Supports both monospaced and proportional (variable-width) fonts,
  * multi-line layout with word-wrap, and horizontal alignment.
  *
  * Glyph format (column-major, 1bpp, LSB = top row):
- *   - Each glyph occupies `width * bytes_per_column` bytes, where
- *     `bytes_per_column = ceil(height / 8)`.
- *   - Within each byte, bit 0 = topmost row of that column, bit 6 =
- *     next row down, etc. For fonts up to 8 rows tall, one byte per
- *     column. For taller fonts (e.g. 8x16), two bytes per column
- *     stacked top-to-bottom.
- *   - For proportional fonts, each glyph still occupies the full
- *     `width * bytes_per_column` bytes (some columns are empty);
- *     the per-glyph advance is taken from the `widths` array.
+ * - Each glyph occupies `width * bytes_per_column` bytes, where
+ * `bytes_per_column = ceil(height / 8)`.
+ * - Within each byte, bit 0 = topmost row of that column, bit 6 =
+ * next row down, etc. For fonts up to 8 rows tall, one byte per
+ * column. For taller fonts (e.g. 8x16), two bytes per column
+ * stacked top-to-bottom.
+ * - For proportional fonts, each glyph still occupies the full
+ * `width * bytes_per_column` bytes (some columns are empty);
+ * the per-glyph advance is taken from the `widths` array.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #ifndef TIKU_KITS_GFX_TEXT_H_
@@ -39,38 +41,39 @@
 /* FONT DESCRIPTOR                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Static description of a bitmap font.
- *
+/*
  * Apps may declare additional fonts in their own code or as part
  * of a separate font module under `tikukits/gfx/fonts/`.
- *
  * Field meanings:
- *   - `width`           Maximum (or fixed) glyph width in pixels.
- *                       Used for monospaced layout when `widths`
- *                       is NULL.
- *   - `height`          Glyph height in pixels.
- *   - `first`, `last`   Inclusive character range covered by the
- *                       font (interpreted as raw bytes).
- *   - `bytes_per_column` ceil(height / 8). 1 for fonts up to 8 px
- *                       tall, 2 for 9..16 px, etc.
- *   - `glyphs`          Glyph data, indexed by (c - first).
- *   - `widths`          Optional per-glyph advance widths (one byte
- *                       per glyph). NULL = monospaced (use `width`
- *                       for every glyph). Variable-width fonts use
- *                       this to render proportionally.
- *   - `ascent`          Pixels from glyph top to baseline (typically
- *                       `height - descent`). Optional metadata.
- *   - `descent`         Pixels from baseline to glyph bottom.
- *                       Optional metadata.
- *   - `line_height`     Recommended vertical advance for multi-line
- *                       text. If 0, falls back to `height + 1`.
- *   - `fallback`        Optional next-resort font. When the primary
- *                       font lacks a glyph for the requested
- *                       character, draw_char and friends walk this
- *                       chain. NULL ends the chain. Authors must
- *                       avoid cycles (e.g. font_a.fallback = &font_b
- *                       and font_b.fallback = &font_a).
+ * - `width`           Maximum (or fixed) glyph width in pixels.
+ * Used for monospaced layout when `widths`
+ * is NULL.
+ * - `height`          Glyph height in pixels.
+ * - `first`, `last`   Inclusive character range covered by the
+ * font (interpreted as raw bytes).
+ * - `bytes_per_column` ceil(height / 8). 1 for fonts up to 8 px
+ * tall, 2 for 9..16 px, etc.
+ * - `glyphs`          Glyph data, indexed by (c - first).
+ * - `widths`          Optional per-glyph advance widths (one byte
+ * per glyph). NULL = monospaced (use `width`
+ * for every glyph). Variable-width fonts use
+ * this to render proportionally.
+ * - `ascent`          Pixels from glyph top to baseline (typically
+ * `height - descent`). Optional metadata.
+ * - `descent`         Pixels from baseline to glyph bottom.
+ * Optional metadata.
+ * - `line_height`     Recommended vertical advance for multi-line
+ * text. If 0, falls back to `height + 1`.
+ * - `fallback`        Optional next-resort font. When the primary
+ * font lacks a glyph for the requested
+ * character, draw_char and friends walk this
+ * chain. NULL ends the chain. Authors must
+ * avoid cycles (e.g. font_a.fallback = &font_b
+ * and font_b.fallback = &font_a).
+ */
+
+/**
+ * @brief Static description of a bitmap font.
  */
 typedef struct tiku_kits_gfx_font tiku_kits_gfx_font_t;
 struct tiku_kits_gfx_font {
@@ -91,15 +94,16 @@ struct tiku_kits_gfx_font {
 /* UTF-8 DECODER                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Decode one UTF-8 codepoint and advance @p p past it.
- *
+/*
  * On a malformed sequence the function consumes one byte and
  * returns 0xFFFD (the Unicode replacement character).
- *
  * Useful when a font's glyph table is indexed by codepoint above
  * 0x7F (Latin-1, Greek, symbols, etc.). For ASCII-only callers the
  * existing draw_char / draw_string ASCII paths remain.
+ */
+
+/**
+ * @brief Decode one UTF-8 codepoint and advance @p p past it.
  *
  * @return The decoded codepoint, or 0 if @p p reached '\0'.
  */
@@ -220,17 +224,19 @@ uint16_t tiku_kits_gfx_draw_string_in_box(
     tiku_kits_gfx_align_t halign,
     tiku_kits_gfx_valign_t valign);
 
-/**
- * @brief Single-line text with ellipsis truncation when @p str
- *        does not fit @p rect width.
- *
+/*
  * Renders as much of @p str as fits, followed by "..." (or the
  * supplied @p ellipsis if non-NULL) when truncated. Vertically
  * top-aligned within @p rect. Pass @p ellipsis = NULL for the
  * default "..."; pass "" to disable the ellipsis (hard truncate).
+ */
+
+/**
+ * @brief Single-line text with ellipsis truncation when @p str
+ * does not fit @p rect width.
  *
  * @return Number of source characters actually rendered (excluding
- *         the ellipsis run).
+ * the ellipsis run).
  */
 uint16_t tiku_kits_gfx_draw_string_truncated(
     const tiku_kits_gfx_surface_t *s,

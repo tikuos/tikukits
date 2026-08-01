@@ -56,15 +56,17 @@ static void incr_counter(uint8_t *block)
     }
 }
 
-/**
- * @brief Multiply two 128-bit values in GF(2^128).
- *
+/*
  * Uses the GCM reduction polynomial
- *   R = x^128 + x^7 + x^2 + x + 1
+ * R = x^128 + x^7 + x^2 + x + 1
  * with a bit-by-bit right-to-left schoolbook algorithm.
  * Each iteration examines the MSB of @p x (bit 0 of byte 0)
  * and conditionally XORs the running copy of @p y into the
  * result, then shifts @p y right by one bit with reduction.
+ */
+
+/**
+ * @brief Multiply two 128-bit values in GF(2^128).
  *
  * @param[in]  x       First 16-byte operand.
  * @param[in]  y       Second 16-byte operand.
@@ -114,17 +116,18 @@ static void ghash_multiply(const uint8_t *x,
     }
 }
 
-/**
- * @brief Compute GHASH over an arbitrary-length byte string.
- *
+/*
  * Processes @p data in 16-byte blocks:
- *   Y_0 = 0^128
- *   Y_i = ghash_multiply(Y_{i-1} XOR X_i, H)
- *
+ * Y_0 = 0^128
+ * Y_i = ghash_multiply(Y_{i-1} XOR X_i, H)
  * If @p data_len is not a multiple of 16 the last partial block
  * is zero-padded before processing.  The caller is responsible
  * for providing the correctly formatted GHASH input (AAD ||
  * pad || CT || pad || len_block).
+ */
+
+/**
+ * @brief Compute GHASH over an arbitrary-length byte string.
  *
  * @param[in]  h         16-byte GHASH subkey.
  * @param[in]  data      Input byte string.
@@ -167,13 +170,15 @@ static void ghash(const uint8_t *h,
     }
 }
 
-/**
- * @brief AES-CTR mode encryption / decryption.
- *
+/*
  * Encrypts (or decrypts, since CTR is symmetric) @p len bytes by
  * generating a keystream from AES(K, nonce || counter_BE) and
  * XOR-ing it with the input.  The counter is a 32-bit big-endian
  * value occupying bytes 12..15 of the 16-byte block.
+ */
+
+/**
+ * @brief AES-CTR mode encryption / decryption.
  *
  * @param[in]  aes            Initialized AES-128 context.
  * @param[in]  nonce          12-byte nonce.
@@ -245,14 +250,16 @@ static uint8_t constant_time_compare(const uint8_t *a,
     return diff;
 }
 
-/**
- * @brief Build the GHASH input and compute the tag.
- *
+/*
  * Constructs the GHASH input per NIST SP 800-38D:
- *   AAD || pad_to_16 || CT || pad_to_16 || len(AAD)*8 || len(CT)*8
+ * AAD || pad_to_16 || CT || pad_to_16 || len(AAD)*8 || len(CT)*8
  * where the lengths are 64-bit big-endian bit counts.  Then XORs
  * the GHASH output with the encrypted J0 block (tag mask) to
  * produce the final authentication tag.
+ */
+
+/**
+ * @brief Build the GHASH input and compute the tag.
  *
  * @param[in]  ctx      GCM context (provides AES and H).
  * @param[in]  nonce    12-byte nonce.

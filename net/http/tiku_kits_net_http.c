@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_http.c - Minimal HTTP/1.1 client
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements the HTTP/1.1 request builder, response parser,
  * and blocking client that drives DNS, TCP, and TLS to
  * completion.  Designed for ultra-low-power MCUs with static
@@ -15,7 +19,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -23,8 +27,6 @@
  * either express or implied.  See the License for the specific
  * language governing permissions and limitations under the
  * License.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/
@@ -127,19 +129,20 @@ tiku_kits_net_http_parser_init(
     p->hdr_end_seq = 0;
 }
 
-/**
- * @brief Feed raw HTTP response bytes through the parser.
- *
+/*
  * Processes each byte through a three-phase state machine:
- *   1. STATUS -- skips "HTTP/1.x ", extracts the 3-digit status
- *      code, then skips the reason phrase until \\n.
- *   2. HEADERS -- counts \\r\\n sequences; when \\r\\n\\r\\n is
- *      detected (the empty line after headers), transitions to BODY.
- *   3. BODY -- copies bytes into the caller's body_buf up to
- *      body_max capacity.
- *
+ * 1. STATUS -- skips "HTTP/1.x ", extracts the 3-digit status
+ * code, then skips the reason phrase until \\n.
+ * 2. HEADERS -- counts \\r\\n sequences; when \\r\\n\\r\\n is
+ * detected (the empty line after headers), transitions to BODY.
+ * 3. BODY -- copies bytes into the caller's body_buf up to
+ * body_max capacity.
  * The parser is incremental: it can be called repeatedly with
  * small chunks as data arrives from the TLS layer.
+ */
+
+/**
+ * @brief Feed raw HTTP response bytes through the parser.
  */
 void
 tiku_kits_net_http_parser_feed(
@@ -232,17 +235,18 @@ tiku_kits_net_http_parser_done(
 /* REQUEST BUILDER                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Format an HTTP/1.1 request line and headers into a buffer.
- *
+/*
  * Assembles the request line ("METHOD path HTTP/1.1\\r\\n") followed
  * by Host, Content-Type (if body_len > 0), x-api-key + anthropic-
  * version (if api_key != NULL), Content-Length (if body_len > 0),
  * Connection: close, and the final blank line.  The body is NOT
  * included -- the caller sends it separately after the headers.
- *
  * Returns the number of bytes written.  If the buffer is too small,
  * the output is truncated and the return value equals buf_max.
+ */
+
+/**
+ * @brief Format an HTTP/1.1 request line and headers into a buffer.
  */
 uint16_t
 tiku_kits_net_http_build_request(
@@ -412,13 +416,15 @@ http_tls_event_cb(struct tiku_kits_crypto_tls_conn *conn,
 /* NET STACK POLL                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Drain the SLIP link and process incoming IP frames.
- *
+/*
  * Equivalent to what the net process protothread does each
  * poll interval.  Called in a tight loop by the blocking HTTP
  * functions to advance TCP, TLS, and DNS state machines while
  * waiting for events.
+ */
+
+/**
+ * @brief Drain the SLIP link and process incoming IP frames.
  */
 static void
 http_net_poll(void)
@@ -439,14 +445,16 @@ http_net_poll(void)
 /* SHARED CONNECT + REQUEST-BUILD HELPERS                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Open a TCP connection to the resolved server and block until ready.
- *
+/*
  * Connects to @p ip : TIKU_KITS_NET_HTTP_PORT from @p src_port, polling the
  * SLIP link until the 3-way handshake completes.  Shared by both trust models;
  * the cert path also uses it to reopen a fresh 4-tuple for the TLS 1.2
  * fallback.  Returns the connection, or NULL on abort/timeout (the socket is
  * aborted before returning NULL so no slot leaks).
+ */
+
+/**
+ * @brief Open a TCP connection to the resolved server and block until ready.
  */
 static tiku_kits_net_tcp_conn_t *
 http_tcp_open(const uint8_t ip[4], uint16_t src_port)
@@ -541,15 +549,17 @@ http_tls_send_all(const uint8_t *data, uint16_t len)
 /* PSK TRUST MODEL (event-driven, over the TCP callbacks)                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Drive the pre-shared-key TLS transport to completion.
- *
+/*
  * On entry http_ctx.tcp is CONNECTED, the request is formatted in
  * http_req_buf[0..req_len), and http_ctx.parser is initialised.  Runs the
  * PSK handshake (which takes over the TCP callbacks), sends the request and
  * optional body, then reads + parses the response.  Closes the TLS layer on
  * success; leaves the TCP socket for the caller to tear down.  Returns
  * TIKU_KITS_NET_OK or a negative HTTP error.
+ */
+
+/**
+ * @brief Drive the pre-shared-key TLS transport to completion.
  */
 static int8_t
 http_drive_psk(uint16_t req_len, const uint8_t *body,
@@ -660,13 +670,15 @@ static uint8_t http_cert_rx[TIKU_KITS_NET_HTTP_CERT_RX_STAGING];
                             * TIKU_CLOCK_SECOND)))
 #define HTTP_CERT_EXPIRED(dl)  (!TIKU_CLOCK_LT(tiku_clock_time(), (dl)))
 
-/**
- * @brief One cooperative-blocking pump step for the cert handshake/transfer.
- *
+/*
  * Delivers inbound IP frames every call and advances the TCP timers at ~8 Hz
  * (a tight loop calling tcp_periodic every iteration would burn through the
  * connect/retransmit timeouts).  Kicks the watchdog so a legitimately slow
  * public-web handshake survives while a genuine hang still trips the WDT.
+ */
+
+/**
+ * @brief One cooperative-blocking pump step for the cert handshake/transfer.
  */
 static void
 http_cert_pump(void)

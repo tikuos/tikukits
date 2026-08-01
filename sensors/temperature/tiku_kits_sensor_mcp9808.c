@@ -6,13 +6,15 @@
  *
  * tiku_kits_sensor_mcp9808.c - MCP9808 I2C temperature sensor driver
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Microchip MCP9808 digital temperature sensor driver using the
  * TikuOS I2C bus abstraction.  Reads the 16-bit ambient temperature
  * register and converts the raw two's-complement value to a
  * tiku_kits_sensor_temp_t with integer and fractional (1/16 C)
  * parts.  Typical accuracy is +/-0.5 C from -20 to +100 C.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/
@@ -71,13 +73,15 @@ static uint8_t sensor_addr;
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Read a 16-bit big-endian register from the MCP9808
- *
+/*
  * Issues a combined I2C write-read transaction: writes the 1-byte
  * register address, then reads 2 bytes back.  The MCP9808 stores
  * all 16-bit registers in big-endian (MSB-first) order, so the
  * first received byte is shifted up to form the high byte.
+ */
+
+/**
+ * @brief Read a 16-bit big-endian register from the MCP9808
  */
 static int read_reg16(uint8_t reg, uint16_t *value)
 {
@@ -98,14 +102,16 @@ static int read_reg16(uint8_t reg, uint16_t *value)
 /* PUBLIC API                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize and verify the MCP9808 sensor
- *
+/*
  * Latches the I2C address for subsequent reads, then performs a
  * two-register identification check (manufacturer ID followed by
  * device ID) to confirm the correct sensor is present.  If either
  * check fails the address is still stored, but the caller should
  * treat the sensor as unusable.
+ */
+
+/**
+ * @brief Initialize and verify the MCP9808 sensor
  */
 int tiku_kits_sensor_mcp9808_init(uint8_t addr)
 {
@@ -136,14 +142,16 @@ int tiku_kits_sensor_mcp9808_init(uint8_t addr)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Read the ambient temperature from the MCP9808
- *
+/*
  * Fetches the 16-bit temperature register and decodes the 13-bit
  * value into integer + fractional form.  The MCP9808 uses a
  * sign+magnitude encoding (bit 12 = sign) rather than two's
  * complement, so the negative path computes the complement of
  * the magnitude fields independently.
+ */
+
+/**
+ * @brief Read the ambient temperature from the MCP9808
  */
 int tiku_kits_sensor_mcp9808_read(tiku_kits_sensor_temp_t *temp)
 {

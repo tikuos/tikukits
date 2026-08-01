@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_http.h - Minimal HTTP/1.1 client
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Provides a minimal HTTP/1.1 client.  Only GET and POST are
  * supported.  No chunked encoding, redirects, cookies, gzip,
  * or keep-alive.
@@ -14,49 +18,49 @@
  * tiku_kits_net_http_tls_t that selects one of two trust models for
  * the connection, so a single entry point reaches either a private
  * peer or the public web:
- *   - PSK  -- the pre-shared-key TLS client (net/tls/psk); reaches
- *             only peers that share the key (your own gateway/broker).
- *   - CERT -- the certificate-based TLS 1.3/1.2 clients
- *             (net/tls/{tls13,tls12}); validate the server chain
- *             against a caller-supplied X.509 root store, reaching
- *             arbitrary HTTPS servers.  Requires the kit built with
- *             the cert clients (HAS_TLS => TIKU_KITS_NET_HTTP_CERT_ENABLE).
+ * - PSK  -- the pre-shared-key TLS client (net/tls/psk); reaches
+ * only peers that share the key (your own gateway/broker).
+ * - CERT -- the certificate-based TLS 1.3/1.2 clients
+ * (net/tls/{tls13,tls12}); validate the server chain
+ * against a caller-supplied X.509 root store, reaching
+ * arbitrary HTTPS servers.  Requires the kit built with
+ * the cert clients (HAS_TLS => TIKU_KITS_NET_HTTP_CERT_ENABLE).
  * Both models share the request builder and response parser below
  * (they are TLS-agnostic) and drive TCP through the same io vtable
  * the cert clients define.  A NULL descriptor selects PSK.
  *
  * Architecture:
- *   - Request builder formats headers into a caller-supplied
- *     buffer.  No heap allocation.
- *   - Response parser is a byte-by-byte state machine that
- *     extracts the status code, skips headers, and copies the
- *     body into the caller's buffer.
- *   - The blocking post/get functions drive DNS, TCP, TLS,
- *     and the HTTP exchange to completion before returning.
- *   - FRAM-backed request buffer avoids SRAM pressure during
- *     header assembly and doubles as TLS read staging after
- *     the request is sent.
+ * - Request builder formats headers into a caller-supplied
+ * buffer.  No heap allocation.
+ * - Response parser is a byte-by-byte state machine that
+ * extracts the status code, skips headers, and copies the
+ * body into the caller's buffer.
+ * - The blocking post/get functions drive DNS, TCP, TLS,
+ * and the HTTP exchange to completion before returning.
+ * - FRAM-backed request buffer avoids SRAM pressure during
+ * header assembly and doubles as TLS read staging after
+ * the request is sent.
  *
  * Usage (public-web POST to the Anthropic API over certificate TLS):
- *   @code
- *     static const tiku_kits_net_http_tls_t tls = {
- *         .trust = TIKU_KITS_NET_HTTP_CERT,
- *         .roots = my_roots, .nroots = MY_NROOTS,
- *         .rng   = my_csprng,          // platform CSPRNG
- *     };
- *     uint8_t resp[512];
- *     uint16_t resp_len;
- *     int8_t rc = tiku_kits_net_http_post(
- *         &tls, "api.anthropic.com", "/v1/messages",
- *         "sk-ant-...", json, json_len,
- *         resp, sizeof(resp), &resp_len);
- *   @endcode
+ * @code
+ * static const tiku_kits_net_http_tls_t tls = {
+ * .trust = TIKU_KITS_NET_HTTP_CERT,
+ * .roots = my_roots, .nroots = MY_NROOTS,
+ * .rng   = my_csprng,          // platform CSPRNG
+ * };
+ * uint8_t resp[512];
+ * uint16_t resp_len;
+ * int8_t rc = tiku_kits_net_http_post(
+ * &tls, "api.anthropic.com", "/v1/messages",
+ * "sk-ant-...", json, json_len,
+ * resp, sizeof(resp), &resp_len);
+ * @endcode
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -64,8 +68,6 @@
  * either express or implied.  See the License for the specific
  * language governing permissions and limitations under the
  * License.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_HTTP_H_
@@ -101,13 +103,15 @@
 /* CONFIGURATION (compile-time overrideable)                                 */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief FRAM-backed buffer size for HTTP request headers.
- *
+/*
  * Must hold the complete request line plus all headers.  384
  * bytes accommodates typical Anthropic API requests with API
  * keys up to ~100 characters.  Also reused as TLS read staging
  * after the request is sent.
+ */
+
+/**
+ * @brief FRAM-backed buffer size for HTTP request headers.
  */
 #ifndef TIKU_KITS_NET_HTTP_REQ_BUF_SIZE
 #define TIKU_KITS_NET_HTTP_REQ_BUF_SIZE     384
@@ -232,19 +236,20 @@ uint8_t tiku_kits_net_http_parser_done(
 /* REQUEST BUILDER                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Build an HTTP/1.1 request into a buffer.
- *
+/*
  * Formats the request line and all headers.  The body is NOT
  * included --- the caller sends it separately.
- *
  * Headers included:
- *   - Host (always)
- *   - Content-Type: application/json (when body_len > 0)
- *   - x-api-key (when api_key is not NULL)
- *   - anthropic-version: 2023-06-01 (when api_key is not NULL)
- *   - Content-Length (when body_len > 0)
- *   - Connection: close (always)
+ * - Host (always)
+ * - Content-Type: application/json (when body_len > 0)
+ * - x-api-key (when api_key is not NULL)
+ * - anthropic-version: 2023-06-01 (when api_key is not NULL)
+ * - Content-Length (when body_len > 0)
+ * - Connection: close (always)
+ */
+
+/**
+ * @brief Build an HTTP/1.1 request into a buffer.
  *
  * @param method    "GET" or "POST"
  * @param host      Hostname (e.g. "api.anthropic.com")
@@ -276,19 +281,21 @@ typedef enum {
     TIKU_KITS_NET_HTTP_CERT = 1,  /**< X.509 vs. root store (web) */
 } tiku_kits_net_http_trust_t;
 
+/*
+ * PSK  -- uses the key installed with tiku_kits_crypto_tls_set_psk(); the
+ * cert fields are ignored.  Reaches only peers that share the key.
+ * CERT -- validates the server certificate chain against @roots (X.509),
+ * drawing handshake randomness from @rng.  Reaches the public web.
+ * The kit must be built with TIKU_KITS_NET_HTTP_CERT_ENABLE (which
+ * the Makefile sets when HAS_TLS links the tls13/tls12 clients);
+ * otherwise a CERT request returns TIKU_KITS_NET_ERR_HTTP_NOSUP.
+ * A NULL descriptor is treated as PSK (the historical default).
+ */
+
 /**
- * @struct tiku_kits_net_http_tls_t
  * @brief  Selects and parameterises the TLS trust model for a request.
  *
- * PSK  -- uses the key installed with tiku_kits_crypto_tls_set_psk(); the
- *         cert fields are ignored.  Reaches only peers that share the key.
- * CERT -- validates the server certificate chain against @roots (X.509),
- *         drawing handshake randomness from @rng.  Reaches the public web.
- *         The kit must be built with TIKU_KITS_NET_HTTP_CERT_ENABLE (which
- *         the Makefile sets when HAS_TLS links the tls13/tls12 clients);
- *         otherwise a CERT request returns TIKU_KITS_NET_ERR_HTTP_NOSUP.
- *
- * A NULL descriptor is treated as PSK (the historical default).
+ * @struct tiku_kits_net_http_tls_t
  */
 typedef struct {
     tiku_kits_net_http_trust_t trust;
@@ -329,22 +336,23 @@ typedef uint8_t (*tiku_kits_net_http_sink_t)(
 typedef void *(*tiku_kits_net_http_reconnect_t)(
     void *reconnect_ctx, void *old_ctx);
 
+/*
+ * The shared engine behind the kit's own http_get()/http_post() and any
+ * app-level HTTPS path (e.g. BASIC HTTPGET$).  Over the already-connected
+ * Transport, connect/reopen, and response consumption are all injected, so the
+ * caller keeps its own DNS/connect/pump, request format, and parse policy.
+ */
+
 /**
  * @brief Drive certificate-based HTTPS over a caller-supplied transport.
  *
- * The shared engine behind the kit's own http_get()/http_post() and any
- * app-level HTTPS path (e.g. BASIC HTTPGET$).  Over the already-connected
  * @p io it runs the TLS 1.3 handshake; on failure it calls @p reconnect and
  * retries with TLS 1.2, validating the chain against @p tls (roots/rng/
  * now_unix).  It then sends @p req (headers) and @p body (may be NULL), and
  * reads + decrypts the response, handing every plaintext chunk to @p sink.
- *
- * Transport, connect/reopen, and response consumption are all injected, so the
- * caller keeps its own DNS/connect/pump, request format, and parse policy.
  * @p io->ctx is updated in place on reconnect; the CALLER owns the final
  * socket's teardown (io->ctx) and installs the transport's own offload on
  * io->offload before calling.
- *
  * @return TIKU_KITS_NET_OK, or a negative TIKU_KITS_NET_ERR_HTTP_* error.
  */
 int8_t tiku_kits_net_http_cert_exchange(
@@ -368,19 +376,20 @@ int8_t tiku_kits_net_http_cert_exchange(
 
 #if TIKU_KITS_NET_HTTP_ENABLE
 
-/**
- * @brief Perform an HTTP/1.1 POST over TLS.
- *
+/*
  * Drives the complete sequence: DNS resolve, TCP connect,
  * TLS handshake, send request + JSON body, receive and parse
  * response.  Blocks until the transaction completes or times
  * out.  Internally polls the SLIP link to advance the
  * network stack.
- *
  * On success (HTTP 200), the response body is copied into
  * response_buf and response_len is set.  On non-200 status,
  * returns TIKU_KITS_NET_ERR_HTTP_STATUS and the caller can
  * retrieve the status code via get_status_code().
+ */
+
+/**
+ * @brief Perform an HTTP/1.1 POST over TLS.
  *
  * @param tls           Trust model (NULL = PSK); CERT reaches the public web
  * @param host          Hostname to connect to

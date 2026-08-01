@@ -26,13 +26,15 @@
 /* CLIENT HELLO                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Build a TLS 1.3 ClientHello handshake message.
- *
+/*
  * Constructs a minimal ClientHello for PSK-only mode with
  * supported_versions, psk_key_exchange_modes, and pre_shared_key
  * extensions.  The binder field is zeroed; the caller patches it
  * after computing the transcript-based HMAC.
+ */
+
+/**
+ * @brief Build a TLS 1.3 ClientHello handshake message.
  */
 uint16_t tiku_kits_crypto_tls_build_client_hello(
     uint8_t *out,

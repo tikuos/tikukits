@@ -6,21 +6,23 @@
  *
  * tiku_kits_ui_calendar.h - Month-grid calendar / date picker
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Renders a Sunday-first month grid with the selected day
  * highlighted. Navigation:
  *
- *   FOCUS_LEFT  / DEC  -> previous day
- *   FOCUS_RIGHT / INC  -> next day
- *   FOCUS_UP            -> previous week
- *   FOCUS_DOWN          -> next week
- *   ACTIVATE            -> fire on_select(year, month, day)
- *   BACK                -> step back one month (selected_day clamps)
- *   MENU                -> step forward one month
+ * FOCUS_LEFT  / DEC  -> previous day
+ * FOCUS_RIGHT / INC  -> next day
+ * FOCUS_UP            -> previous week
+ * FOCUS_DOWN          -> next week
+ * ACTIVATE            -> fire on_select(year, month, day)
+ * BACK                -> step back one month (selected_day clamps)
+ * MENU                -> step forward one month
  *
  * Dates wrap correctly across month / year boundaries (handles
  * 28 / 30 / 31 / leap-Feb).
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_CALENDAR_H_

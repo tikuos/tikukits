@@ -25,13 +25,15 @@ extern "C" {
 /** Length in bytes of an X25519 scalar, u-coordinate, and shared secret. */
 #define TIKU_KITS_CRYPTO_X25519_LEN     32
 
-/**
- * @brief X25519 scalar multiplication: out = scalar * point.
- *
+/*
  * Computes the Curve25519 Montgomery-ladder product of a 32-byte scalar
  * and a 32-byte u-coordinate (little-endian, per RFC 7748).  The scalar is
  * clamped internally (bits set/cleared as the spec requires), so the caller
  * may pass raw random bytes.  Constant-time in the scalar.
+ */
+
+/**
+ * @brief X25519 scalar multiplication: out = scalar * point.
  *
  * @param out    32-byte output u-coordinate / shared secret.
  * @param scalar 32-byte secret scalar.

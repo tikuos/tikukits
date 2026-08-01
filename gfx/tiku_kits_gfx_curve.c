@@ -6,6 +6,10 @@
  *
  * tiku_kits_gfx_curve.c - Ellipse / arc / pie primitives
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implementation notes
  * --------------------
  * Ellipses use a scanline algorithm: walk y in [0, ry], compute
@@ -34,9 +38,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #include "tiku_kits_gfx_curve.h"

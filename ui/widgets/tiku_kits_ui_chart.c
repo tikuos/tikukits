@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_chart.c - 2D chart widget impl
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Layout: an inner plot area inside the widget rect, leaving room
  * on the bottom + left for axes when AXES is enabled. Points are
  * mapped (x_min..x_max, y_min..y_max) -> plot rect.
@@ -13,8 +17,6 @@
  * Auto-scaling: if min == max for an axis, walk the points to
  * find the data range and add a 1-unit pad so flat data still
  * shows up.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_ui_chart.h"

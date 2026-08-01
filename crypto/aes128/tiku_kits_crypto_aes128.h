@@ -43,24 +43,25 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_crypto_aes128_ctx
- * @brief  AES-128 context holding the expanded round keys.
- *
+/*
  * The key schedule expands the 16-byte user key into 11 round keys
  * (one for the initial AddRoundKey plus one per round).  Each round
  * key is 16 bytes, giving 176 bytes total.  The context must be
  * initialized with @ref tiku_kits_crypto_aes128_init before use.
- *
  * Example:
- * @code
- *   tiku_kits_crypto_aes128_ctx_t ctx;
- *   uint8_t key[16] = { ... };
- *   uint8_t pt[16]  = { ... };
- *   uint8_t ct[16];
+ * tiku_kits_crypto_aes128_init(&ctx, key);
+ * tiku_kits_crypto_aes128_encrypt(&ctx, pt, ct);
+ */
+
+/**
+ * @brief  AES-128 context holding the expanded round keys.
  *
- *   tiku_kits_crypto_aes128_init(&ctx, key);
- *   tiku_kits_crypto_aes128_encrypt(&ctx, pt, ct);
+ * @struct tiku_kits_crypto_aes128_ctx
+ * @code
+ * tiku_kits_crypto_aes128_ctx_t ctx;
+ * uint8_t key[16] = { ... };
+ * uint8_t pt[16]  = { ... };
+ * uint8_t ct[16];
  * @endcode
  */
 typedef struct tiku_kits_crypto_aes128_ctx {

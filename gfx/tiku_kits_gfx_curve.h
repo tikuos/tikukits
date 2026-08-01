@@ -6,23 +6,25 @@
  *
  * tiku_kits_gfx_curve.h - Ellipse, arc, and pie primitives
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Extends the core gfx kit with curved-shape rendering. All four
  * primitives self-clip against the surface bounds and use only
  * integer arithmetic -- no trig, no floating point.
  *
  * Angle convention (for arc / pie):
- *   - 0 deg points right (+x), angles increase counter-clockwise
- *     in screen space (y down means visually clockwise on display).
- *   - Wraparound is supported: arc(., 350, 10, ...) draws a 20-degree
- *     wedge straddling 0.
+ * - 0 deg points right (+x), angles increase counter-clockwise
+ * in screen space (y down means visually clockwise on display).
+ * - Wraparound is supported: arc(., 350, 10, ...) draws a 20-degree
+ * wedge straddling 0.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #ifndef TIKU_KITS_GFX_CURVE_H_

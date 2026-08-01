@@ -6,13 +6,15 @@
  *
  * tiku_kits_crypto_p256.h - NIST P-256 (secp256r1) ECDSA signature verify
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Verification-only ECDSA over the NIST P-256 curve, for authenticating
  * TLS 1.3 server CertificateVerify messages and ECDSA links in an X.509
  * certificate chain.  Operates exclusively on public data (signature,
  * public key, message hash), so it is deliberately NOT constant-time --
  * there are no secrets to protect here.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_P256_H_
@@ -57,13 +59,15 @@ int tiku_kits_crypto_p256_ecdsa_verify(
 /** Length of an uncompressed P-256 public point: 0x04 || X(32) || Y(32). */
 #define TIKU_KITS_CRYPTO_P256_PUB_LEN  65
 
-/**
- * @brief Generate an (ephemeral) ECDH key pair.
- *
+/*
  * Derives the private scalar d from @p seed (d = seed mod n) and computes the
  * public point Q = d*G in uncompressed form.  Intended for ephemeral ECDHE:
  * pass 32 fresh random bytes as @p seed.  The scalar multiply is best-effort
  * constant-time (double-and-add-always).
+ */
+
+/**
+ * @brief Generate an (ephemeral) ECDH key pair.
  *
  * @param seed  32 random bytes (big-endian).
  * @param priv  Output: the private scalar d (32 bytes, big-endian).

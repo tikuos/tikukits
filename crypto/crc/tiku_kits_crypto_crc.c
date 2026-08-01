@@ -6,6 +6,10 @@
  *
  * tiku_kits_crypto_crc.c - CRC-32 and CRC-16/CCITT for embedded systems
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * CRC-32 uses a 16-entry nibble table (64 bytes of const data) to
  * process 4 bits per iteration -- a good trade-off between the full
  * 256-entry table (1 KB) and pure bit-by-bit (8x slower).
@@ -13,8 +17,6 @@
  * CRC-16/CCITT-FALSE is computed bit-by-bit (no table at all) since
  * the 16-bit arithmetic is fast enough on MSP430 and saves every
  * byte of RAM.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/

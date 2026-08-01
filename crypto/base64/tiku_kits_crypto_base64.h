@@ -77,26 +77,27 @@ int tiku_kits_crypto_base64_encode(const uint8_t *src,
                                     uint16_t dst_size,
                                     uint16_t *out_len);
 
-/**
- * @brief Decode a Base64 string to raw bytes (RFC 4648).
- *
+/*
  * Decodes @p src_len characters from @p src into @p dst.  The number
  * of decoded bytes is written to @p out_len if it is not NULL.
  * Padding characters ('=') are handled; the input length should be
  * a multiple of 4.
+ */
+
+/**
+ * @brief Decode a Base64 string to raw bytes (RFC 4648).
  *
  * @param[in]  src       Base64-encoded input string
  * @param[in]  src_len   Number of encoded characters (must be % 4 == 0)
  * @param[out] dst       Destination buffer for decoded bytes
  * @param[in]  dst_size  Size of destination buffer in bytes
  * @param[out] out_len   Receives the number of bytes written;
- *                       may be NULL
- *
+ * may be NULL
  * @return TIKU_KITS_CRYPTO_OK on success,
- *         TIKU_KITS_CRYPTO_ERR_NULL if src or dst is NULL,
- *         TIKU_KITS_CRYPTO_ERR_OVERFLOW if dst_size is too small,
- *         TIKU_KITS_CRYPTO_ERR_CORRUPT if src contains invalid
- *         Base64 characters or has incorrect length
+ * TIKU_KITS_CRYPTO_ERR_NULL if src or dst is NULL,
+ * TIKU_KITS_CRYPTO_ERR_OVERFLOW if dst_size is too small,
+ * TIKU_KITS_CRYPTO_ERR_CORRUPT if src contains invalid
+ * Base64 characters or has incorrect length
  */
 int tiku_kits_crypto_base64_decode(const char *src,
                                     uint16_t src_len,

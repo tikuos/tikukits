@@ -6,6 +6,10 @@
  *
  * tiku_kits_net.h - Common networking types and definitions
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Provides shared return codes, configuration macros, byte-order
  * helpers, and the link-layer abstraction used by all TikuKits
  * networking sub-modules (SLIP, IPv4, ICMP, UDP, etc.).
@@ -14,8 +18,6 @@
  * targets with severe memory constraints.  The single shared packet
  * buffer (TIKU_KITS_NET_MTU bytes) and static allocation policy
  * keep total RAM overhead well under 200 bytes.  No heap is used.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_H_
@@ -31,21 +33,23 @@
 /* RETURN CODES                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @defgroup TIKU_KITS_NET_STATUS Networking Status Codes
- * @brief Return codes shared by all TikuKits networking sub-modules.
- *
+/*
  * Every public networking function returns one of these codes.  Zero
  * indicates success; negative values indicate distinct error classes.
  * Sub-modules must never define their own return codes -- all codes
  * live here so that application code can handle errors uniformly.
- *
  * Example:
+ */
+
+/**
+ * @brief Return codes shared by all TikuKits networking sub-modules.
+ *
+ * @defgroup TIKU_KITS_NET_STATUS Networking Status Codes
  * @code
- *   int8_t rc = tiku_kits_net_ipv4_output(buf, len);
- *   if (rc != TIKU_KITS_NET_OK) {
- *       // handle error
- *   }
+ * int8_t rc = tiku_kits_net_ipv4_output(buf, len);
+ * if (rc != TIKU_KITS_NET_OK) {
+ * // handle error
+ * }
  * @endcode
  * @{
  */
@@ -66,59 +70,64 @@
 /* CONFIGURATION (compile-time overrideable)                                 */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Enable the DHCP client (default: disabled).
- *
+/*
  * When enabled, the MTU is automatically raised to at least 300
  * bytes so that DHCP packets (236-byte fixed header + options)
  * fit within the shared net_buf.  This adds ~172 bytes of RAM
  * compared to the default 128-byte MTU.
- *
  * Set to 1 at compile time to enable:
+ */
+
+/**
+ * @brief Enable the DHCP client (default: disabled).
+ *
  * @code
- *   #define TIKU_KITS_NET_DHCP_ENABLE 1
+ * #define TIKU_KITS_NET_DHCP_ENABLE 1
  * @endcode
  */
 #ifndef TIKU_KITS_NET_DHCP_ENABLE
 #define TIKU_KITS_NET_DHCP_ENABLE   0
 #endif
 
-/**
- * @brief Enable the TCP transport layer (default: disabled).
- *
+/*
  * When enabled, the net process initialises the TCP subsystem and
  * dispatches protocol-6 packets to the TCP input handler.  TCP
  * uses FRAM-backed buffers for retransmission and receive data;
  * see tiku_kits_net_tcp.h for configuration macros and memory
  * budget details.
- *
  * Set to 1 at compile time to enable:
+ */
+
+/**
+ * @brief Enable the TCP transport layer (default: disabled).
+ *
  * @code
- *   #define TIKU_KITS_NET_TCP_ENABLE 1
+ * #define TIKU_KITS_NET_TCP_ENABLE 1
  * @endcode
  */
 #ifndef TIKU_KITS_NET_TCP_ENABLE
 #define TIKU_KITS_NET_TCP_ENABLE    1
 #endif
 
-/**
- * @brief Maximum transmission unit (bytes).
- *
+/*
  * 128 fits comfortably in MSP430 SRAM and keeps total RAM usage
  * around 172 bytes (~8.4% of 2 KB).  This is the capacity of the
  * single shared packet buffer used for both RX and TX (half-duplex).
  * All upper-layer protocols derive their maximum payload from this
  * value (e.g. ICMP max payload = MTU - 20 - 8 = 100 bytes).
- *
  * When DHCP is enabled, the MTU is automatically raised to 300
  * to accommodate the 236-byte DHCP header plus options.  The user
  * may still override this by defining TIKU_KITS_NET_MTU before
  * including this header.
- *
  * Override at compile time to adjust:
+ */
+
+/**
+ * @brief Maximum transmission unit (bytes).
+ *
  * @code
- *   #define TIKU_KITS_NET_MTU 256
- *   #include "tiku_kits_net.h"
+ * #define TIKU_KITS_NET_MTU 256
+ * #include "tiku_kits_net.h"
  * @endcode
  */
 /* Real-world HTTPS needs a >=576-byte MTU (MSS >=536): CDNs such as Cloudflare
@@ -144,23 +153,24 @@
 #define TIKU_KITS_NET_MTU           128
 #endif
 
-/**
- * @brief Escape NUL (0x00) bytes in SLIP frames (default: enabled).
- *
+/*
  * The eZ-FET backchannel firmware resets the MSP430 target when it
  * receives two consecutive NUL bytes.  With this enabled, the SLIP
  * encoder replaces 0x00 with [ESC, 0xDE] and the decoder reverses
  * it.  This is a non-standard SLIP extension.
- *
  * **Disable (set to 0) when using an external UART adapter (FT232,
  * CP2102) with the Linux kernel SLIP driver (slattach).**  The
  * kernel's SLIP decoder does not understand the NUL escape and
  * will corrupt every 0x00 byte in the packet (turning it into
  * 0xDE), making IP packets unparseable.
- *
  * Set to 0 at compile time to disable:
+ */
+
+/**
+ * @brief Escape NUL (0x00) bytes in SLIP frames (default: enabled).
+ *
  * @code
- *   -DTIKU_KITS_NET_SLIP_ESC_NUL_ENABLE=0
+ * -DTIKU_KITS_NET_SLIP_ESC_NUL_ENABLE=0
  * @endcode
  */
 #ifndef TIKU_KITS_NET_SLIP_ESC_NUL_ENABLE
@@ -203,14 +213,17 @@
 /* COMMON DATA TYPES                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_net_ip4_addr
- * @brief IPv4 address stored as four bytes in network order.
- *
+/*
  * Using a byte array avoids alignment issues on 16-bit MSP430 and
  * makes network byte order handling trivial -- the bytes are already
  * in network order and can be copied directly into packet headers
  * via memcpy without any byte-swapping.
+ */
+
+/**
+ * @brief IPv4 address stored as four bytes in network order.
+ *
+ * @struct tiku_kits_net_ip4_addr
  */
 typedef struct tiku_kits_net_ip4_addr {
     uint8_t b[4];  /**< Address octets in network order */
@@ -255,27 +268,28 @@ tiku_kits_net_ntohs(uint16_t n)
 /* LINK-LAYER ABSTRACTION                                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_net_link
- * @brief Link-layer backend descriptor.
- *
+/*
  * Abstracts the underlying transport so that the IPv4 layer is
  * independent of the physical link.  The default implementation
  * uses SLIP over UART (tiku_kits_net_slip_link), but any transport
  * (wireless, SPI, loopback) can be plugged in by filling one of
  * these structs and passing it to tiku_kits_net_ipv4_set_link().
- *
  * The design mirrors tiku_shell_io_t -- a function-pointer struct
  * that decouples I/O from processing logic.
- *
  * Example (registering a custom link):
+ */
+
+/**
+ * @brief Link-layer backend descriptor.
+ *
+ * @struct tiku_kits_net_link
  * @code
- *   static const tiku_kits_net_link_t my_link = {
- *       .send    = my_send_func,
- *       .poll_rx = my_poll_func,
- *       .name    = "custom"
- *   };
- *   tiku_kits_net_ipv4_set_link(&my_link);
+ * static const tiku_kits_net_link_t my_link = {
+ * .send    = my_send_func,
+ * .poll_rx = my_poll_func,
+ * .name    = "custom"
+ * };
+ * tiku_kits_net_ipv4_set_link(&my_link);
  * @endcode
  */
 typedef struct tiku_kits_net_link {
@@ -292,19 +306,21 @@ typedef struct tiku_kits_net_link {
      */
     int8_t (*send)(const uint8_t *pkt, uint16_t len);
 
-    /**
-     * @brief Poll the hardware for incoming bytes (non-blocking).
-     *
+        /*
      * Reads all available bytes from the hardware and feeds them
      * into the link-layer decoder.  When a complete frame has been
      * assembled in @p buf, sets *pos to the frame length and
      * returns 1.  May be called repeatedly in a tight loop until
      * it returns 0 (no more complete frames available).
+     */
+
+    /**
+     * @brief Poll the hardware for incoming bytes (non-blocking).
      *
      * @param buf       Receive buffer (caller-owned)
      * @param buf_size  Buffer capacity (MTU)
      * @param pos       In/out: current write position in buf;
-     *                  set to frame length on return of 1
+     * set to frame length on return of 1
      * @return 1 if a complete frame is ready, 0 otherwise
      */
     uint8_t (*poll_rx)(uint8_t *buf, uint16_t buf_size, uint16_t *pos);

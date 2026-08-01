@@ -27,19 +27,21 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum number of elements the sorted array can hold.
- *
+/*
  * This compile-time constant defines the upper bound on sorted array
  * capacity.  Each instance reserves this many element slots in its
  * static storage.  The default is smaller than the unsorted array
  * (16 vs 32) because sorted insertions involve O(n) shifting, which
  * becomes expensive for large arrays on constrained MCUs.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of elements the sorted array can hold.
+ *
  * @code
- *   #define TIKU_KITS_DS_SORTARRAY_MAX_SIZE 32
- *   #include "tiku_kits_ds_sortarray.h"
+ * #define TIKU_KITS_DS_SORTARRAY_MAX_SIZE 32
+ * #include "tiku_kits_ds_sortarray.h"
  * @endcode
  */
 #ifndef TIKU_KITS_DS_SORTARRAY_MAX_SIZE
@@ -50,41 +52,40 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_ds_sortarray
- * @brief Fixed-capacity sorted array with static storage and O(log n) search
- *
+/*
  * A specialised array that maintains elements in ascending order at
  * all times.  Because the data is always sorted:
- *   - Lookups use binary search -- O(log n) instead of O(n).
- *   - Min/max retrieval is O(1) (first/last element).
- *   - Insertions and removals are O(n) due to element shifting,
- *     but the binary search step to locate the correct position is
- *     only O(log n).
- *
+ * - Lookups use binary search -- O(log n) instead of O(n).
+ * - Min/max retrieval is O(1) (first/last element).
+ * - Insertions and removals are O(n) due to element shifting,
+ * but the binary search step to locate the correct position is
+ * only O(log n).
  * Duplicates are allowed.  When duplicates are inserted, they are
  * placed after existing equal values so that insertion order among
  * equal elements is preserved (stable insertion).
- *
  * Like the unsorted array, all storage lives inside the struct
  * itself -- no heap allocation is needed.
- *
- * @note Element type is controlled by tiku_kits_ds_elem_t (default
- *       int32_t).  The comparison operators @c < and @c > must be
- *       valid for the chosen type.
- *
  * Example:
+ */
+
+/**
+ * @brief Fixed-capacity sorted array with static storage and O(log n) search
+ *
+ * @struct tiku_kits_ds_sortarray
+ * @note Element type is controlled by tiku_kits_ds_elem_t (default
+ * int32_t).  The comparison operators @c < and @c > must be
+ * valid for the chosen type.
  * @code
- *   struct tiku_kits_ds_sortarray sa;
- *   tiku_kits_ds_sortarray_init(&sa, 8);
- *   tiku_kits_ds_sortarray_insert(&sa, 42);
- *   tiku_kits_ds_sortarray_insert(&sa, 10);
- *   tiku_kits_ds_sortarray_insert(&sa, 25);
- *   // sa now contains: [10, 25, 42]
- *   //
- *   // Binary search finds 25 in O(log 3) steps:
- *   uint16_t idx;
- *   tiku_kits_ds_sortarray_find(&sa, 25, &idx);  // idx == 1
+ * struct tiku_kits_ds_sortarray sa;
+ * tiku_kits_ds_sortarray_init(&sa, 8);
+ * tiku_kits_ds_sortarray_insert(&sa, 42);
+ * tiku_kits_ds_sortarray_insert(&sa, 10);
+ * tiku_kits_ds_sortarray_insert(&sa, 25);
+ * // sa now contains: [10, 25, 42]
+ * //
+ * // Binary search finds 25 in O(log 3) steps:
+ * uint16_t idx;
+ * tiku_kits_ds_sortarray_find(&sa, 25, &idx);  // idx == 1
  * @endcode
  */
 struct tiku_kits_ds_sortarray {
@@ -117,39 +118,42 @@ int tiku_kits_ds_sortarray_init(struct tiku_kits_ds_sortarray *sa,
 /* INSERTION / REMOVAL                                                       */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Insert a value in sorted (ascending) order
- *
+/*
  * Uses O(log n) binary search to locate the correct insertion point,
  * then shifts all subsequent elements one slot to the right (O(n))
  * to make room.  The overall cost is O(n) per insertion.
- *
  * Duplicates are allowed.  When a duplicate is inserted, it is placed
  * after all existing equal values so that insertion order among equal
  * elements is preserved (stable insertion).
+ */
+
+/**
+ * @brief Insert a value in sorted (ascending) order
  *
  * @param sa    Sorted array (must not be NULL)
  * @param value Value to insert
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if sa is NULL,
- *         TIKU_KITS_DS_ERR_FULL if size == capacity
+ * TIKU_KITS_DS_ERR_NULL if sa is NULL,
+ * TIKU_KITS_DS_ERR_FULL if size == capacity
  */
 int tiku_kits_ds_sortarray_insert(struct tiku_kits_ds_sortarray *sa,
                                   tiku_kits_ds_elem_t value);
 
-/**
- * @brief Remove the first occurrence of a value
- *
+/*
  * Uses O(log n) binary search to locate the value, then shifts all
  * subsequent elements one slot to the left (O(n)) to fill the gap.
  * If the value appears multiple times, only the first occurrence
  * (lowest index) is removed.
+ */
+
+/**
+ * @brief Remove the first occurrence of a value
  *
  * @param sa    Sorted array (must not be NULL)
  * @param value Value to remove
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if sa is NULL,
- *         TIKU_KITS_DS_ERR_NOTFOUND if value is not present
+ * TIKU_KITS_DS_ERR_NULL if sa is NULL,
+ * TIKU_KITS_DS_ERR_NOTFOUND if value is not present
  */
 int tiku_kits_ds_sortarray_remove(struct tiku_kits_ds_sortarray *sa,
                                   tiku_kits_ds_elem_t value);
@@ -176,13 +180,15 @@ int tiku_kits_ds_sortarray_find(
     const struct tiku_kits_ds_sortarray *sa,
     tiku_kits_ds_elem_t value, uint16_t *index);
 
-/**
- * @brief Check whether the sorted array contains a value
- *
+/*
  * Convenience wrapper around binary search that returns a simple
  * boolean result.  Unlike find(), this does not require an output
  * pointer for the index.  Safe to call with a NULL pointer -- returns
  * 0.
+ */
+
+/**
+ * @brief Check whether the sorted array contains a value
  *
  * @param sa    Sorted array, or NULL
  * @param value Value to search for

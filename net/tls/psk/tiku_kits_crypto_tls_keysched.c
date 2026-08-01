@@ -61,20 +61,20 @@ static const uint8_t zero_ikm[KS_HASH_LEN] = { 0 };
 /* PRIVATE HELPERS                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Derive-Secret helper (RFC 8446 Section 7.1).
- *
+/*
  * Derive-Secret(Secret, Label, Messages) =
- *     HKDF-Expand-Label(Secret, Label, Hash(Messages), 32)
- *
+ * HKDF-Expand-Label(Secret, Label, Hash(Messages), 32)
  * The caller provides the 32-byte SHA-256 digest of Messages
  * directly (or sha256_empty for the empty transcript).
+ */
+
+/**
+ * @brief Derive-Secret helper (RFC 8446 Section 7.1).
  *
  * @param[in]  secret  32-byte secret (PRK)
  * @param[in]  label   ASCII label without "tls13 " prefix
  * @param[in]  hash    32-byte transcript hash (or hash of "")
  * @param[out] out     32-byte derived secret
- *
  * @return TIKU_KITS_CRYPTO_OK on success, negative on error
  */
 static int derive_secret(const uint8_t *secret, const char *label,

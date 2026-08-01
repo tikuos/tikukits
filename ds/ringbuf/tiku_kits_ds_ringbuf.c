@@ -23,13 +23,15 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a ring buffer with the given capacity
- *
+/*
  * Zeros the entire backing buffer so that any subsequent reads of
  * unpopulated slots return a deterministic value.  The runtime
  * capacity is clamped to TIKU_KITS_DS_RINGBUF_MAX_SIZE at compile
  * time so that the static buffer is never overrun.
+ */
+
+/**
+ * @brief Initialize a ring buffer with the given capacity
  */
 int tiku_kits_ds_ringbuf_init(struct tiku_kits_ds_ringbuf *rb,
                               uint16_t capacity)

@@ -27,35 +27,39 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum number of entries the circular log can hold.
- *
+/*
  * This compile-time constant defines the upper bound on log capacity.
  * Each log instance reserves this many entry slots in its static
  * storage, so choose a value that balances memory usage against the
  * longest history your application needs to retain.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of entries the circular log can hold.
+ *
  * @code
- *   #define TIKU_KITS_DS_CIRCLOG_MAX_ENTRIES 64
- *   #include "tiku_kits_ds_circlog.h"
+ * #define TIKU_KITS_DS_CIRCLOG_MAX_ENTRIES 64
+ * #include "tiku_kits_ds_circlog.h"
  * @endcode
  */
 #ifndef TIKU_KITS_DS_CIRCLOG_MAX_ENTRIES
 #define TIKU_KITS_DS_CIRCLOG_MAX_ENTRIES 16
 #endif
 
-/**
- * @brief Size of the payload field in each log entry, in bytes.
- *
+/*
  * Each entry carries a fixed-size payload buffer of this many bytes.
  * Larger values allow richer per-entry data but increase the memory
  * footprint of every slot (used or not) in the entry array.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Size of the payload field in each log entry, in bytes.
+ *
  * @code
- *   #define TIKU_KITS_DS_CIRCLOG_PAYLOAD_SIZE 16
- *   #include "tiku_kits_ds_circlog.h"
+ * #define TIKU_KITS_DS_CIRCLOG_PAYLOAD_SIZE 16
+ * #include "tiku_kits_ds_circlog.h"
  * @endcode
  */
 #ifndef TIKU_KITS_DS_CIRCLOG_PAYLOAD_SIZE
@@ -82,25 +86,27 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Each entry is a self-contained record carrying:
+ * - @c timestamp -- a 32-bit application-provided value (e.g.
+ * ticks from the system clock).  The log itself does not
+ * interpret this field; it is stored and returned as-is.
+ * - @c level -- severity from 0 (DEBUG) to 3 (ERROR), matching
+ * the TIKU_KITS_DS_CIRCLOG_LEVEL_* constants.
+ * - @c tag -- an application-defined category byte that allows
+ * filtering entries by subsystem at read time.
+ * - @c payload -- a fixed-size buffer of CIRCLOG_PAYLOAD_SIZE
+ * bytes.  Only the first @c payload_len bytes are meaningful;
+ * remaining bytes are zeroed for clean FRAM state.
+ */
+
 /**
- * @struct tiku_kits_ds_circlog_entry
  * @brief Single log entry with timestamp, level, tag, and payload
  *
- * Each entry is a self-contained record carrying:
- *   - @c timestamp -- a 32-bit application-provided value (e.g.
- *     ticks from the system clock).  The log itself does not
- *     interpret this field; it is stored and returned as-is.
- *   - @c level -- severity from 0 (DEBUG) to 3 (ERROR), matching
- *     the TIKU_KITS_DS_CIRCLOG_LEVEL_* constants.
- *   - @c tag -- an application-defined category byte that allows
- *     filtering entries by subsystem at read time.
- *   - @c payload -- a fixed-size buffer of CIRCLOG_PAYLOAD_SIZE
- *     bytes.  Only the first @c payload_len bytes are meaningful;
- *     remaining bytes are zeroed for clean FRAM state.
- *
+ * @struct tiku_kits_ds_circlog_entry
  * @note The struct layout is chosen so that the 32-bit timestamp is
- *       naturally aligned, minimizing padding on both 16-bit and
- *       32-bit targets.
+ * naturally aligned, minimizing padding on both 16-bit and
+ * 32-bit targets.
  */
 struct tiku_kits_ds_circlog_entry {
     uint32_t timestamp;     /**< Application-provided timestamp */
@@ -111,43 +117,41 @@ struct tiku_kits_ds_circlog_entry {
     uint8_t  payload_len;   /**< Valid bytes in payload */
 };
 
-/**
- * @struct tiku_kits_ds_circlog
- * @brief Fixed-capacity circular log with static storage
- *
+/*
  * A ring-buffer of structured log entries designed for persistent
  * FRAM logging on embedded systems.  All storage lives inside the
  * struct itself, so no heap allocation is needed -- just declare the
  * log as a static or local variable.
- *
  * Two indices manage the ring:
- *   - @c head -- points to the oldest valid entry.
- *   - Write position is derived as (head + count) % capacity.
- *
+ * - @c head -- points to the oldest valid entry.
+ * - Write position is derived as (head + count) % capacity.
  * When the log is full, append() overwrites the oldest entry and
  * advances @c head, giving constant-time O(1) append regardless of
  * log size.  A monotonic @c seq counter increments on every append
  * and never wraps during normal operation (uint32_t gives over 4
  * billion appends).
- *
  * The runtime @c capacity may be less than CIRCLOG_MAX_ENTRIES,
  * allowing different log instances to use different logical sizes
  * while sharing the same compile-time backing buffer.
- *
- * @note Unlike the array and B-Tree modules, the circular log does
- *       not use tiku_kits_ds_elem_t for its entries.  Each entry is
- *       a structured record (timestamp + level + tag + payload).
- *
  * Example:
+ */
+
+/**
+ * @brief Fixed-capacity circular log with static storage
+ *
+ * @struct tiku_kits_ds_circlog
+ * @note Unlike the array and B-Tree modules, the circular log does
+ * not use tiku_kits_ds_elem_t for its entries.  Each entry is
+ * a structured record (timestamp + level + tag + payload).
  * @code
- *   struct tiku_kits_ds_circlog log;
- *   tiku_kits_ds_circlog_init(&log, 16);
- *   uint8_t data[] = {0xAB, 0xCD};
- *   tiku_kits_ds_circlog_append(&log, TIKU_KITS_DS_CIRCLOG_LEVEL_INFO,
- *                                0x10, 12345, data, 2);
- *   struct tiku_kits_ds_circlog_entry out;
- *   tiku_kits_ds_circlog_read_latest(&log, &out);
- *   // out.timestamp == 12345, out.tag == 0x10
+ * struct tiku_kits_ds_circlog log;
+ * tiku_kits_ds_circlog_init(&log, 16);
+ * uint8_t data[] = {0xAB, 0xCD};
+ * tiku_kits_ds_circlog_append(&log, TIKU_KITS_DS_CIRCLOG_LEVEL_INFO,
+ * 0x10, 12345, data, 2);
+ * struct tiku_kits_ds_circlog_entry out;
+ * tiku_kits_ds_circlog_read_latest(&log, &out);
+ * // out.timestamp == 12345, out.tag == 0x10
  * @endcode
  */
 struct tiku_kits_ds_circlog {
@@ -185,29 +189,31 @@ int tiku_kits_ds_circlog_init(struct tiku_kits_ds_circlog *log,
 /* APPEND / READ                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Append a new entry to the circular log
- *
+/*
  * Writes at position (head + count) % capacity.  When the log is
  * full the oldest entry is silently overwritten and head advances,
  * keeping the operation O(1).  Each successful append increments the
  * monotonic sequence number.  Unused payload bytes are zeroed so
  * that FRAM contents remain clean.
+ */
+
+/**
+ * @brief Append a new entry to the circular log
  *
  * @param log         Circular log (must not be NULL)
  * @param level       Severity level (0..3, matching
- *                    TIKU_KITS_DS_CIRCLOG_LEVEL_* constants)
+ * TIKU_KITS_DS_CIRCLOG_LEVEL_* constants)
  * @param tag         Application-defined category byte
  * @param timestamp   Caller-provided timestamp value
  * @param payload     Pointer to payload data (may be NULL only when
- *                    payload_len is 0)
+ * payload_len is 0)
  * @param payload_len Number of payload bytes to copy
- *                    (0..CIRCLOG_PAYLOAD_SIZE)
+ * (0..CIRCLOG_PAYLOAD_SIZE)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if log is NULL, or if payload is
- *         NULL while payload_len > 0,
- *         TIKU_KITS_DS_ERR_PARAM if payload_len exceeds
- *         CIRCLOG_PAYLOAD_SIZE
+ * TIKU_KITS_DS_ERR_NULL if log is NULL, or if payload is
+ * NULL while payload_len > 0,
+ * TIKU_KITS_DS_ERR_PARAM if payload_len exceeds
+ * CIRCLOG_PAYLOAD_SIZE
  */
 int tiku_kits_ds_circlog_append(
     struct tiku_kits_ds_circlog *log,
@@ -235,22 +241,24 @@ int tiku_kits_ds_circlog_read_latest(
     const struct tiku_kits_ds_circlog *log,
     struct tiku_kits_ds_circlog_entry *entry_out);
 
-/**
- * @brief Read a log entry by age index
- *
+/*
  * Index 0 returns the newest entry, index (count - 1) returns the
  * oldest.  Internally the age index is converted to a physical ring
  * position as (head + count - 1 - index) % capacity.  The entry is
  * copied into the caller-owned output struct.
+ */
+
+/**
+ * @brief Read a log entry by age index
  *
  * @param log       Circular log (must not be NULL)
  * @param index     Age index (0 = newest, count-1 = oldest)
  * @param entry_out Output pointer where the entry is written (must
- *                  not be NULL)
+ * not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if log or entry_out is NULL,
- *         TIKU_KITS_DS_ERR_EMPTY if the log contains no entries,
- *         TIKU_KITS_DS_ERR_BOUNDS if index >= count
+ * TIKU_KITS_DS_ERR_NULL if log or entry_out is NULL,
+ * TIKU_KITS_DS_ERR_EMPTY if the log contains no entries,
+ * TIKU_KITS_DS_ERR_BOUNDS if index >= count
  */
 int tiku_kits_ds_circlog_read_at(
     const struct tiku_kits_ds_circlog *log,
@@ -261,18 +269,20 @@ int tiku_kits_ds_circlog_read_at(
 /* STATE OPERATIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Clear the circular log (reset head, count, seq)
- *
+/*
  * Logically removes all entries by resetting head, count, and the
  * sequence counter to zero.  The backing entry array is not zeroed
  * for efficiency -- old entries remain in memory but are inaccessible
  * through the public API since all read functions bounds-check
  * against count.
+ */
+
+/**
+ * @brief Clear the circular log (reset head, count, seq)
  *
  * @param log Circular log (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if log is NULL
+ * TIKU_KITS_DS_ERR_NULL if log is NULL
  */
 int tiku_kits_ds_circlog_clear(struct tiku_kits_ds_circlog *log);
 
@@ -292,13 +302,15 @@ int tiku_kits_ds_circlog_clear(struct tiku_kits_ds_circlog *log);
 uint16_t tiku_kits_ds_circlog_count(
     const struct tiku_kits_ds_circlog *log);
 
-/**
- * @brief Get the current monotonic sequence number
- *
+/*
  * The sequence number increments by one on every successful append()
  * and is never reset except by clear() or init().  Useful for
  * detecting whether new entries have been written since the last
  * check.  Safe to call with a NULL pointer -- returns 0.
+ */
+
+/**
+ * @brief Get the current monotonic sequence number
  *
  * @param log Circular log, or NULL
  * @return Current sequence number, or 0 if log is NULL

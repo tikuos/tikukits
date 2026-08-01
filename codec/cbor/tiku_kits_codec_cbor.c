@@ -6,20 +6,22 @@
  *
  * tiku_kits_codec_cbor.c - CBOR encoder/decoder for embedded systems
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements a subset of CBOR (RFC 8949) for ultra-low-power MCUs.
  * Zero heap allocation, incremental encode/decode, ~600 bytes code.
  *
  * CBOR wire format (initial byte):
- *   [major type (3 bits)][additional info (5 bits)]
+ * [major type (3 bits)][additional info (5 bits)]
  *
- *   additional info:
- *     0..23   — value is the additional info itself
- *     24      — next 1 byte is the value
- *     25      — next 2 bytes are the value (big-endian)
- *     26      — next 4 bytes are the value (big-endian)
- *     27      — next 8 bytes are the value (not supported here)
- *
- * SPDX-License-Identifier: Apache-2.0
+ * additional info:
+ * 0..23   — value is the additional info itself
+ * 24      — next 1 byte is the value
+ * 25      — next 2 bytes are the value (big-endian)
+ * 26      — next 4 bytes are the value (big-endian)
+ * 27      — next 8 bytes are the value (not supported here)
  */
 
 /*---------------------------------------------------------------------------*/

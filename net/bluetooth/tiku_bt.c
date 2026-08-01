@@ -6,16 +6,20 @@
  *
  * tiku_bt.c - generic Bluetooth Low Energy protocol stack
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Layered model:
  *
- *   tiku_bt.c (this file)        HCI / L2CAP / ATT / GATT / GAP / SMP
- *      ^
- *      |  tiku_bt_transport_t vtable (send / recv / is_ready)
- *      v
- *   driver-provided transport    e.g. drivers/wifi/cyw43/bt_transport.c
- *                                (BTSDIO over CYW43439 backplane),
- *                                or a UART-HCI driver for Nordic /
- *                                ESP32 / TI parts.
+ * tiku_bt.c (this file)        HCI / L2CAP / ATT / GATT / GAP / SMP
+ * ^
+ * |  tiku_bt_transport_t vtable (send / recv / is_ready)
+ * v
+ * driver-provided transport    e.g. drivers/wifi/cyw43/bt_transport.c
+ * (BTSDIO over CYW43439 backplane),
+ * or a UART-HCI driver for Nordic /
+ * ESP32 / TI parts.
  *
  * This file owns everything above the transport: the HCI command/event
  * machinery, L2CAP channel demux (ATT on CID 4, SMP on CID 6), the ATT
@@ -27,8 +31,6 @@
  * The transport is selected at runtime: the driver registers its
  * @ref tiku_bt_transport_t vtable via tiku_bt_register_transport(),
  * then calls tiku_bt_init() once the chip-side bring-up is complete.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <interfaces/bluetooth/tiku_bt.h>
@@ -420,14 +422,16 @@ static int bt_any_connection(void)
 /* ACL / L2CAP send (phase 10)                                               */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Send one L2CAP PDU over the named connection
- *
+/*
  * Builds the HCI ACL header (type 0x02 + 12-bit handle + flags +
  * total length) and the L2CAP header (length + CID), then hands the
  * resulting packet to tiku_bt_send. PB flag is set to 0b10
  * (first automatically-flushable packet) which is the only value
  * permitted on LE-U links per Core Spec Vol 4 Part E 5.4.2.
+ */
+
+/**
+ * @brief Send one L2CAP PDU over the named connection
  *
  * @param handle   Chip-assigned connection handle (12 bits)
  * @param cid      L2CAP channel ID (e.g. L2CAP_CID_ATT)
@@ -494,23 +498,23 @@ static int bt_send_acl(uint16_t handle, uint16_t cid,
  * 32 leaves headroom. */
 #define ATT_HANDLE_MAX                  32U
 
-/**
- * @brief One row of the per-request attribute snapshot
- *
+/*
  * Built fresh in bt_att_snapshot every time an ATT request arrives.
  * One of three value sources is active per row:
- *
- *   - @p value + @p value_len  static bytes (services, char decls,
- *                              built-in Device Name etc.)
- *   - @p char_ref              user characteristic with read/write
- *                              callbacks (or its own static value)
- *   - @p cccd_ref              points into bt_state.cccd_value[]
- *                              for a CCCD attribute (read returns
- *                              the 2 bytes; write updates them)
- *
+ * - @p value + @p value_len  static bytes (services, char decls,
+ * built-in Device Name etc.)
+ * - @p char_ref              user characteristic with read/write
+ * callbacks (or its own static value)
+ * - @p cccd_ref              points into bt_state.cccd_value[]
+ * for a CCCD attribute (read returns
+ * the 2 bytes; write updates them)
  * Read/write dispatch in bt_att_handle_read / bt_att_handle_write
  * picks the active source by checking pointers in priority order:
  * cccd_ref → char_ref → static value.
+ */
+
+/**
+ * @brief One row of the per-request attribute snapshot
  */
 typedef struct {
     uint16_t                          handle;
@@ -567,20 +571,21 @@ static void bt_att_set_static(bt_att_entry_t *e, uint16_t handle,
     e->cccd_ref  = (uint16_t *)0;
 }
 
+/*
+ * Built-in (always present, handles assigned first):
+ * GAP service with Device Name + Appearance
+ * GATT stub service (Primary Service Decl only)
+ * Then for each registered user service:
+ * Primary Service Decl
+ * For each characteristic:
+ * Char Declaration (5-byte value into bt_state.char_decl_buf[])
+ * Char Value       (refs char def for callbacks / static)
+ * If NOTIFY/INDICATE in properties:
+ * CCCD attribute (refs bt_state.cccd_value[slot])
+ */
+
 /**
  * @brief Build the attribute snapshot from built-in + user services
- *
- * Built-in (always present, handles assigned first):
- *   GAP service with Device Name + Appearance
- *   GATT stub service (Primary Service Decl only)
- *
- * Then for each registered user service:
- *   Primary Service Decl
- *   For each characteristic:
- *     Char Declaration (5-byte value into bt_state.char_decl_buf[])
- *     Char Value       (refs char def for callbacks / static)
- *     If NOTIFY/INDICATE in properties:
- *       CCCD attribute (refs bt_state.cccd_value[slot])
  *
  * @param out  Destination array, sized for ATT_HANDLE_MAX entries
  * @return Number of entries written
@@ -748,13 +753,15 @@ static void bt_att_handle_mtu(uint8_t conn_idx, const uint8_t *pdu,
                       L2CAP_CID_ATT, rsp, sizeof rsp);
 }
 
-/**
- * @brief Handle ATT Read By Group Type Request (opcode 0x10)
- *
+/*
  * Used by clients to enumerate Primary Service declarations. The
  * request gives a handle range + group UUID (usually 0x2800); we
  * reply with a list of {start_handle, end_handle, service_uuid}
  * tuples for matching attributes in range.
+ */
+
+/**
+ * @brief Handle ATT Read By Group Type Request (opcode 0x10)
  *
  * @param conn_idx  Connection table index
  * @param pdu       ATT PDU bytes
@@ -959,13 +966,15 @@ static void bt_att_handle_read(uint8_t conn_idx, const uint8_t *pdu,
                       ATT_ERR_INVALID_HANDLE);
 }
 
-/**
- * @brief Handle ATT Write Request (opcode 0x12)
- *
+/*
  * The handle either resolves to a CCCD (in which case the 2-byte
  * value is stored in bt_state.cccd_value via the row's cccd_ref) or
  * to a user characteristic whose on_write callback is invoked.
  * Anything else gets Write Not Permitted (0x03).
+ */
+
+/**
+ * @brief Handle ATT Write Request (opcode 0x12)
  *
  * @param conn_idx  Connection table index
  * @param pdu       ATT PDU (opcode at [0])
@@ -1197,17 +1206,18 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
 /* ACL / L2CAP receive (phase 10)                                            */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Header layout:
+ * [0]    HCI_PKT_TYPE_ACL
+ * [1..2] handle(12) | PB(2) | BC(2)  little-endian
+ * [3..4] data_total_length            little-endian
+ * [5..6] L2CAP payload length         little-endian
+ * [7..8] L2CAP CID                    little-endian
+ * [9..]  L2CAP payload
+ */
+
 /**
  * @brief Decode one HCI ACL data packet and dispatch by L2CAP CID
- *
- * Header layout:
- *
- *   [0]    HCI_PKT_TYPE_ACL
- *   [1..2] handle(12) | PB(2) | BC(2)  little-endian
- *   [3..4] data_total_length            little-endian
- *   [5..6] L2CAP payload length         little-endian
- *   [7..8] L2CAP CID                    little-endian
- *   [9..]  L2CAP payload
  *
  * @param pkt  Packet bytes including the type byte at offset 0
  * @param len  Length of @p pkt in bytes
@@ -1261,25 +1271,27 @@ static void bt_handle_acl_pkt(const uint8_t *pkt, int len)
  */
 static void bt_handle_hci_event(const uint8_t *pkt, int len);  /* fwd */
 
-/**
- * @brief Issue an HCI command and poll for its Command Complete event
- *
+/*
  * Builds the 4-byte HCI command packet (1 byte type + 3 byte header
  * + plen bytes of params), sends it through tiku_bt_send, then
  * polls tiku_bt_recv up to ~1 s waiting for a Command Complete
  * (event 0x0E) carrying the same opcode. Used by the phase-6.D
  * bring-up queries to fetch chip identity.
+ */
+
+/**
+ * @brief Issue an HCI command and poll for its Command Complete event
  *
  * @param opcode    16-bit HCI opcode (OGF << 10 | OCF)
  * @param params    Parameter bytes (may be NULL when plen=0)
  * @param plen      Parameter byte count
  * @param out_evt   Destination for the full HCI event packet
- *                  (type byte first, matching tiku_bt_recv)
+ * (type byte first, matching tiku_bt_recv)
  * @param out_max   Capacity of @p out_evt
  * @param out_n     Set to the number of bytes written to @p out_evt
- *                  (always populated on success)
+ * (always populated on success)
  * @return TIKU_DRV_OK on a matching Command Complete event, otherwise
- *         a transport error or TIKU_DRV_ERR_TIMEOUT.
+ * a transport error or TIKU_DRV_ERR_TIMEOUT.
  */
 static int bt_hci_cmd_response(uint16_t opcode, const uint8_t *params,
                                uint8_t plen, uint8_t *out_evt,
@@ -1387,9 +1399,7 @@ static int bt_rand_bytes(uint8_t *out, size_t n)
 /*---------------------------------------------------------------------------*/
 /* AES-128 ECB single block via chip-side HCI_LE_Encrypt                     */
 /*---------------------------------------------------------------------------*/
-/**
- * @brief One AES-128 ECB block via HCI_LE_Encrypt
- *
+/*
  * Synchronous helper. Per Core Spec Vol 4 Part E 7.8.22 the
  * HCI_LE_Encrypt command's Key and Plaintext_Data are "16 octets
  * least significant octet first" -- meaning the bytes are sent
@@ -1397,9 +1407,12 @@ static int bt_rand_bytes(uint8_t *out, size_t n)
  * MSB-first 128-bit integer. To make AES-CMAC's byte-oriented
  * arithmetic line up with NimBLE / RFC4493 we byte-reverse the
  * inputs before sending and reverse the output back.
- *
  * The CYW43439 sends the encrypted block as the 16 bytes immediately
  * after the standard CC header (evt[7..22] in our buffer indexing).
+ */
+
+/**
+ * @brief One AES-128 ECB block via HCI_LE_Encrypt
  *
  * @param key  16-byte AES key (MSB-first byte order)
  * @param in   16-byte plaintext (MSB-first byte order)
@@ -1459,13 +1472,15 @@ static int bt_aes_cmac_subkeys(const uint8_t key[16],
     return TIKU_DRV_OK;
 }
 
-/**
- * @brief AES-CMAC-128 (RFC 4493)
- *
+/*
  * Process the message in 16-byte blocks. The final block is either
  * complete (XOR with K1) or padded with 0x80 0x00 ... (XOR with K2).
  * The empty-message case (msg_len == 0) is the "padded with 0x80
  * followed by zeros" path because there is no last-block-as-is option.
+ */
+
+/**
+ * @brief AES-CMAC-128 (RFC 4493)
  *
  * @param key      16-byte CMAC key
  * @param msg      Message bytes (may be NULL when msg_len == 0)
@@ -1540,18 +1555,19 @@ static void bt_smp_swap_buf(uint8_t *dst, const uint8_t *src, size_t n)
     for (i = 0U; i < n; ++i) dst[i] = src[n - 1U - i];
 }
 
-/**
- * @brief f4 confirm-value generator (Core Spec Vol 3 Part H 2.2.6)
- *
+/*
  * Computes Cb = AES-CMAC(X, U || V || Z) over a 65-byte input where
  * the spec defines U, V, X as integer values (MSB-first conceptually).
  * The wire byte order for these fields is LE; we swap to MSB-first
  * before feeding AES-CMAC and swap the output back to LE.
- *
- *   U = peer  public key X coordinate (32 B, LE on the wire)
- *   V = local public key X coordinate (32 B, LE)
- *   X = the nonce of the side computing the confirm (16 B, LE)
- *   Z = 1 byte, 0x00 for Just Works / Numeric Comparison
+ * U = peer  public key X coordinate (32 B, LE on the wire)
+ * V = local public key X coordinate (32 B, LE)
+ * X = the nonce of the side computing the confirm (16 B, LE)
+ * Z = 1 byte, 0x00 for Just Works / Numeric Comparison
+ */
+
+/**
+ * @brief f4 confirm-value generator (Core Spec Vol 3 Part H 2.2.6)
  *
  * @param U   peer PK X coordinate (32 B, LE byte order)
  * @param V   local PK X coordinate (32 B, LE byte order)
@@ -1581,25 +1597,25 @@ static int bt_smp_f4(const uint8_t U[32], const uint8_t V[32],
     return rc;
 }
 
-/**
- * @brief f5 LTK + MacKey derivation (Core Spec Vol 3 Part H 2.2.7)
- *
+/*
  * Two-stage AES-CMAC:
- *   T = AES-CMAC(salt, W)
- *     where salt = 0x6C888391AAF5A538_60370BDB5A6083BE  (big-endian)
- *   MacKey = AES-CMAC(T, 0x00 || "btle" || N1 || N2 || A1 || A2 || 0x0100)
- *   LTK    = AES-CMAC(T, 0x01 || "btle" || N1 || N2 || A1 || A2 || 0x0100)
- *
+ * T = AES-CMAC(salt, W)
+ * where salt = 0x6C888391AAF5A538_60370BDB5A6083BE  (big-endian)
+ * MacKey = AES-CMAC(T, 0x00 || "btle" || N1 || N2 || A1 || A2 || 0x0100)
+ * LTK    = AES-CMAC(T, 0x01 || "btle" || N1 || N2 || A1 || A2 || 0x0100)
  * The wire byte order for W, N1, N2 and the 6 address bytes inside
  * A1/A2 is LE; we swap those fields to MSB-first before feeding
  * AES-CMAC (the spec defines the inputs as integer values). The
  * addr_type byte at the head of each A-block, the "btle" keyID, the
  * Counter, and the Length are byte-string constants and pass through
  * unchanged. Outputs are swapped back to LE.
- *
  * Counter is one byte (BE/LE equivalent). Length is the 16-bit value
  * 256 encoded MSB-first (0x01 0x00). The 2-byte Length field is the
  * only place in this function where byte ordering is anti-intuitive.
+ */
+
+/**
+ * @brief f5 LTK + MacKey derivation (Core Spec Vol 3 Part H 2.2.7)
  *
  * @param W      32-byte DHKey (LE byte order from the chip)
  * @param N1     16-byte initiator nonce (Na, LE)
@@ -1663,18 +1679,18 @@ static int bt_smp_f5(const uint8_t W[32],
     return TIKU_DRV_OK;
 }
 
-/**
- * @brief f6 DH-key check value (Core Spec Vol 3 Part H 2.2.8)
- *
- *   E = AES-CMAC(W, N1 || N2 || R || IOcap || A1 || A2)
- *
+/*
+ * E = AES-CMAC(W, N1 || N2 || R || IOcap || A1 || A2)
  * where W is the MacKey from f5, R is 16 B (zero for Just Works), and
  * IOcap is the 3-byte block {AuthReq, OOB, IOcap}.
- *
  * Byte-order treatment matches f5: integer fields (W, N1, N2, R, and
  * the 6 address bytes within A1/A2) are swapped to MSB-first; the
  * byte-string fields (addr_type at head of each A-block, IOcap)
  * pass through unchanged. Output is swapped back to LE.
+ */
+
+/**
+ * @brief f6 DH-key check value (Core Spec Vol 3 Part H 2.2.8)
  *
  * @param W      16-byte MacKey (LE)
  * @param N1     16-byte own-side nonce (this side computing E, LE)
@@ -1920,11 +1936,16 @@ static int bt_smp_selftest(void)
 /* SMP session helpers                                                       */
 /*---------------------------------------------------------------------------*/
 
-/** Build the 7-byte A_init / A_resp block for f5 / f6:
- *  addr_type(1) || addr_LE(6).
- *  Source @p addr_msb is in MSB-first display order (as cached in
- *  conns[].peer_addr / bt_state.bd_addr); the LE order is restored
- *  by reversing the 6 address bytes. */
+/*
+ * addr_type(1) || addr_LE(6).
+ * Source @p addr_msb is in MSB-first display order (as cached in
+ * conns[].peer_addr / bt_state.bd_addr); the LE order is restored
+ * *  by reversing the 6 address bytes.
+ */
+
+/**
+ * Build the 7-byte A_init / A_resp block for f5 / f6:
+ */
 static void bt_smp_addr_block(uint8_t addr_type,
                               const uint8_t addr_msb[6],
                               uint8_t out[7])
@@ -1957,10 +1978,15 @@ static void bt_smp_send_failed(uint8_t conn_idx, uint8_t reason)
 static int bt_bond_find_by_addr(uint8_t addr_type, const uint8_t addr_le[6],
                                 tiku_bt_bond_record_t *out);
 
-/** Issue HCI_LE_Read_Local_P256_Public_Key (no params). The chip
- *  replies with Command Status then later a LE Meta subevent 0x08
- *  carrying our 64-byte public key. Synchronous Command Status check
- *  only; the actual pubkey arrives async via bt_handle_le_meta. */
+/*
+ * replies with Command Status then later a LE Meta subevent 0x08
+ * carrying our 64-byte public key. Synchronous Command Status check
+ * *  only; the actual pubkey arrives async via bt_handle_le_meta.
+ */
+
+/**
+ * Issue HCI_LE_Read_Local_P256_Public_Key (no params). The chip
+ */
 static int bt_smp_request_local_pubkey(void)
 {
     /* Read_Local_P256_Public_Key has no params and replies with
@@ -1974,10 +2000,15 @@ static int bt_smp_request_local_pubkey(void)
     return tiku_bt_send(cmd, sizeof cmd);
 }
 
-/** Issue HCI_LE_Generate_DHKey_V2 with the peer's 64-byte public key
- *  and key_type=0 (private key from prior P256_Public_Key). Replies
- *  with Command Status then later LE Meta subevent 0x09 carrying the
- *  32-byte DHKey. */
+/*
+ * and key_type=0 (private key from prior P256_Public_Key). Replies
+ * with Command Status then later LE Meta subevent 0x09 carrying the
+ * *  32-byte DHKey.
+ */
+
+/**
+ * Issue HCI_LE_Generate_DHKey_V2 with the peer's 64-byte public key
+ */
 static int bt_smp_request_dhkey(const uint8_t peer_pubkey[64])
 {
     uint8_t cmd[4 + 65];
@@ -1991,11 +2022,16 @@ static int bt_smp_request_dhkey(const uint8_t peer_pubkey[64])
     return tiku_bt_send(cmd, sizeof cmd);
 }
 
-/** Derive MacKey + LTK via f5 once {DHKey, peer_nonce, local_nonce}
- *  are all in hand. Idempotent: ignores calls where prerequisites
- *  aren't set yet. Returns 0 on success (or already done), -1 on
- *  cryptographic failure. Does NOT emit anything on the wire --
- *  emission of Eb happens only after we receive Ea. */
+/*
+ * are all in hand. Idempotent: ignores calls where prerequisites
+ * aren't set yet. Returns 0 on success (or already done), -1 on
+ * cryptographic failure. Does NOT emit anything on the wire --
+ * *  emission of Eb happens only after we receive Ea.
+ */
+
+/**
+ * Derive MacKey + LTK via f5 once {DHKey, peer_nonce, local_nonce}
+ */
 static int bt_smp_try_derive_keys(uint8_t conn_idx)
 {
     uint8_t Na[16], Nb[16];
@@ -2384,14 +2420,16 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
 /*---------------------------------------------------------------------------*/
 /* LE LTK Request -- central asks us to supply the bond LTK                  */
 /*---------------------------------------------------------------------------*/
-/**
- * @brief Handle one LE Long Term Key Request meta-event
- *
+/*
  * Triggered by the central via LL_ENC_REQ; the chip surfaces it as
  * LE Meta subevent 0x05. We look up the bond by peer addr (or fall
  * back to the in-memory SMP session if pairing just completed) and
  * reply with the LTK -- or send LTK Request Negative Reply if we
  * have no key for this peer.
+ */
+
+/**
+ * @brief Handle one LE Long Term Key Request meta-event
  *
  * @param pkt  HCI event bytes including the type byte at offset 0
  * @param len  Length of @p pkt in bytes
@@ -2649,16 +2687,18 @@ static uint16_t bt_ms_to_chip_units(uint16_t ms)
     return (uint16_t)v;
 }
 
-/**
- * @brief Extract the local name AD record (type 0x08 or 0x09) into out
- *
+/*
  * The AD payload uses the standard `[len][type][data]` records; we
  * walk them, skipping until we find a Complete (0x09) or Shortened
  * (0x08) Local Name record. The output is NOT NUL-terminated --
  * caller uses the returned length.
+ */
+
+/**
+ * @brief Extract the local name AD record (type 0x08 or 0x09) into out
  *
  * @param ad       Pointer to the AD payload bytes (post-header,
- *                 the record stream)
+ * the record stream)
  * @param ad_len   Length of @p ad in bytes (0..31 for legacy adv)
  * @param out      Destination buffer for the extracted name
  * @param out_max  Capacity of @p out; the name is truncated to fit
@@ -2757,30 +2797,28 @@ static void bt_scan_cache_add(uint8_t evt_type, uint8_t addr_type,
     }
 }
 
-/**
- * @brief Decode one HCI_LE_Meta_Event packet
- *
+/*
  * Layout starting at the type byte returned by tiku_bt_recv:
- *
- *   [0]    0x04        HCI event packet type
- *   [1]    0x3E        Event code (LE_Meta_Event)
- *   [2]    plen        bytes remaining after this byte
- *   [3]    subevent    e.g. 0x02 = LE_Advertising_Report
- *   [4..]  subevent-specific data
- *
+ * [0]    0x04        HCI event packet type
+ * [1]    0x3E        Event code (LE_Meta_Event)
+ * [2]    plen        bytes remaining after this byte
+ * [3]    subevent    e.g. 0x02 = LE_Advertising_Report
+ * [4..]  subevent-specific data
  * For LE_Advertising_Report (Core Spec Vol 4 Part E 7.7.65.2):
- *
- *   [4]    num_reports
- *   per report:
- *     [.]  event_type (1)
- *     [.]  addr_type  (1)
- *     [.]  addr       (6, LSB first on the wire)
- *     [.]  data_len   (1)
- *     [.]  data       (data_len)
- *     [.]  rssi       (1, signed)
- *
+ * [4]    num_reports
+ * per report:
+ * [.]  event_type (1)
+ * [.]  addr_type  (1)
+ * [.]  addr       (6, LSB first on the wire)
+ * [.]  data_len   (1)
+ * [.]  data       (data_len)
+ * [.]  rssi       (1, signed)
  * num_reports is almost always 1 on the CYW43439 (the chip rarely
  * bundles in legacy 1M-PHY mode), but the spec allows >1 so we loop.
+ */
+
+/**
+ * @brief Decode one HCI_LE_Meta_Event packet
  *
  * @param pkt  Event packet bytes including the type byte (offset 0)
  * @param len  Length of @p pkt in bytes
@@ -2971,13 +3009,15 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
     }
 }
 
-/**
- * @brief Top-level HCI event dispatcher (definition for forward decl)
- *
+/*
  * Disconnection Complete (event 0x05) is the only non-LE-Meta event
  * we care about today. LE Meta (0x3E) is delegated to
  * bt_handle_le_meta which handles Connection Complete + Advertising
  * Report. Everything else is logged at info level and dropped.
+ */
+
+/**
+ * @brief Top-level HCI event dispatcher (definition for forward decl)
  *
  * @param pkt  Event bytes including the type byte at offset 0
  * @param len  Length of @p pkt in bytes
@@ -3078,20 +3118,22 @@ static uint8_t           bt_demo_notify_armed;
 /* PUBLIC API                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Bring the protocol stack online once a transport is registered
- *
+/*
  * Called by the transport driver from its own init function, AFTER
  * the chip-side bring-up + tiku_bt_register_transport() succeed. The
  * stack does no chip-level work here -- just resets module state,
  * registers the demo service, and runs HCI_Reset / Read_Local_Version
  * / Read_BD_ADDR to (a) clear controller state and (b) cache the
  * chip's identity for the `bt status` shell command.
+ */
+
+/**
+ * @brief Bring the protocol stack online once a transport is registered
  *
  * @return TIKU_DRV_OK once initialisation completes. Identity-query
- *         failures (no Command Complete within ~1 s) are non-fatal:
- *         bt_state.bd_addr stays zero and tiku_bt_addr() reports
- *         TIKU_DRV_ERR_NOT_PRESENT until a re-init succeeds.
+ * failures (no Command Complete within ~1 s) are non-fatal:
+ * bt_state.bd_addr stays zero and tiku_bt_addr() reports
+ * TIKU_DRV_ERR_NOT_PRESENT until a re-init succeeds.
  */
 int tiku_bt_init(void)
 {
@@ -3315,14 +3357,16 @@ int tiku_bt_is_advertising(void)
 /* GAP scanning — public API                                                 */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Wake the BT runner so it re-evaluates its loop condition
- *
+/*
  * The runner TIKU_PROCESS_YIELDs while BT is fully idle (no scan,
  * no advert, no connection). Without an explicit wake, flipping
  * scan/advertise on from the shell process wouldn't re-dispatch
  * the runner. The event id is not interpreted by the runner --
  * any post unblocks the PT_YIELD.
+ */
+
+/**
+ * @brief Wake the BT runner so it re-evaluates its loop condition
  */
 static void bt_wake_runner(void)
 {
@@ -3960,14 +4004,16 @@ int tiku_bt_bond_clear(uint8_t slot)
     return TIKU_DRV_OK;
 }
 
-/**
- * @brief Find a bond record by peer addr (Phase 14 reconnect path)
- *
+/*
  * Linear scan over the bond slots. The stored peer_addr is in
  * MSB-first display order; we accept the caller's @p addr_le in LE
  * wire order so the comparison is straightforward (reverse on the
  * way in). Used by the LE LTK Request handler to recover the LTK
  * from NVM when an already-paired peer reconnects.
+ */
+
+/**
+ * @brief Find a bond record by peer addr (Phase 14 reconnect path)
  *
  * @param addr_type  0 public, 1 random
  * @param addr_le    6 bytes in LE wire order (matches HCI / SMP)

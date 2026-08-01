@@ -6,6 +6,10 @@
  *
  * tiku_kits_sigfeatures_skip.h - Skip (decimation) filter
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Outputs every Nth input sample, discarding the rest.  Useful
  * for down-sampling a high-rate sensor stream before feeding it
  * to a more expensive feature extractor.
@@ -15,8 +19,6 @@
  * determine whether a new output was produced.
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_SIGFEATURES_SKIP_H_
@@ -32,28 +34,29 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_sigfeatures_skip
- * @brief Skip (decimation) filter -- keeps every Nth sample
- *
+/*
  * Counts input samples and outputs one every @c interval pushes.
  * On each push the internal counter increments; when it reaches
+ * Example:
+ * tiku_kits_sigfeatures_skip_init(&s, 4);
+ * // push samples 1..4
+ * tiku_kits_sigfeatures_skip_push(&s, 10);  // ready=0
+ * tiku_kits_sigfeatures_skip_push(&s, 20);  // ready=0
+ * tiku_kits_sigfeatures_skip_push(&s, 30);  // ready=0
+ * tiku_kits_sigfeatures_skip_push(&s, 40);  // ready=1, output=40
+ * tiku_kits_sigfeatures_skip_value(&s, &result); // result=40
+ */
+
+/**
+ * @brief Skip (decimation) filter -- keeps every Nth sample
+ *
+ * @struct tiku_kits_sigfeatures_skip
  * @c interval, the sample is latched as the output, the counter
  * resets to zero, and the @c ready flag is set.  Between output
  * points, @c ready is cleared.
- *
- * Example:
  * @code
- *   struct tiku_kits_sigfeatures_skip s;
- *   tiku_kits_sigfeatures_elem_t result;
- *
- *   tiku_kits_sigfeatures_skip_init(&s, 4);
- *   // push samples 1..4
- *   tiku_kits_sigfeatures_skip_push(&s, 10);  // ready=0
- *   tiku_kits_sigfeatures_skip_push(&s, 20);  // ready=0
- *   tiku_kits_sigfeatures_skip_push(&s, 30);  // ready=0
- *   tiku_kits_sigfeatures_skip_push(&s, 40);  // ready=1, output=40
- *   tiku_kits_sigfeatures_skip_value(&s, &result); // result=40
+ * struct tiku_kits_sigfeatures_skip s;
+ * tiku_kits_sigfeatures_elem_t result;
  * @endcode
  */
 struct tiku_kits_sigfeatures_skip {
@@ -101,18 +104,20 @@ int tiku_kits_sigfeatures_skip_reset(
 /* Sample input                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push a new sample into the skip filter
- *
+/*
  * Increments the internal counter.  When the counter reaches
  * interval, the sample is latched as the output, the counter
  * resets to 0, ready is set to 1, and the output count increments.
  * Otherwise ready is cleared.  O(1) per call.
+ */
+
+/**
+ * @brief Push a new sample into the skip filter
  *
  * @param s      Skip filter (must not be NULL)
  * @param sample New input sample
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if s is NULL
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if s is NULL
  */
 int tiku_kits_sigfeatures_skip_push(
     struct tiku_kits_sigfeatures_skip *s,

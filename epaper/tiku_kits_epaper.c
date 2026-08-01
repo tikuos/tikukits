@@ -6,39 +6,41 @@
  *
  * tiku_kits_epaper.c - Generic e-paper API: dispatch + framebuffer helpers
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Two responsibilities:
  *
- *   1. Generic API dispatch -- tiku_kits_epaper_init / refresh / sleep
- *      forward to the family driver via the ops vtable embedded in
- *      the panel descriptor. No driver code lives here.
+ * 1. Generic API dispatch -- tiku_kits_epaper_init / refresh / sleep
+ * forward to the family driver via the ops vtable embedded in
+ * the panel descriptor. No driver code lives here.
  *
- *   2. Driver-agnostic framebuffer helpers -- set_pixel / clear /
- *      framebuffer_size operate purely on the in-memory buffers
- *      and never touch SPI. Layout matches the column-major
- *      MSB-first scan order used by every monochrome SPI EPD
- *      controller this kit supports.
+ * 2. Driver-agnostic framebuffer helpers -- set_pixel / clear /
+ * framebuffer_size operate purely on the in-memory buffers
+ * and never touch SPI. Layout matches the column-major
+ * MSB-first scan order used by every monochrome SPI EPD
+ * controller this kit supports.
  *
  * Bit layout:
- *     byte_index = row * (width / 8) + (column / 8)
- *     bit_mask   = 0x80 >> (column & 7)
+ * byte_index = row * (width / 8) + (column / 8)
+ * bit_mask   = 0x80 >> (column & 7)
  *
  * Bit polarity (black plane and red plane independently):
- *     1 = pixel ON (black on the black plane, red on the red plane)
- *     0 = pixel OFF (white on the black plane, not-red on the red plane)
+ * 1 = pixel ON (black on the black plane, red on the red plane)
+ * 0 = pixel OFF (white on the black plane, not-red on the red plane)
  *
  * Plane encoding (combined):
- *     WHITE  : black=0, red=0
- *     BLACK  : black=1, red=0
- *     RED    : black=0, red=1
- *     YELLOW : black=1, red=1   (BWRY only)
+ * WHITE  : black=0, red=0
+ * BLACK  : black=1, red=0
+ * RED    : black=0, red=1
+ * YELLOW : black=1, red=1   (BWRY only)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #include "tiku_kits_epaper.h"

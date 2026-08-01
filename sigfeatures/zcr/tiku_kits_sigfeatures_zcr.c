@@ -94,16 +94,18 @@ int tiku_kits_sigfeatures_zcr_reset(
 /* SAMPLE INPUT                                                              */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Handles three phases in O(1):
+ * 1. If the window is full, evict the oldest sample and subtract
+ * the crossing between it and its successor.
+ * 2. Check the crossing between the current newest sample and the
+ * incoming value; increment crossings if a sign change occurred.
+ * 3. Write the new sample into the circular buffer and advance
+ * the head pointer.
+ */
+
 /**
  * @brief Push a new sample into the ZCR tracker
- *
- * Handles three phases in O(1):
- *   1. If the window is full, evict the oldest sample and subtract
- *      the crossing between it and its successor.
- *   2. Check the crossing between the current newest sample and the
- *      incoming value; increment crossings if a sign change occurred.
- *   3. Write the new sample into the circular buffer and advance
- *      the head pointer.
  */
 int tiku_kits_sigfeatures_zcr_push(
     struct tiku_kits_sigfeatures_zcr *z,

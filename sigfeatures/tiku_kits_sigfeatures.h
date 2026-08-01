@@ -6,20 +6,22 @@
  *
  * tiku_kits_sigfeatures.h - Common signal feature extraction types
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Provides shared return codes, element type, and helper definitions
  * used across all TikuKits signal feature extraction libraries:
  *
- *  - Zero-crossing rate  : sign-change counting per window
- *  - Peak detector       : local maxima with configurable hysteresis
- *  - Histogram / binning : fixed-width bin accumulation
- *  - First-order delta   : x[n] - x[n-1] rate-of-change
- *  - Goertzel            : single-frequency energy via DFT bin
- *  - Z-score             : fixed-point (x - mean) / stddev normalization
- *  - Min-max scale       : map [min, max] to [0, out_max] with clamping
+ * - Zero-crossing rate  : sign-change counting per window
+ * - Peak detector       : local maxima with configurable hysteresis
+ * - Histogram / binning : fixed-width bin accumulation
+ * - First-order delta   : x[n] - x[n-1] rate-of-change
+ * - Goertzel            : single-frequency energy via DFT bin
+ * - Z-score             : fixed-point (x - mean) / stddev normalization
+ * - Min-max scale       : map [min, max] to [0, out_max] with clamping
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_SIGFEATURES_H_
@@ -36,18 +38,20 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Element type used for all signal feature sample values.
- *
+/*
  * Defaults to int32_t, which covers the full dynamic range of a
  * 16-bit ADC with headroom for accumulation and difference
  * operations.  On targets with very tight RAM, int16_t is
  * sufficient for raw ADC samples and halves buffer sizes.
- *
  * Override before including this header to change the type:
+ */
+
+/**
+ * @brief Element type used for all signal feature sample values.
+ *
  * @code
- *   #define TIKU_KITS_SIGFEATURES_ELEM_TYPE int16_t
- *   #include "tiku_kits_sigfeatures.h"
+ * #define TIKU_KITS_SIGFEATURES_ELEM_TYPE int16_t
+ * #include "tiku_kits_sigfeatures.h"
  * @endcode
  */
 #ifndef TIKU_KITS_SIGFEATURES_ELEM_TYPE
@@ -58,15 +62,18 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @typedef tiku_kits_sigfeatures_elem_t
- * @brief Scalar element type used for all signal sample values.
- *
+/*
  * This typedef resolves to TIKU_KITS_SIGFEATURES_ELEM_TYPE (default
  * int32_t).  Every sub-module -- ZCR, peak, histogram, delta,
  * Goertzel, z-score, and min-max scale -- uses this type for input
  * samples, thresholds, and per-sample outputs so that a single
  * compile-time switch changes the precision globally.
+ */
+
+/**
+ * @brief Scalar element type used for all signal sample values.
+ *
+ * @typedef tiku_kits_sigfeatures_elem_t
  */
 typedef TIKU_KITS_SIGFEATURES_ELEM_TYPE tiku_kits_sigfeatures_elem_t;
 

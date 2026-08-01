@@ -6,6 +6,10 @@
  *
  * tiku_kits_sigfeatures_goertzel.h - Goertzel single-frequency DFT
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Computes the energy at a specific frequency without a full FFT.
  * Much lower cost than FFT when only one or a few frequency bins are
  * needed. Ideal for tone detection, spectral band energy, and
@@ -15,22 +19,20 @@
  * 2 * cos(2 * pi * k / N), where k is the target bin index and N is
  * the block size. The coefficient must be precomputed offline:
  *
- *     coeff_q14 = round(2 * cos(2 * pi * target_freq / sample_rate
- *                               * block_size / block_size) * 16384)
+ * coeff_q14 = round(2 * cos(2 * pi * target_freq / sample_rate
+ * * block_size / block_size) * 16384)
  *
  * Or equivalently for bin index k:
- *     coeff_q14 = round(2 * cos(2 * pi * k / N) * 16384)
+ * coeff_q14 = round(2 * cos(2 * pi * k / N) * 16384)
  *
  * Common values (N=64):
- *     k=1  -> coeff_q14 = 32729   (fs/64)
- *     k=2  -> coeff_q14 = 32610   (fs/32)
- *     k=4  -> coeff_q14 = 32138   (fs/16)
- *     k=8  -> coeff_q14 = 30274   (fs/8)
- *     k=16 -> coeff_q14 = 23170   (fs/4)
+ * k=1  -> coeff_q14 = 32729   (fs/64)
+ * k=2  -> coeff_q14 = 32610   (fs/32)
+ * k=4  -> coeff_q14 = 32138   (fs/16)
+ * k=8  -> coeff_q14 = 30274   (fs/8)
+ * k=16 -> coeff_q14 = 23170   (fs/4)
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_SIGFEATURES_GOERTZEL_H_
@@ -46,47 +48,44 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_sigfeatures_goertzel
- * @brief Single-frequency Goertzel DFT filter with fixed-point arithmetic
- *
+/*
  * Implements the Goertzel algorithm to compute the squared magnitude
  * of a single DFT bin using only additions, one multiply, and a
  * shift per sample -- much cheaper than a full FFT when only one
  * (or a few) frequency bins are needed.  Ideal for tone detection,
  * spectral-band energy estimation, and frequency-domain feature
  * extraction on resource-constrained targets like the MSP430.
- *
  * The core recurrence maintained per sample is:
- *     s0 = x[n] + coeff * s1 - s2
+ * s0 = x[n] + coeff * s1 - s2
  * where coeff = 2*cos(2*pi*k/N) is stored in Q14 fixed-point.
  * After N samples, the squared magnitude |X[k]|^2 is computed from
  * the final s1 and s2 values without any further trigonometric
  * operations.
- *
  * Two fields track filter state independently:
- *   - @c s1 / @c s2 -- the two-tap feedback registers, updated on
- *     every push.
- *   - @c count -- number of samples pushed in the current block.
- *     Once count reaches block_size, the magnitude is available.
- *
- * @note The coefficient @c coeff_q14 must be precomputed offline.
- *       See the file-level header comment for the formula and
- *       common values.
- *
+ * - @c s1 / @c s2 -- the two-tap feedback registers, updated on
+ * every push.
+ * - @c count -- number of samples pushed in the current block.
+ * Once count reaches block_size, the magnitude is available.
  * Example:
+ * // Detect bin k=8 in a 64-sample block
+ * // coeff_q14 = round(2 * cos(2*pi*8/64) * 16384) = 30274
+ * tiku_kits_sigfeatures_goertzel_init(&g, 30274, 64);
+ * for (i = 0; i < 64; i++) {
+ * tiku_kits_sigfeatures_goertzel_push(&g, samples[i]);
+ * }
+ * tiku_kits_sigfeatures_goertzel_magnitude_sq(&g, &mag_sq);
+ */
+
+/**
+ * @brief Single-frequency Goertzel DFT filter with fixed-point arithmetic
+ *
+ * @struct tiku_kits_sigfeatures_goertzel
+ * @note The coefficient @c coeff_q14 must be precomputed offline.
+ * See the file-level header comment for the formula and
+ * common values.
  * @code
- *   struct tiku_kits_sigfeatures_goertzel g;
- *   int64_t mag_sq;
- *
- *   // Detect bin k=8 in a 64-sample block
- *   // coeff_q14 = round(2 * cos(2*pi*8/64) * 16384) = 30274
- *   tiku_kits_sigfeatures_goertzel_init(&g, 30274, 64);
- *
- *   for (i = 0; i < 64; i++) {
- *       tiku_kits_sigfeatures_goertzel_push(&g, samples[i]);
- *   }
- *   tiku_kits_sigfeatures_goertzel_magnitude_sq(&g, &mag_sq);
+ * struct tiku_kits_sigfeatures_goertzel g;
+ * int64_t mag_sq;
  * @endcode
  */
 struct tiku_kits_sigfeatures_goertzel {
@@ -140,22 +139,23 @@ int tiku_kits_sigfeatures_goertzel_reset(
 /* Sample input                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push one sample through the Goertzel filter
- *
+/*
  * Applies the Goertzel recurrence:
- *     s0 = x[n] + (coeff_q14 * s1 >> 14) - s2
+ * s0 = x[n] + (coeff_q14 * s1 >> 14) - s2
  * then shifts the feedback registers (s2 = s1, s1 = s0) and
  * increments the sample counter.  O(1) per call with one int64_t
  * multiply for overflow safety.
- *
  * After block_size samples have been pushed, call magnitude_sq()
  * to read the result.
+ */
+
+/**
+ * @brief Push one sample through the Goertzel filter
  *
  * @param g     Goertzel filter (must not be NULL)
  * @param value Input sample (x[n])
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if g is NULL
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if g is NULL
  */
 int tiku_kits_sigfeatures_goertzel_push(
     struct tiku_kits_sigfeatures_goertzel *g,
@@ -178,27 +178,28 @@ int tiku_kits_sigfeatures_goertzel_push(
 int tiku_kits_sigfeatures_goertzel_complete(
     const struct tiku_kits_sigfeatures_goertzel *g);
 
-/**
- * @brief Compute the squared magnitude of the target DFT bin
- *
+/*
  * Uses the final s1 and s2 values to compute |X[k]|^2 via:
- *     |X[k]|^2 = s1^2 + s2^2 - coeff * s1 * s2
+ * |X[k]|^2 = s1^2 + s2^2 - coeff * s1 * s2
  * The result is proportional to the energy at the target frequency
  * and is not normalized by N.  To compare across different block
  * sizes, divide by N^2.
- *
  * After reading the result, call reset() before processing the
  * next block.
+ */
+
+/**
+ * @brief Compute the squared magnitude of the target DFT bin
  *
  * @param g      Goertzel filter (must not be NULL, block must be
- *               complete -- i.e. count >= block_size)
+ * complete -- i.e. count >= block_size)
  * @param result Output pointer where |X[k]|^2 is written (must
- *               not be NULL).  Stored as int64_t because squared
- *               magnitudes can exceed 32-bit range.
+ * not be NULL).  Stored as int64_t because squared
+ * magnitudes can exceed 32-bit range.
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if g or result is NULL,
- *         TIKU_KITS_SIGFEATURES_ERR_NODATA if the block is not
- *         yet complete
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if g or result is NULL,
+ * TIKU_KITS_SIGFEATURES_ERR_NODATA if the block is not
+ * yet complete
  */
 int tiku_kits_sigfeatures_goertzel_magnitude_sq(
     const struct tiku_kits_sigfeatures_goertzel *g,
@@ -208,25 +209,27 @@ int tiku_kits_sigfeatures_goertzel_magnitude_sq(
 /* Batch operation                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Process an entire block and return squared magnitude
- *
+/*
  * Convenience function that resets the filter, pushes all @p len
  * samples from @p src, and computes the squared magnitude in a
  * single call.  Equivalent to calling reset(), push() in a loop,
  * and magnitude_sq() manually.  O(N) where N is block_size.
+ */
+
+/**
+ * @brief Process an entire block and return squared magnitude
  *
  * @param g      Goertzel filter (must not be NULL; will be reset
- *               internally before processing)
+ * internally before processing)
  * @param src    Input sample buffer (length must equal block_size,
- *               must not be NULL)
+ * must not be NULL)
  * @param len    Number of samples (must equal block_size)
  * @param result Output pointer where |X[k]|^2 is written (must
- *               not be NULL)
+ * not be NULL)
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if g, src, or result is
- *         NULL,
- *         TIKU_KITS_SIGFEATURES_ERR_SIZE if len != block_size
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if g, src, or result is
+ * NULL,
+ * TIKU_KITS_SIGFEATURES_ERR_SIZE if len != block_size
  */
 int tiku_kits_sigfeatures_goertzel_block(
     struct tiku_kits_sigfeatures_goertzel *g,

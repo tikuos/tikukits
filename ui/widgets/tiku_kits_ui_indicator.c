@@ -6,15 +6,17 @@
  *
  * tiku_kits_ui_indicator.c - Battery / WiFi / signal impl
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Programmatic geometry; no font dependency. Each kind paints its
  * level in a recognisable shape:
  *
- *   BATTERY: rounded body + cap, body filled left-to-right with
- *            blocks proportional to level / 4.
- *   WIFI / SIGNAL: 4 vertical bars, heights stepping up; bars
- *            beyond `level` rendered as outlines only.
- *
- * SPDX-License-Identifier: Apache-2.0
+ * BATTERY: rounded body + cap, body filled left-to-right with
+ * blocks proportional to level / 4.
+ * WIFI / SIGNAL: 4 vertical bars, heights stepping up; bars
+ * beyond `level` rendered as outlines only.
  */
 
 #include "tiku_kits_ui_indicator.h"

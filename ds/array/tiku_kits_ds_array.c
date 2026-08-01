@@ -23,13 +23,15 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize an array with the given capacity
- *
+/*
  * Zeros the entire backing buffer so that any subsequent reads of
  * unpopulated slots return a deterministic value.  The runtime
  * capacity is clamped to TIKU_KITS_DS_ARRAY_MAX_SIZE at compile time
  * so that the static buffer is never overrun.
+ */
+
+/**
+ * @brief Initialize an array with the given capacity
  */
 int tiku_kits_ds_array_init(struct tiku_kits_ds_array *arr,
                             uint16_t capacity)
@@ -126,13 +128,15 @@ int tiku_kits_ds_array_push_back(struct tiku_kits_ds_array *arr,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Remove and optionally return the last element
- *
+/*
  * O(1) -- decrements size first, then copies the value out if the
  * caller provided a non-NULL output pointer.  The element's memory
  * slot is not cleared; it becomes inaccessible via the public API
  * because all access functions check against size.
+ */
+
+/**
+ * @brief Remove and optionally return the last element
  */
 int tiku_kits_ds_array_pop_back(struct tiku_kits_ds_array *arr,
                                 tiku_kits_ds_elem_t *value)
@@ -153,14 +157,16 @@ int tiku_kits_ds_array_pop_back(struct tiku_kits_ds_array *arr,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Insert an element at the given index, shifting successors right
- *
+/*
  * O(n) worst case when inserting at position 0 (every element must
  * move).  The shift loop runs backwards from size down to index+1 to
  * avoid overwriting data before it has been copied.  Inserting at
  * index == size degenerates to a push_back with the extra shift
  * overhead of zero iterations.
+ */
+
+/**
+ * @brief Insert an element at the given index, shifting successors right
  */
 int tiku_kits_ds_array_insert(struct tiku_kits_ds_array *arr,
                               uint16_t index,
@@ -224,13 +230,15 @@ int tiku_kits_ds_array_remove(struct tiku_kits_ds_array *arr,
 /* SEARCH                                                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Linear search for the first occurrence of a value
- *
+/*
  * Scans elements from index 0 upward and returns the position of the
  * first match.  O(n) worst case.  For data that is maintained in
  * sorted order, use tiku_kits_ds_sortarray_find() which provides
  * O(log n) binary search instead.
+ */
+
+/**
+ * @brief Linear search for the first occurrence of a value
  */
 int tiku_kits_ds_array_find(const struct tiku_kits_ds_array *arr,
                             tiku_kits_ds_elem_t value,
@@ -257,13 +265,15 @@ int tiku_kits_ds_array_find(const struct tiku_kits_ds_array *arr,
 /* BULK OPERATIONS                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Fill every capacity slot with the given value
- *
+/*
  * Iterates over all capacity slots (not MAX_SIZE) and writes @p value
  * into each one.  After filling, size is set equal to capacity so
  * that every slot is accessible through get/set.  Useful for
  * initialising an array with a sentinel or default value.
+ */
+
+/**
+ * @brief Fill every capacity slot with the given value
  */
 int tiku_kits_ds_array_fill(struct tiku_kits_ds_array *arr,
                             tiku_kits_ds_elem_t value)

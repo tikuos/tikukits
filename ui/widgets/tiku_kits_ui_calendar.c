@@ -6,19 +6,21 @@
  *
  * tiku_kits_ui_calendar.c - Calendar / date picker impl
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Rendering:
- *   row 0: month + year banner ("Mar 2026")
- *   row 1: weekday header letters ("S M T W T F S")
- *   rows 2..7: up to 6 weeks of day numbers
+ * row 0: month + year banner ("Mar 2026")
+ * row 1: weekday header letters ("S M T W T F S")
+ * rows 2..7: up to 6 weeks of day numbers
  *
  * The selected day inverts colours (bg-on-fg square) for visibility.
  *
  * Date math:
- *   - Leap-year detection per the proleptic Gregorian rule.
- *   - Day-of-week-of-month-1st via Zeller's congruence (returns
- *     0 = Sunday in the calendar's column convention).
- *
- * SPDX-License-Identifier: Apache-2.0
+ * - Leap-year detection per the proleptic Gregorian rule.
+ * - Day-of-week-of-month-1st via Zeller's congruence (returns
+ * 0 = Sunday in the calendar's column convention).
  */
 
 #include "tiku_kits_ui_calendar.h"

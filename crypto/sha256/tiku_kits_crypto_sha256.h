@@ -37,26 +37,26 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_crypto_sha256_ctx
- * @brief SHA-256 incremental hashing context
- *
+/*
  * Holds all state needed to compute a SHA-256 digest incrementally.
  * Declare as a static or stack variable -- no heap allocation is
  * required.  Call init() once, update() zero or more times, then
  * final() to produce the 32-byte digest.
- *
- * @note After final() the context is left in an undefined state.
- *       Call init() again to reuse it for a new message.
- *
  * Example:
- * @code
- *   tiku_kits_crypto_sha256_ctx_t ctx;
- *   uint8_t digest[TIKU_KITS_CRYPTO_SHA256_DIGEST_SIZE];
+ * tiku_kits_crypto_sha256_init(&ctx);
+ * tiku_kits_crypto_sha256_update(&ctx, data, len);
+ * tiku_kits_crypto_sha256_final(&ctx, digest);
+ */
+
+/**
+ * @brief SHA-256 incremental hashing context
  *
- *   tiku_kits_crypto_sha256_init(&ctx);
- *   tiku_kits_crypto_sha256_update(&ctx, data, len);
- *   tiku_kits_crypto_sha256_final(&ctx, digest);
+ * @struct tiku_kits_crypto_sha256_ctx
+ * @note After final() the context is left in an undefined state.
+ * Call init() again to reuse it for a new message.
+ * @code
+ * tiku_kits_crypto_sha256_ctx_t ctx;
+ * uint8_t digest[TIKU_KITS_CRYPTO_SHA256_DIGEST_SIZE];
  * @endcode
  */
 typedef struct tiku_kits_crypto_sha256_ctx {
@@ -112,22 +112,23 @@ int tiku_kits_crypto_sha256_update(
 /* FINALIZATION                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Finalize the hash and write the 32-byte digest
- *
+/*
  * Applies FIPS 180-4 padding (a 1-bit, zero padding, and the 64-bit
  * big-endian message length), compresses the final block(s), and
  * writes the 32-byte digest in big-endian byte order.
- *
  * After this call the context is consumed and must not be used for
  * further update() calls.  Call init() to reuse the context.
+ */
+
+/**
+ * @brief Finalize the hash and write the 32-byte digest
  *
  * @param ctx     Context to finalize (must not be NULL)
  * @param digest  Output buffer, at least
- *                TIKU_KITS_CRYPTO_SHA256_DIGEST_SIZE bytes
- *                (must not be NULL)
+ * TIKU_KITS_CRYPTO_SHA256_DIGEST_SIZE bytes
+ * (must not be NULL)
  * @return TIKU_KITS_CRYPTO_OK on success,
- *         TIKU_KITS_CRYPTO_ERR_NULL if ctx or digest is NULL
+ * TIKU_KITS_CRYPTO_ERR_NULL if ctx or digest is NULL
  */
 int tiku_kits_crypto_sha256_final(
     tiku_kits_crypto_sha256_ctx_t *ctx,

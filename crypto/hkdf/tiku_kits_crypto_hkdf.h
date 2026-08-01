@@ -38,26 +38,26 @@
 /* PUBLIC API                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief HKDF-Extract: derive a pseudorandom key from input keying
- *        material.
- *
+/*
  * Implements RFC 5869 Section 2.2:
- *   PRK = HMAC-SHA256(salt, IKM)
- *
+ * PRK = HMAC-SHA256(salt, IKM)
  * If @p salt is NULL, a 32-byte all-zero salt is used as specified
  * by the RFC.
+ */
+
+/**
+ * @brief HKDF-Extract: derive a pseudorandom key from input keying
+ * material.
  *
  * @param[in]  salt      Optional salt value (NULL for default)
  * @param[in]  salt_len  Salt length in bytes (ignored when salt
- *                       is NULL)
+ * is NULL)
  * @param[in]  ikm       Input keying material (must not be NULL)
  * @param[in]  ikm_len   IKM length in bytes
  * @param[out] prk       Output buffer for the 32-byte PRK
- *                       (must not be NULL)
- *
+ * (must not be NULL)
  * @return TIKU_KITS_CRYPTO_OK on success,
- *         TIKU_KITS_CRYPTO_ERR_NULL if ikm or prk is NULL
+ * TIKU_KITS_CRYPTO_ERR_NULL if ikm or prk is NULL
  */
 int tiku_kits_crypto_hkdf_extract(const uint8_t *salt,
                                   uint16_t salt_len,
@@ -65,30 +65,31 @@ int tiku_kits_crypto_hkdf_extract(const uint8_t *salt,
                                   uint16_t ikm_len,
                                   uint8_t *prk);
 
+/*
+ * Implements RFC 5869 Section 2.3:
+ * N = ceil(L / HashLen)
+ * T(0) = empty string
+ * T(i) = HMAC-SHA256(PRK, T(i-1) || info || i)  for i = 1..N
+ * OKM  = first L octets of T(1) || T(2) || ... || T(N)
+ */
+
 /**
  * @brief HKDF-Expand: expand a PRK into output keying material.
  *
- * Implements RFC 5869 Section 2.3:
- *   N = ceil(L / HashLen)
- *   T(0) = empty string
- *   T(i) = HMAC-SHA256(PRK, T(i-1) || info || i)  for i = 1..N
- *   OKM  = first L octets of T(1) || T(2) || ... || T(N)
- *
  * @param[in]  prk       Pseudorandom key, 32 bytes
- *                       (must not be NULL)
+ * (must not be NULL)
  * @param[in]  info      Optional context/application info
- *                       (NULL is treated as empty)
+ * (NULL is treated as empty)
  * @param[in]  info_len  Info length in bytes (ignored when info
- *                       is NULL)
+ * is NULL)
  * @param[out] okm       Output keying material buffer
- *                       (must not be NULL)
+ * (must not be NULL)
  * @param[in]  okm_len   Desired OKM length in bytes
- *                       (1..TIKU_KITS_CRYPTO_HKDF_MAX_OKM)
- *
+ * (1..TIKU_KITS_CRYPTO_HKDF_MAX_OKM)
  * @return TIKU_KITS_CRYPTO_OK on success,
- *         TIKU_KITS_CRYPTO_ERR_NULL if prk or okm is NULL,
- *         TIKU_KITS_CRYPTO_ERR_PARAM if okm_len is 0 or
- *         exceeds 255 * 32
+ * TIKU_KITS_CRYPTO_ERR_NULL if prk or okm is NULL,
+ * TIKU_KITS_CRYPTO_ERR_PARAM if okm_len is 0 or
+ * exceeds 255 * 32
  */
 int tiku_kits_crypto_hkdf_expand(const uint8_t *prk,
                                  const uint8_t *info,
@@ -96,35 +97,34 @@ int tiku_kits_crypto_hkdf_expand(const uint8_t *prk,
                                  uint8_t *okm,
                                  uint16_t okm_len);
 
+/*
+ * Constructs an HkdfLabel structure and calls hkdf_expand():
+ * struct {
+ * uint16 length = out_len;
+ * opaque label<7..255> = "tls13 " + label;
+ * opaque context<0..255> = context;
+ * } HkdfLabel;
+ * The caller supplies @p label WITHOUT the "tls13 " prefix; this
+ * function prepends it automatically.
+ */
+
 /**
  * @brief TLS 1.3 HKDF-Expand-Label (RFC 8446 Section 7.1).
  *
- * Constructs an HkdfLabel structure and calls hkdf_expand():
- *
- *   struct {
- *       uint16 length = out_len;
- *       opaque label<7..255> = "tls13 " + label;
- *       opaque context<0..255> = context;
- *   } HkdfLabel;
- *
- * The caller supplies @p label WITHOUT the "tls13 " prefix; this
- * function prepends it automatically.
- *
  * @param[in]  secret       PRK / secret, 32 bytes
- *                          (must not be NULL)
+ * (must not be NULL)
  * @param[in]  label        Label string without "tls13 " prefix
- *                          (must not be NULL)
+ * (must not be NULL)
  * @param[in]  context      Transcript hash or empty context
- *                          (NULL is treated as zero-length)
+ * (NULL is treated as zero-length)
  * @param[in]  context_len  Context length in bytes
  * @param[out] out          Output buffer (must not be NULL)
  * @param[in]  out_len      Desired output length in bytes
- *
  * @return TIKU_KITS_CRYPTO_OK on success,
- *         TIKU_KITS_CRYPTO_ERR_NULL if secret, label, or out
- *         is NULL,
- *         TIKU_KITS_CRYPTO_ERR_PARAM if the constructed label
- *         exceeds the internal buffer or out_len is invalid
+ * TIKU_KITS_CRYPTO_ERR_NULL if secret, label, or out
+ * is NULL,
+ * TIKU_KITS_CRYPTO_ERR_PARAM if the constructed label
+ * exceeds the internal buffer or out_len is invalid
  */
 int tiku_kits_crypto_hkdf_expand_label(const uint8_t *secret,
                                        const char *label,

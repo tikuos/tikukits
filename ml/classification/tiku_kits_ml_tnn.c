@@ -24,15 +24,17 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize hidden weights with small alternating values
- *
+/*
  * Sets w_hidden[j][i] to approximately +/-1/n_input in Q(shift),
  * alternating sign based on (j + i) & 1 to break symmetry.
  * Without this alternation every hidden neuron would start
  * identical and learn the same function.  Biases are set to zero.
  * Output weights are all zeroed so the network starts with no
  * class preference.  Scratch buffers h[] and o[] are also cleared.
+ */
+
+/**
+ * @brief Initialize hidden weights with small alternating values
  */
 static void init_weights(struct tiku_kits_ml_tnn *tnn)
 {
@@ -69,19 +71,19 @@ static void init_weights(struct tiku_kits_ml_tnn *tnn)
     }
 }
 
-/**
- * @brief Compute forward pass through the network
- *
+/*
  * Two-stage computation:
- *   Hidden: h[j] = ReLU( bias + sum_i(w_hidden[j][i+1] * x[i]) )
- *   Output: o[k] = bias + sum_j( (w_output[k][j+1] * h[j]) >> shift )
- *
+ * Hidden: h[j] = ReLU( bias + sum_i(w_hidden[j][i+1] * x[i]) )
+ * Output: o[k] = bias + sum_j( (w_output[k][j+1] * h[j]) >> shift )
  * The output-layer products are right-shifted by @c shift because
  * both w_output and h are Q(shift), so their product is Q(2*shift).
  * The shift brings the result back to Q(shift).  int64_t
  * accumulators prevent intermediate overflow.
- *
  * Results are stored in tnn->h[] and tnn->o[] (scratch buffers).
+ */
+
+/**
+ * @brief Compute forward pass through the network
  */
 static void compute_forward(struct tiku_kits_ml_tnn *tnn,
                             const tiku_kits_ml_elem_t *x)
@@ -209,22 +211,21 @@ int tiku_kits_ml_tnn_set_lr(struct tiku_kits_ml_tnn *tnn,
 /* TRAINING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Train the network with one sample using backpropagation
- *
+/*
  * Forward pass computes hidden and output activations.  Backward
  * pass updates hidden weights FIRST (before output weights change)
  * so that error back-propagation uses the original output weights.
- *
  * Hidden layer gradient:
- *   err_h[j] = sum_k( w_output[k][j+1] * delta_o[k] ) >> shift
- *   delta_h[j] = (h[j] > 0) ? err_h[j] : 0   (ReLU gate)
- *
+ * err_h[j] = sum_k( w_output[k][j+1] * delta_o[k] ) >> shift
+ * delta_h[j] = (h[j] > 0) ? err_h[j] : 0   (ReLU gate)
  * Output layer gradient:
- *   delta_o[k] = o[k] - target[k]
- *   target[k] = one_q if k == y, else 0
- *
+ * delta_o[k] = o[k] - target[k]
+ * target[k] = one_q if k == y, else 0
  * All intermediate products use int64_t to prevent overflow.
+ */
+
+/**
+ * @brief Train the network with one sample using backpropagation
  */
 int tiku_kits_ml_tnn_train(struct tiku_kits_ml_tnn *tnn,
                              const tiku_kits_ml_elem_t *x,

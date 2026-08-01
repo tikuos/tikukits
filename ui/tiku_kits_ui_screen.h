@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_screen.h - Screen stack for navigation
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * A simple LIFO stack of top-level windows. Push a new window when
  * the user enters a sub-screen (settings page, detail view, etc.);
  * pop on BACK. The application renders the top of the stack each
@@ -17,22 +21,20 @@
  *
  * Usage:
  *
- *   static tiku_kits_ui_screen_stack_t stack;
- *   static tiku_kits_ui_window_t       home_screen, settings_screen;
+ * static tiku_kits_ui_screen_stack_t stack;
+ * static tiku_kits_ui_window_t       home_screen, settings_screen;
  *
- *   tiku_kits_ui_screen_stack_init(&stack);
- *   tiku_kits_ui_screen_stack_push(&stack, &home_screen);
+ * tiku_kits_ui_screen_stack_init(&stack);
+ * tiku_kits_ui_screen_stack_push(&stack, &home_screen);
  *
- *   // user opens settings:
- *   tiku_kits_ui_screen_stack_push(&stack, &settings_screen);
+ * // user opens settings:
+ * tiku_kits_ui_screen_stack_push(&stack, &settings_screen);
  *
- *   // each render:
- *   tiku_kits_ui_screen_stack_render(&stack, &surface);
+ * // each render:
+ * tiku_kits_ui_screen_stack_render(&stack, &surface);
  *
- *   // each input event:
- *   tiku_kits_ui_screen_stack_event(&stack, evt);
- *
- * SPDX-License-Identifier: Apache-2.0
+ * // each input event:
+ * tiku_kits_ui_screen_stack_event(&stack, evt);
  */
 
 #ifndef TIKU_KITS_UI_SCREEN_H_
@@ -78,14 +80,16 @@ void tiku_kits_ui_screen_stack_render(
     const tiku_kits_ui_screen_stack_t *st,
     const tiku_kits_gfx_surface_t *s);
 
+/*
+ * - BACK pops the stack. If the stack is at the root, the
+ * optional on_back_at_root callback fires (or the event is
+ * silently dropped if no callback is registered).
+ * - All other events are forwarded to the top window's
+ * handle_event via tiku_kits_ui_window_event.
+ */
+
 /**
  * @brief Dispatch an event to the active screen.
- *
- * - BACK pops the stack. If the stack is at the root, the
- *   optional on_back_at_root callback fires (or the event is
- *   silently dropped if no callback is registered).
- * - All other events are forwarded to the top window's
- *   handle_event via tiku_kits_ui_window_event.
  */
 void tiku_kits_ui_screen_stack_event(tiku_kits_ui_screen_stack_t *st,
                                       tiku_kits_ui_event_t evt);

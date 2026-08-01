@@ -6,13 +6,15 @@
  *
  * tiku_kits_crypto_x25519.c - X25519 (Curve25519 ECDH) key agreement
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Curve25519 scalar multiplication via the Montgomery ladder, using the
  * canonical 16-limb (radix-2^16) field representation over GF(2^255-19).
  * Algorithm per RFC 7748; the compact limb representation and ladder are
  * the widely-used reference form.  Constant-time in the scalar (the only
  * branch on secret data is the constant-time conditional swap).
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_crypto_x25519.h"

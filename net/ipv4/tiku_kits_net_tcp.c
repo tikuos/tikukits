@@ -380,15 +380,16 @@ tcp_parse_mss(const uint8_t *tcp, uint16_t hdr_len)
 /* SEGMENT CONSTRUCTION AND OUTPUT                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Build and send a TCP segment.
- *
+/*
  * Constructs a complete IPv4 + TCP packet in the shared net_buf.
  * For SYN segments, includes the MSS option (4 bytes, making the
  * TCP header 24 bytes with data offset = 6).
- *
  * The sequence number used is conn->snd_nxt at call time; the
  * caller is responsible for advancing snd_nxt after calling.
+ */
+
+/**
+ * @brief Build and send a TCP segment.
  *
  * @param c          Connection
  * @param flags      TCP flags to set
@@ -702,16 +703,18 @@ tcp_retransmit_head(tiku_kits_net_tcp_conn_t *c)
 /* STATE MACHINE: PROCESS INCOMING SEGMENT                                   */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Follows RFC 793 Section 3.9 processing order:
+ * 1. Sequence number check
+ * 2. RST check
+ * 3. SYN check (error in established states)
+ * 4. ACK check and processing
+ * 5. Data processing
+ * 6. FIN processing
+ */
+
 /**
  * @brief Process an incoming segment for an existing connection.
- *
- * Follows RFC 793 Section 3.9 processing order:
- *   1. Sequence number check
- *   2. RST check
- *   3. SYN check (error in established states)
- *   4. ACK check and processing
- *   5. Data processing
- *   6. FIN processing
  */
 static void
 tcp_process(tiku_kits_net_tcp_conn_t *c,
@@ -1021,16 +1024,17 @@ tcp_echo_event(struct tiku_kits_net_tcp_conn *conn, uint8_t event)
 /* PUBLIC API: INIT                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialise the TCP subsystem.
- *
+/*
  * Clears the connection table and listener table, resets the ISS
  * counter, creates the FRAM-backed TX segment pool via the kernel
  * pool allocator (MPU unlocked for FRAM writes), and zeroes all
  * per-connection RX ring buffers in FRAM.  If the built-in echo
  * service is enabled, registers a listener on port 7.
- *
  * Called once during net process startup, before the poll loop.
+ */
+
+/**
+ * @brief Initialise the TCP subsystem.
  */
 void
 tiku_kits_net_tcp_init(void)
@@ -1075,14 +1079,16 @@ tiku_kits_net_tcp_init(void)
 /* PUBLIC API: LISTEN / UNLISTEN                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Register a passive-open listener on the given port.
- *
+/*
  * Stores the recv_cb and event_cb in a free listener slot.  When a
  * SYN arrives for this port, a connection is auto-allocated and the
  * 3-way handshake proceeds.  The callbacks are inherited by the new
  * connection.  Rejects port 0, NULL callbacks, duplicate ports, and
  * a full listener table.
+ */
+
+/**
+ * @brief Register a passive-open listener on the given port.
  */
 int8_t
 tiku_kits_net_tcp_listen(uint16_t port,
@@ -1143,18 +1149,19 @@ tiku_kits_net_tcp_unlisten(uint16_t port)
 /* PUBLIC API: CONNECT                                                       */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initiate an active-open TCP connection.
- *
+/*
  * Allocates a connection slot, fills in the 4-tuple, generates an
  * ISS, sets initial send/receive variables, enqueues the SYN in the
  * TX pool for retransmission, and sends the SYN with an MSS option.
  * The connection enters SYN_SENT state; the event_cb will fire with
  * TIKU_KITS_NET_TCP_EVT_CONNECTED when the 3WH completes, or
  * ABORTED if it fails.
- *
  * Returns a pointer to the new connection, or NULL on failure
  * (no free slot, NULL arguments, or send failure).
+ */
+
+/**
+ * @brief Initiate an active-open TCP connection.
  */
 tiku_kits_net_tcp_conn_t *
 tiku_kits_net_tcp_connect(const uint8_t *dst_addr,
@@ -1223,14 +1230,16 @@ tiku_kits_net_tcp_connect(const uint8_t *dst_addr,
 /* PUBLIC API: SEND                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Send data on an established TCP connection.
- *
+/*
  * Copies the payload into a FRAM-backed TX segment pool block for
  * retransmission, constructs a TCP segment (ACK+PSH) in the shared
  * net_buf, and transmits it.  The caller's buffer is free to reuse
  * immediately.  data_len must not exceed the negotiated MSS.  The
  * retransmission timer is reset after each successful send.
+ */
+
+/**
+ * @brief Send data on an established TCP connection.
  */
 int8_t
 tiku_kits_net_tcp_send(tiku_kits_net_tcp_conn_t *conn,
@@ -1282,16 +1291,17 @@ tiku_kits_net_tcp_send(tiku_kits_net_tcp_conn_t *conn,
 /* PUBLIC API: READ                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Read data from a connection's FRAM-backed RX ring buffer.
- *
+/*
  * Copies up to @p buf_len bytes from the ring buffer into the
  * caller's SRAM buffer (FRAM reads do not require MPU unlock).
  * Advances the tail pointer, updates the receive window, and if
  * the window was zero and has now opened, sends a window-update
  * ACK to unblock the peer.
- *
  * Returns the number of bytes actually read (0 if empty or NULL).
+ */
+
+/**
+ * @brief Read data from a connection's FRAM-backed RX ring buffer.
  */
 uint16_t
 tiku_kits_net_tcp_read(tiku_kits_net_tcp_conn_t *conn,
@@ -1347,18 +1357,18 @@ tiku_kits_net_tcp_read(tiku_kits_net_tcp_conn_t *conn,
 /* PUBLIC API: CLOSE                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initiate a graceful close by sending FIN+ACK.
- *
+/*
  * In ESTABLISHED state: enqueues the FIN in the TX pool, sends
  * FIN+ACK, advances snd_nxt (FIN consumes 1 sequence number),
  * and transitions to FIN_WAIT_1.
- *
  * In CLOSE_WAIT state (peer already closed): same procedure but
  * transitions to LAST_ACK.
- *
  * Returns ERR_PARAM if the connection is NULL or in an invalid
  * state for closing.
+ */
+
+/**
+ * @brief Initiate a graceful close by sending FIN+ACK.
  */
 int8_t
 tiku_kits_net_tcp_close(tiku_kits_net_tcp_conn_t *conn)
@@ -1415,13 +1425,15 @@ tiku_kits_net_tcp_close(tiku_kits_net_tcp_conn_t *conn)
 /* PUBLIC API: ABORT                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Abort a connection immediately by sending RST.
- *
+/*
  * Sends a RST segment to the peer (if past SYN_SENT state) and
  * frees all resources: the connection slot and any FRAM-backed TX
  * segments are released.  No event callback is invoked -- the
  * caller already knows the connection is being torn down.
+ */
+
+/**
+ * @brief Abort a connection immediately by sending RST.
  */
 void
 tiku_kits_net_tcp_abort(tiku_kits_net_tcp_conn_t *conn)
@@ -1445,19 +1457,20 @@ tiku_kits_net_tcp_abort(tiku_kits_net_tcp_conn_t *conn)
 /* PUBLIC API: INPUT                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Process an incoming TCP segment from the IPv4 input pipeline.
- *
+/*
  * Validates the minimum TCP header length, data offset, and TCP
  * pseudo-header checksum.  Looks up the connection by 4-tuple
  * (remote IP, remote port, local port).
- *
  * If a matching connection exists, parses the MSS option (on SYN)
  * and dispatches to tcp_process() which drives the RFC 793 state
  * machine.  If no connection matches but the segment is a SYN for
  * a listened port, allocates a new connection, sends SYN+ACK, and
  * enters SYN_RCVD state.  Unmatched non-RST segments receive a
  * RST reply.
+ */
+
+/**
+ * @brief Process an incoming TCP segment from the IPv4 input pipeline.
  */
 void
 tiku_kits_net_tcp_input(uint8_t *buf, uint16_t len, uint16_t ihl_len)
@@ -1597,21 +1610,21 @@ tiku_kits_net_tcp_input(uint8_t *buf, uint16_t len, uint16_t ihl_len)
 /* PUBLIC API: PERIODIC                                                      */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Periodic timer handler for all active TCP connections.
- *
+/*
  * Called from the net process poll loop (~20 Hz).  Iterates through
  * the connection table and handles two timer-driven behaviours:
- *
- *   TIME_WAIT countdown: decrements tw_counter each tick.  When it
- *   reaches zero, fires the CLOSED event and frees the connection.
- *
- *   Retransmission timeout: increments rto_counter for connections
- *   with unACK'd data (tx_head != NULL).  When rto_counter reaches
- *   rto_ticks, retransmits the head segment, doubles rto_ticks
- *   (exponential backoff, capped at 320 ticks ~16s), and increments
- *   the retry counter.  If retries exceed MAX_RETRIES, fires the
- *   ABORTED event and frees the connection.
+ * TIME_WAIT countdown: decrements tw_counter each tick.  When it
+ * reaches zero, fires the CLOSED event and frees the connection.
+ * Retransmission timeout: increments rto_counter for connections
+ * with unACK'd data (tx_head != NULL).  When rto_counter reaches
+ * rto_ticks, retransmits the head segment, doubles rto_ticks
+ * (exponential backoff, capped at 320 ticks ~16s), and increments
+ * the retry counter.  If retries exceed MAX_RETRIES, fires the
+ * ABORTED event and frees the connection.
+ */
+
+/**
+ * @brief Periodic timer handler for all active TCP connections.
  */
 void
 tiku_kits_net_tcp_periodic(void)

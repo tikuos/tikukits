@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_textbox.h - Single-line text editor
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Caller-allocated char buffer plus a cursor index. The textbox
  * mutates the buffer in place; the application sees the latest
  * contents at any time and can wire @p on_submit to receive an
@@ -13,25 +17,23 @@
  *
  * Input is fed through the existing event vocabulary:
  *
- *   TIKU_KITS_UI_EVT_NUMERIC_*   inserts the digit at the cursor
- *                                 (consumed only when @p kind
- *                                  allows it).
- *   TIKU_KITS_UI_EVT_BACK         deletes the character to the
- *                                 left of the cursor; consumed
- *                                 only when there is something
- *                                 to delete (so a screen-stack
- *                                 BACK still works on an empty
- *                                 textbox).
- *   TIKU_KITS_UI_EVT_FOCUS_LEFT   moves cursor one position left.
- *   TIKU_KITS_UI_EVT_FOCUS_RIGHT  moves cursor one position right.
- *   TIKU_KITS_UI_EVT_ACTIVATE     fires on_submit(buffer).
+ * TIKU_KITS_UI_EVT_NUMERIC_*   inserts the digit at the cursor
+ * (consumed only when @p kind
+ * allows it).
+ * TIKU_KITS_UI_EVT_BACK         deletes the character to the
+ * left of the cursor; consumed
+ * only when there is something
+ * to delete (so a screen-stack
+ * BACK still works on an empty
+ * textbox).
+ * TIKU_KITS_UI_EVT_FOCUS_LEFT   moves cursor one position left.
+ * TIKU_KITS_UI_EVT_FOCUS_RIGHT  moves cursor one position right.
+ * TIKU_KITS_UI_EVT_ACTIVATE     fires on_submit(buffer).
  *
  * For TEXT mode the application is expected to wire an on-screen
  * keyboard widget (or any other input source) that calls
  * tiku_kits_ui_textbox_insert() / tiku_kits_ui_textbox_backspace()
  * directly.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_TEXTBOX_H_

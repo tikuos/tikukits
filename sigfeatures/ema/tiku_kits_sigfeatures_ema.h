@@ -6,11 +6,15 @@
  *
  * tiku_kits_sigfeatures_ema.h - Exponential Moving Average filter
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Integer-only EMA using a power-of-two smoothing factor.  The
  * alpha parameter is expressed as a right-shift so the update
  * reduces to a subtract and shift -- no division, no floats.
  *
- *   value += ((sample << 16) - value) >> alpha_shift
+ * value += ((sample << 16) - value) >> alpha_shift
  *
  * Larger alpha_shift values produce heavier smoothing (slower
  * response).  The internal accumulator is scaled by 2^16 for
@@ -18,8 +22,6 @@
  * tiku_kits_sigfeatures_ema_value().
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_SIGFEATURES_EMA_H_
@@ -35,13 +37,15 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum allowed alpha_shift value
- *
+/*
  * Limits the smoothing factor to prevent excessively slow response
  * and to keep the fixed-point arithmetic well-behaved within the
  * 32-bit accumulator.  Override before including this header to
  * change the limit.
+ */
+
+/**
+ * @brief Maximum allowed alpha_shift value
  */
 #ifndef TIKU_KITS_SIGFEATURES_EMA_SHIFT_MAX
 #define TIKU_KITS_SIGFEATURES_EMA_SHIFT_MAX 15
@@ -51,29 +55,28 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_sigfeatures_ema
- * @brief Streaming exponential moving average filter
- *
+/*
  * Maintains a fixed-point accumulator that tracks the EMA of the
  * input signal.  The smoothing weight alpha is 1 / 2^alpha_shift,
  * so larger shift values produce heavier smoothing.
- *
  * Internal value is scaled by 2^16.  The first sample seeds the
  * accumulator directly (no smoothing on the first sample).
  * Subsequent samples apply the recurrence:
- *
- *     value += (((int32_t)sample << 16) - value) >> alpha_shift
- *
+ * value += (((int32_t)sample << 16) - value) >> alpha_shift
  * Example:
- * @code
- *   struct tiku_kits_sigfeatures_ema ema;
- *   tiku_kits_sigfeatures_elem_t result;
+ * tiku_kits_sigfeatures_ema_init(&ema, 3);   // alpha = 1/8
+ * tiku_kits_sigfeatures_ema_push(&ema, 100);  // seeds value
+ * tiku_kits_sigfeatures_ema_push(&ema, 200);  // smoothed
+ * tiku_kits_sigfeatures_ema_value(&ema, &result);
+ */
+
+/**
+ * @brief Streaming exponential moving average filter
  *
- *   tiku_kits_sigfeatures_ema_init(&ema, 3);   // alpha = 1/8
- *   tiku_kits_sigfeatures_ema_push(&ema, 100);  // seeds value
- *   tiku_kits_sigfeatures_ema_push(&ema, 200);  // smoothed
- *   tiku_kits_sigfeatures_ema_value(&ema, &result);
+ * @struct tiku_kits_sigfeatures_ema
+ * @code
+ * struct tiku_kits_sigfeatures_ema ema;
+ * tiku_kits_sigfeatures_elem_t result;
  * @endcode
  */
 struct tiku_kits_sigfeatures_ema {
@@ -122,21 +125,21 @@ int tiku_kits_sigfeatures_ema_reset(
 /* Sample input                                                              */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * On the first push the accumulator is seeded directly:
+ * value = (int32_t)sample << 16
+ * On subsequent pushes the EMA recurrence is applied:
+ * value += (((int32_t)sample << 16) - value) >> alpha_shift
+ * O(1) per call; no loops or allocations.
+ */
+
 /**
  * @brief Push a new sample into the EMA filter
- *
- * On the first push the accumulator is seeded directly:
- *     value = (int32_t)sample << 16
- *
- * On subsequent pushes the EMA recurrence is applied:
- *     value += (((int32_t)sample << 16) - value) >> alpha_shift
- *
- * O(1) per call; no loops or allocations.
  *
  * @param ema    EMA filter (must not be NULL)
  * @param sample New input sample
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if ema is NULL
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if ema is NULL
  */
 int tiku_kits_sigfeatures_ema_push(
     struct tiku_kits_sigfeatures_ema *ema,

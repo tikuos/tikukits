@@ -24,13 +24,15 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a circular log with the given capacity
- *
+/*
  * Zeros the entire entry array so that all slots (including those
  * beyond the runtime capacity) start in a clean, deterministic state.
  * This is important on FRAM targets where power loss may leave
  * arbitrary values in memory.
+ */
+
+/**
+ * @brief Initialize a circular log with the given capacity
  */
 int tiku_kits_ds_circlog_init(struct tiku_kits_ds_circlog *log,
                               uint16_t capacity)
@@ -57,14 +59,16 @@ int tiku_kits_ds_circlog_init(struct tiku_kits_ds_circlog *log,
 /* APPEND / READ                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Append a new entry to the circular log
- *
+/*
  * O(1) operation.  When the log is not yet full, the entry is written
  * at the next free slot and count is incremented.  When full, the
  * oldest entry (at head) is overwritten and head advances by one,
  * keeping the ring semantics.  Unused payload bytes are explicitly
  * zeroed to maintain clean FRAM state across power cycles.
+ */
+
+/**
+ * @brief Append a new entry to the circular log
  */
 int tiku_kits_ds_circlog_append(
     struct tiku_kits_ds_circlog *log,
@@ -137,13 +141,15 @@ int tiku_kits_ds_circlog_read_latest(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Read a log entry by age index
- *
+/*
  * Converts the caller's age index (0 = newest) to a physical ring
  * position and copies the entry into the output struct.  The mapping
  * formula is: actual_pos = (head + count - 1 - index) % capacity,
  * which counts backwards from the most recent write position.
+ */
+
+/**
+ * @brief Read a log entry by age index
  */
 int tiku_kits_ds_circlog_read_at(
     const struct tiku_kits_ds_circlog *log,

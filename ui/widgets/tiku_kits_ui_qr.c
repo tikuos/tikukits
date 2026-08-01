@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_qr.c - QR widget impl
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * The widget paints the quiet zone with the theme background, then
  * walks the row-major MSB-first module array and fills a
  * module_px x module_px square at each set bit with the theme
@@ -14,8 +18,6 @@
  * Module data is row-major MSB-first; bytes-per-row =
  * ceil(size / 8). For a 21-module QR that's 3 bytes/row; for a
  * 33-module code, 5 bytes/row.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_ui_qr.h"

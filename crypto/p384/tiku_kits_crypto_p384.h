@@ -6,6 +6,10 @@
  *
  * tiku_kits_crypto_p384.h - NIST P-384 (secp384r1) ECDSA signature verify
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Verify-only ECDSA over NIST P-384, for authenticating P-384 links in an
  * X.509 chain (ecdsa-with-SHA384) and TLS 1.3 ecdsa_secp384r1_sha384
  * CertificateVerify.  Same design as the P-256 kit -- generic Montgomery
@@ -14,8 +18,6 @@
  *
  * TODO: P-256 and P-384 are byte-identical except NL + constants; unify them
  * into one curve-parameterized module.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_P384_H_

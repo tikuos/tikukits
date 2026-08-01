@@ -84,15 +84,17 @@ int tiku_kits_sigfeatures_peak_reset(
 /* SAMPLE INPUT                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push a new sample into the peak detector
- *
+/*
  * Implements the two-state hysteresis machine.  In the RISING
  * state, the running maximum is updated or, if the signal drops
  * below max - hysteresis, a peak is confirmed and the machine
  * transitions to FALLING.  In the FALLING state, the running
  * minimum is updated or, if the signal rises above min +
  * hysteresis, the machine transitions back to RISING.  O(1).
+ */
+
+/**
+ * @brief Push a new sample into the peak detector
  */
 int tiku_kits_sigfeatures_peak_push(
     struct tiku_kits_sigfeatures_peak *p,

@@ -37,16 +37,17 @@ static int is_leaf(const struct tiku_kits_ml_dtree_node *node)
             && node->right == TIKU_KITS_ML_DTREE_LEAF);
 }
 
-/**
- * @brief Traverse the tree from root to leaf and return the leaf index
- *
+/*
  * Walks from node 0 downward, branching left or right at each
  * internal node based on the axis-aligned split condition
  * x[feature_index] <= threshold.  A loop guard limits iterations
  * to n_nodes to prevent infinite loops in malformed trees where
  * child indices form a cycle.
- *
  * O(depth) time, O(1) extra space.
+ */
+
+/**
+ * @brief Traverse the tree from root to leaf and return the leaf index
  */
 static int traverse(const struct tiku_kits_ml_dtree *dt,
                     const tiku_kits_ml_elem_t *x)
@@ -141,16 +142,17 @@ int tiku_kits_ml_dtree_reset(struct tiku_kits_ml_dtree *dt)
 /* TREE LOADING                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Load a pre-built decision tree from a node descriptor array
- *
+/*
  * Performs a full validation pass before copying: for every internal
  * node, child indices must point to valid nodes (< n_nodes) or be
  * the LEAF sentinel, and the feature_index must be within the
  * configured n_features.  Leaf nodes are skipped during validation
  * because their feature_index field is unused.
- *
  * O(n_nodes) validation + O(n_nodes) memcpy.
+ */
+
+/**
+ * @brief Load a pre-built decision tree from a node descriptor array
  */
 int tiku_kits_ml_dtree_set_tree(
     struct tiku_kits_ml_dtree *dt,
@@ -261,14 +263,16 @@ int tiku_kits_ml_dtree_predict(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Get the confidence of the prediction as fixed-point
- *
+/*
  * Traverses the tree identically to predict() but reads the leaf's
  * threshold field as a Q(shift) confidence value rather than the
  * class_label.  A threshold of 0 is treated as "no confidence
  * stored" and full confidence (1 << shift) is returned as a
  * sensible default.
+ */
+
+/**
+ * @brief Get the confidence of the prediction as fixed-point
  */
 int tiku_kits_ml_dtree_predict_proba(
     const struct tiku_kits_ml_dtree *dt,
@@ -323,17 +327,18 @@ uint8_t tiku_kits_ml_dtree_node_count(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Get the maximum depth of the loaded tree
- *
+/*
  * Uses an explicit stack-based iterative DFS to avoid recursion
  * (important on stack-constrained embedded targets).  Each stack
  * frame stores a node index and its depth.  The right child is
  * pushed before the left so that left is visited first (matches
  * natural DFS order), though for depth measurement the visit
  * order is irrelevant -- we just need the maximum.
- *
  * O(n_nodes) time, O(n_nodes) stack space (two uint8_t arrays).
+ */
+
+/**
+ * @brief Get the maximum depth of the loaded tree
  */
 uint8_t tiku_kits_ml_dtree_depth(
     const struct tiku_kits_ml_dtree *dt)

@@ -6,41 +6,43 @@
  *
  * tiku_kits_ds_timerwheel.h - Interval Timer Wheel
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Efficient O(N) timer scheduling structure for embedded systems,
  * where N is TIKU_KITS_DS_TIMERWHEEL_MAX_TIMERS (a small compile-time
  * constant).  Supports one-shot and periodic timers with tick-based
  * deadlines.
  *
  * Design:
- *   - Flat array of timer entries -- no linked lists, no heap.
- *   - All storage lives inside the struct; declare it as a static or
- *     local variable.
- *   - tick() advances the internal clock and marks expired timers in
- *     a bitmask.  expired() returns the fired timer IDs and handles
- *     one-shot removal and periodic rescheduling.
- *   - Timer IDs are 1-based (slot index + 1).  ID 0 is reserved to
- *     mean "unused".
+ * - Flat array of timer entries -- no linked lists, no heap.
+ * - All storage lives inside the struct; declare it as a static or
+ * local variable.
+ * - tick() advances the internal clock and marks expired timers in
+ * a bitmask.  expired() returns the fired timer IDs and handles
+ * one-shot removal and periodic rescheduling.
+ * - Timer IDs are 1-based (slot index + 1).  ID 0 is reserved to
+ * mean "unused".
  *
  * Typical usage:
  * @code
- *   tiku_kits_ds_timerwheel_t tw;
- *   tiku_kits_ds_timerwheel_init(&tw);
+ * tiku_kits_ds_timerwheel_t tw;
+ * tiku_kits_ds_timerwheel_init(&tw);
  *
- *   uint8_t id;
- *   tiku_kits_ds_timerwheel_add(&tw, 10, 0, &id);   // one-shot, 10 ticks
- *   tiku_kits_ds_timerwheel_add(&tw, 5, 5, &id);    // periodic, every 5
+ * uint8_t id;
+ * tiku_kits_ds_timerwheel_add(&tw, 10, 0, &id);   // one-shot, 10 ticks
+ * tiku_kits_ds_timerwheel_add(&tw, 5, 5, &id);    // periodic, every 5
  *
- *   // In your main loop:
- *   tiku_kits_ds_timerwheel_tick(&tw);
- *   uint8_t fired[TIKU_KITS_DS_TIMERWHEEL_MAX_TIMERS];
- *   uint8_t count;
- *   tiku_kits_ds_timerwheel_expired(&tw, fired, sizeof(fired), &count);
- *   for (uint8_t i = 0; i < count; i++) {
- *       // handle fired[i]
- *   }
+ * // In your main loop:
+ * tiku_kits_ds_timerwheel_tick(&tw);
+ * uint8_t fired[TIKU_KITS_DS_TIMERWHEEL_MAX_TIMERS];
+ * uint8_t count;
+ * tiku_kits_ds_timerwheel_expired(&tw, fired, sizeof(fired), &count);
+ * for (uint8_t i = 0; i < count; i++) {
+ * // handle fired[i]
+ * }
  * @endcode
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_DS_TIMERWHEEL_H_
@@ -139,21 +141,21 @@ int tiku_kits_ds_timerwheel_reset(tiku_kits_ds_timerwheel_t *tw);
 /* TIMER MANAGEMENT                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Add a new timer to the wheel.
- *
+/*
  * Allocates the first free slot and schedules the timer to fire
  * after @p delay ticks from the current tick.  If @p interval is
  * non-zero the timer repeats every @p interval ticks after firing;
  * if zero the timer is one-shot and auto-removed after it fires.
- *
  * The assigned timer ID (1-based) is written to @p id_out.
+ */
+
+/**
+ * @brief Add a new timer to the wheel.
  *
  * @param tw       Timer wheel (must not be NULL)
  * @param delay    Number of ticks until first firing (must be > 0)
  * @param interval Repeat interval in ticks (0 = one-shot)
  * @param id_out   Output: assigned timer ID (must not be NULL)
- *
  * @return TIKU_KITS_DS_OK on success
  * @return TIKU_KITS_DS_ERR_NULL if tw or id_out is NULL
  * @return TIKU_KITS_DS_ERR_PARAM if delay is 0
@@ -184,33 +186,36 @@ int tiku_kits_ds_timerwheel_cancel(tiku_kits_ds_timerwheel_t *tw,
 /* TICK PROCESSING                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Advance the wheel by one tick.
- *
+/*
  * Increments the internal tick counter and scans all active timers.
  * Any timer whose deadline matches the new tick is marked in an
  * internal fired bitmask.  Call expired() after tick() to retrieve
  * the fired timer IDs.
+ */
+
+/**
+ * @brief Advance the wheel by one tick.
  *
  * @param tw  Timer wheel (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if tw is NULL
+ * TIKU_KITS_DS_ERR_NULL if tw is NULL
  */
 int tiku_kits_ds_timerwheel_tick(tiku_kits_ds_timerwheel_t *tw);
 
-/**
- * @brief Retrieve timer IDs that fired during the last tick().
- *
+/*
  * Iterates the internal fired bitmask and writes the IDs of expired
  * timers into @p ids (up to @p max_ids entries).  One-shot timers
  * are automatically deactivated; periodic timers are rescheduled to
  * fire again after their interval.  The fired bitmask is cleared.
+ */
+
+/**
+ * @brief Retrieve timer IDs that fired during the last tick().
  *
  * @param tw       Timer wheel (must not be NULL)
  * @param ids      Output array for fired timer IDs (must not be NULL)
  * @param max_ids  Capacity of @p ids array
  * @param count    Output: number of IDs written (must not be NULL)
- *
  * @return TIKU_KITS_DS_OK on success
  * @return TIKU_KITS_DS_ERR_NULL if tw, ids, or count is NULL
  */

@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_grid.h - 2D grid layout container
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Lays children out on an N_rows x N_cols grid with equal-sized
  * tracks. Each child specifies its (row, col) plus optional spans.
  * Cells without a child render as blank space.
@@ -15,8 +19,6 @@
  * nearest) column; FOCUS_UP/LEFT/RIGHT do the obvious thing. When
  * direction navigation hits the grid edge, handle_event returns 0
  * so the containing window can rotate to a sibling widget.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_GRID_H_

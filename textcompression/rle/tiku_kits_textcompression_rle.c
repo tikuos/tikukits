@@ -22,16 +22,17 @@
 /* ENCODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compress a byte buffer using Run-Length Encoding
- *
+/*
  * Single-pass left-to-right scan.  For each position, the inner loop
  * counts how many consecutive bytes match the current value (capped at
  * 255 so the count fits in one byte).  Each maximal run is then
  * emitted as a [count][value] pair.  The outer loop advances past the
  * counted run and repeats until all input is consumed.
- *
  * Worst-case output is 2 * src_len (no adjacent duplicates).
+ */
+
+/**
+ * @brief Compress a byte buffer using Run-Length Encoding
  */
 int tiku_kits_textcompression_rle_encode(const uint8_t *src, uint16_t src_len,
                                          uint8_t *dst, uint16_t dst_cap,
@@ -75,14 +76,16 @@ int tiku_kits_textcompression_rle_encode(const uint8_t *src, uint16_t src_len,
 /* DECODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Decompress a Run-Length Encoded byte buffer
- *
+/*
  * Reads [count][value] pairs sequentially.  For each pair the value
  * byte is written into the output buffer @c count times.  Two
  * structural checks guard against corrupt data: an odd src_len
  * (truncated pair) and a zero count byte (would produce no output
  * and stall decoding progress).
+ */
+
+/**
+ * @brief Decompress a Run-Length Encoded byte buffer
  */
 int tiku_kits_textcompression_rle_decode(const uint8_t *src, uint16_t src_len,
                                          uint8_t *dst, uint16_t dst_cap,

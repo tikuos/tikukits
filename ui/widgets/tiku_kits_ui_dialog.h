@@ -6,13 +6,15 @@
  *
  * tiku_kits_ui_dialog.h - Modal dialog overlay
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Renders a filled rounded card with a title, wrapped body message,
  * and up to 3 buttons in a row at the bottom. Caller toggles
  * `base.visible` to show / hide. INC/DEC navigate buttons; ACTIVATE
  * fires the selected button's callback; BACK fires button 0
  * (typically "cancel").
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_DIALOG_H_

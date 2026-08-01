@@ -6,6 +6,10 @@
  *
  * tiku_kits_ml_dtree.h - Binary decision tree classifier
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Platform-independent pre-built decision tree classifier for embedded
  * systems. Supports multi-class classification using axis-aligned splits
  * on integer features. No FPU required.
@@ -21,8 +25,6 @@
  * 0xFF marks "no child" (leaf). Maximum 255 nodes per tree.
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_ML_DTREE_H_
@@ -38,86 +40,96 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Element type for feature values.
- *
+/*
  * Defaults to int32_t for integer-only targets (no FPU required).
  * All ML sub-modules share this type so that feature vectors can be
  * passed between classifiers without casting.  Define as int16_t
  * before including if memory is very tight on a 16-bit target.
- *
  * Override before including this header to change the type:
+ */
+
+/**
+ * @brief Element type for feature values.
+ *
  * @code
- *   #define TIKU_KITS_ML_ELEM_TYPE int16_t
- *   #include "tiku_kits_ml_dtree.h"
+ * #define TIKU_KITS_ML_ELEM_TYPE int16_t
+ * #include "tiku_kits_ml_dtree.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_ELEM_TYPE
 #define TIKU_KITS_ML_ELEM_TYPE int32_t
 #endif
 
-/**
- * @brief Maximum number of nodes in a decision tree.
- *
+/*
  * This compile-time constant defines the upper bound on tree size.
  * Each model instance reserves this many node slots in its static
  * storage.  31 nodes allows a complete binary tree of depth 4, or
  * deeper unbalanced trees with fewer nodes.  Maximum 255 nodes
  * because child indices are uint8_t.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of nodes in a decision tree.
+ *
  * @code
- *   #define TIKU_KITS_ML_DTREE_MAX_NODES 63
- *   #include "tiku_kits_ml_dtree.h"
+ * #define TIKU_KITS_ML_DTREE_MAX_NODES 63
+ * #include "tiku_kits_ml_dtree.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_DTREE_MAX_NODES
 #define TIKU_KITS_ML_DTREE_MAX_NODES 31
 #endif
 
-/**
- * @brief Maximum number of input features.
- *
+/*
  * Determines the maximum dimensionality of input feature vectors.
  * Each internal node references a feature by its index, which must
  * be less than this value.  Choose a value that covers your data
  * without wasting validation overhead.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of input features.
+ *
  * @code
- *   #define TIKU_KITS_ML_DTREE_MAX_FEATURES 16
- *   #include "tiku_kits_ml_dtree.h"
+ * #define TIKU_KITS_ML_DTREE_MAX_FEATURES 16
+ * #include "tiku_kits_ml_dtree.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_DTREE_MAX_FEATURES
 #define TIKU_KITS_ML_DTREE_MAX_FEATURES 8
 #endif
 
-/**
- * @brief Default number of fractional bits for fixed-point confidence.
- *
+/*
  * Controls the resolution of confidence values stored in leaf nodes.
  * With shift=8 the resolution is ~0.004 (1/256), which is adequate
  * for most embedded classification tasks.  Larger shift gives finer
  * resolution but reduces the representable integer range.
- *
  * Override before including this header to change the default:
+ */
+
+/**
+ * @brief Default number of fractional bits for fixed-point confidence.
+ *
  * @code
- *   #define TIKU_KITS_ML_DTREE_SHIFT 10
- *   #include "tiku_kits_ml_dtree.h"
+ * #define TIKU_KITS_ML_DTREE_SHIFT 10
+ * #include "tiku_kits_ml_dtree.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_DTREE_SHIFT
 #define TIKU_KITS_ML_DTREE_SHIFT 8
 #endif
 
-/**
- * @brief Sentinel value indicating a leaf node (no child).
- *
+/*
  * When both the @c left and @c right child indices of a node equal
  * this sentinel (0xFF), the node is a leaf.  The value 0xFF was
  * chosen because child indices are uint8_t, and a valid tree can
  * hold at most 255 nodes (indices 0..254), leaving 0xFF unused.
+ */
+
+/**
+ * @brief Sentinel value indicating a leaf node (no child).
  */
 #define TIKU_KITS_ML_DTREE_LEAF 0xFF
 
@@ -130,28 +142,28 @@
  */
 typedef TIKU_KITS_ML_ELEM_TYPE tiku_kits_ml_elem_t;
 
-/**
- * @struct tiku_kits_ml_dtree_node
- * @brief Single node in a binary decision tree
- *
+/*
  * A union-style record that serves double duty as either an internal
  * decision node or a leaf (prediction) node, distinguished by the
  * child-index sentinel pattern.
- *
  * **Internal nodes** split on @c x[feature_index] <= threshold:
- *   - @c left child is taken when the condition holds
- *   - @c right child is taken otherwise
- *
+ * - @c left child is taken when the condition holds
+ * - @c right child is taken otherwise
  * **Leaf nodes** are identified by
- *   @c left == right == TIKU_KITS_ML_DTREE_LEAF (0xFF).
+ */
+
+/**
+ * @brief Single node in a binary decision tree
+ *
+ * @struct tiku_kits_ml_dtree_node
+ * @c left == right == TIKU_KITS_ML_DTREE_LEAF (0xFF).
  * For leaves, @c class_label holds the predicted class and
  * @c threshold may optionally hold a confidence value encoded in
  * Q(shift) fixed-point format.
- *
  * @note Nodes use explicit uint8_t child indices rather than
- *       implicit 2i+1 / 2i+2 positioning so that unbalanced trees
- *       do not waste array slots.  The trade-off is 2 extra bytes
- *       per node versus potentially many empty slots.
+ * implicit 2i+1 / 2i+2 positioning so that unbalanced trees
+ * do not waste array slots.  The trade-off is 2 extra bytes
+ * per node versus potentially many empty slots.
  */
 struct tiku_kits_ml_dtree_node {
     int32_t threshold;      /**< Split threshold (internal), or
@@ -167,45 +179,42 @@ struct tiku_kits_ml_dtree_node {
                                  nodes; ignored for internal nodes) */
 };
 
-/**
- * @struct tiku_kits_ml_dtree
- * @brief Pre-built binary decision tree classifier
- *
+/*
  * Stores a tree as a flat array of node descriptors with explicit
  * child indices.  Node 0 is always the root.  Trees are trained
  * off-device (e.g. in Python) and loaded at run time via
  * set_tree().  Classification traverses from the root to a leaf
  * using only integer comparison -- no FPU required.
- *
  * Two parameters govern fixed-point behaviour:
- *   - @c n_features -- validated against each internal node's
- *     feature_index during set_tree() to reject malformed trees.
- *   - @c shift -- fractional bits used to interpret confidence
- *     values stored in leaf nodes' threshold field.
- *
- * @note Because all storage lives inside the struct, no heap
- *       allocation is needed -- just declare the model as a static
- *       or local variable.  The backing buffer always reserves
- *       TIKU_KITS_ML_DTREE_MAX_NODES slots regardless of the
- *       actual tree size.
- *
+ * - @c n_features -- validated against each internal node's
+ * feature_index during set_tree() to reject malformed trees.
+ * - @c shift -- fractional bits used to interpret confidence
+ * values stored in leaf nodes' threshold field.
  * Example -- a 3-node tree with one split:
+ * tiku_kits_ml_dtree_init(&dt, 1, 8);
+ * // Tree: x[0] <= 5 -> class 0, else class 1
+ * struct tiku_kits_ml_dtree_node nodes[] = {
+ * {5, 0, 1, 2, 0},              // root: split on feature 0
+ * {0, 0, 0xFF, 0xFF, 0},        // leaf: class 0
+ * {0, 0, 0xFF, 0xFF, 1},        // leaf: class 1
+ * };
+ * tiku_kits_ml_dtree_set_tree(&dt, nodes, 3);
+ * tiku_kits_ml_elem_t x[] = {3};
+ * tiku_kits_ml_dtree_predict(&dt, x, &cls);  // cls = 0
+ */
+
+/**
+ * @brief Pre-built binary decision tree classifier
+ *
+ * @struct tiku_kits_ml_dtree
+ * @note Because all storage lives inside the struct, no heap
+ * allocation is needed -- just declare the model as a static
+ * or local variable.  The backing buffer always reserves
+ * TIKU_KITS_ML_DTREE_MAX_NODES slots regardless of the
+ * actual tree size.
  * @code
- *   struct tiku_kits_ml_dtree dt;
- *   uint8_t cls;
- *
- *   tiku_kits_ml_dtree_init(&dt, 1, 8);
- *
- *   // Tree: x[0] <= 5 -> class 0, else class 1
- *   struct tiku_kits_ml_dtree_node nodes[] = {
- *       {5, 0, 1, 2, 0},              // root: split on feature 0
- *       {0, 0, 0xFF, 0xFF, 0},        // leaf: class 0
- *       {0, 0, 0xFF, 0xFF, 1},        // leaf: class 1
- *   };
- *   tiku_kits_ml_dtree_set_tree(&dt, nodes, 3);
- *
- *   tiku_kits_ml_elem_t x[] = {3};
- *   tiku_kits_ml_dtree_predict(&dt, x, &cls);  // cls = 0
+ * struct tiku_kits_ml_dtree dt;
+ * uint8_t cls;
  * @endcode
  */
 struct tiku_kits_ml_dtree {
@@ -261,27 +270,28 @@ int tiku_kits_ml_dtree_reset(struct tiku_kits_ml_dtree *dt);
 /* TREE LOADING                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Load a pre-built decision tree from a node descriptor array
- *
+/*
  * Copies the caller-supplied node array into the model's static
  * buffer and validates the tree structure during loading.  For
  * every internal node, child indices must be either a valid node
  * index (< n_nodes) or the TIKU_KITS_ML_DTREE_LEAF sentinel, and
  * the feature_index must be < n_features.  This ensures that
  * subsequent traversals cannot access out-of-bounds memory.
- *
  * O(n_nodes) -- one validation pass plus one memcpy.
+ */
+
+/**
+ * @brief Load a pre-built decision tree from a node descriptor array
  *
  * @param dt      Model (must be initialized via init; must not be NULL)
  * @param nodes   Array of node descriptors with node 0 as the root
- *                (must not be NULL)
+ * (must not be NULL)
  * @param n_nodes Number of nodes to load
- *                (1..TIKU_KITS_ML_DTREE_MAX_NODES)
+ * (1..TIKU_KITS_ML_DTREE_MAX_NODES)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if dt or nodes is NULL,
- *         TIKU_KITS_ML_ERR_PARAM if n_nodes is 0 or exceeds
- *         MAX_NODES, or any child / feature index is out of range
+ * TIKU_KITS_ML_ERR_NULL if dt or nodes is NULL,
+ * TIKU_KITS_ML_ERR_PARAM if n_nodes is 0 or exceeds
+ * MAX_NODES, or any child / feature index is out of range
  */
 int tiku_kits_ml_dtree_set_tree(
     struct tiku_kits_ml_dtree *dt,
@@ -311,52 +321,54 @@ int tiku_kits_ml_dtree_get_tree(
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Classify a feature vector by traversing the decision tree
- *
+/*
  * Starting at the root (node 0), the algorithm walks down the tree.
  * At each internal node it compares @c x[feature_index] against the
  * node's threshold -- going left when the condition holds, right
  * otherwise.  When a leaf is reached, its class_label is returned.
- *
  * O(depth) -- bounded by n_nodes in the worst case.  A loop guard
  * prevents infinite traversal on malformed trees.
+ */
+
+/**
+ * @brief Classify a feature vector by traversing the decision tree
  *
  * @param dt     Model with a tree loaded via set_tree()
- *               (must not be NULL)
+ * (must not be NULL)
  * @param x      Feature vector of length n_features (must not be NULL)
  * @param result Output pointer where the predicted class label is
- *               written (must not be NULL)
+ * written (must not be NULL)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if dt, x, or result is NULL,
- *         TIKU_KITS_ML_ERR_SIZE if no tree is loaded (n_nodes == 0),
- *         TIKU_KITS_ML_ERR_PARAM if traversal hits an invalid node
+ * TIKU_KITS_ML_ERR_NULL if dt, x, or result is NULL,
+ * TIKU_KITS_ML_ERR_SIZE if no tree is loaded (n_nodes == 0),
+ * TIKU_KITS_ML_ERR_PARAM if traversal hits an invalid node
  */
 int tiku_kits_ml_dtree_predict(
     const struct tiku_kits_ml_dtree *dt,
     const tiku_kits_ml_elem_t *x,
     uint8_t *result);
 
-/**
- * @brief Get the confidence of the prediction as fixed-point
- *
+/*
  * Traverses the tree identically to predict() but returns the leaf
  * node's @c threshold field, which should contain a confidence value
  * encoded in Q(shift) fixed-point (range [0, 1 << shift]).  If the
  * leaf's threshold is 0 (no confidence stored), full confidence
  * (1 << shift) is returned as a default.
- *
  * O(depth) -- same traversal cost as predict().
+ */
+
+/**
+ * @brief Get the confidence of the prediction as fixed-point
  *
  * @param dt     Model with a tree loaded via set_tree()
- *               (must not be NULL)
+ * (must not be NULL)
  * @param x      Feature vector of length n_features (must not be NULL)
  * @param result Output pointer where the confidence value is written
- *               in Q(shift) fixed-point (must not be NULL)
+ * in Q(shift) fixed-point (must not be NULL)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if dt, x, or result is NULL,
- *         TIKU_KITS_ML_ERR_SIZE if no tree is loaded (n_nodes == 0),
- *         TIKU_KITS_ML_ERR_PARAM if traversal hits an invalid node
+ * TIKU_KITS_ML_ERR_NULL if dt, x, or result is NULL,
+ * TIKU_KITS_ML_ERR_SIZE if no tree is loaded (n_nodes == 0),
+ * TIKU_KITS_ML_ERR_PARAM if traversal hits an invalid node
  */
 int tiku_kits_ml_dtree_predict_proba(
     const struct tiku_kits_ml_dtree *dt,

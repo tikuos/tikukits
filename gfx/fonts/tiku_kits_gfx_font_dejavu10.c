@@ -4,6 +4,10 @@
  *
  * tiku_kits_gfx_font_dejavu10.c - Auto-generated bitmap font data
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Source font  : DejaVuSansMono.ttf
  * Size         : 10 pt -> 13 px (10 ascent + 3 descent)
  * Range        : 0x20 .. 0x7E  (95 glyphs)
@@ -16,8 +20,6 @@
  * bytes per glyph.
  *
  * Do not edit by hand -- regenerate from the source font.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_gfx_font_dejavu10.h"

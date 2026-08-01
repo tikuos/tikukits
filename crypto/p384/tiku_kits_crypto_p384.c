@@ -6,13 +6,15 @@
  *
  * tiku_kits_crypto_p384.c - NIST P-384 ECDSA signature verification
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Adapted from the P-256 kit: 256-bit -> 384-bit (NL=12 limbs), P-384 curve
  * constants.  Generic CIOS Montgomery (runtime n0/R^2/m-2), Jacobian a=-3
  * doubling.  Verify-only, public-data-only -> not constant-time.  Big working
  * buffers are file-scope static (deep, non-reentrant verify path -> keeps it
  * off the small caller stack, same as P-256/RSA).
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_crypto_p384.h"

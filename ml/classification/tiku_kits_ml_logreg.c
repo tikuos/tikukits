@@ -44,18 +44,19 @@ static int32_t dot_product(const struct tiku_kits_ml_logreg *lg,
     return (int32_t)z;
 }
 
-/**
- * @brief Piecewise-linear sigmoid approximation in fixed-point
- *
+/*
  * Three-segment approximation that avoids exp() entirely:
- *   - z <= -4:  return 0   (deep negative saturation)
- *   - -4 < z < 4:  return z/8 + 0.5   (linear region)
- *   - z >= 4:  return 1   (deep positive saturation)
- *
+ * - z <= -4:  return 0   (deep negative saturation)
+ * - -4 < z < 4:  return z/8 + 0.5   (linear region)
+ * - z >= 4:  return 1   (deep positive saturation)
  * In Q(shift) arithmetic the boundaries become -(4 << shift) and
  * +(4 << shift), the slope becomes >> 3, and 0.5 becomes
  * (1 << (shift-1)).  A final clamp guards against rounding
  * overshoots at the segment boundaries.
+ */
+
+/**
+ * @brief Piecewise-linear sigmoid approximation in fixed-point
  */
 static int32_t sigmoid_approx(int32_t z_q, uint8_t shift)
 {
@@ -182,14 +183,16 @@ int tiku_kits_ml_logreg_set_lr(struct tiku_kits_ml_logreg *lg,
 /* TRAINING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Train the model with one sample using SGD
- *
+/*
  * Computes the forward pass (dot product + sigmoid), then performs
  * one gradient step.  The error is computed as y_scaled - sigmoid(z)
  * in Q(shift), then scaled by the learning rate.  Bias update uses
  * implicit x=1; feature weight updates multiply lr_error by x[j].
  * All intermediate products use int64_t to prevent overflow.
+ */
+
+/**
+ * @brief Train the model with one sample using SGD
  */
 int tiku_kits_ml_logreg_train(struct tiku_kits_ml_logreg *lg,
                                const tiku_kits_ml_elem_t *x,

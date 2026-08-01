@@ -21,19 +21,20 @@
  */
 typedef void (*tiku_kits_ui_button_cb_t)(void *user_data);
 
-/**
- * @brief A clickable button.
- *
+/*
  * Visual: outset bevel (1-px white highlight on top/left, 1-px
  * black shadow on bottom/right) + black hairline border. When the
  * button is focused, the border colour switches to red so the
  * user can see which button will activate on the next ACTIVATE
  * event.
- *
  * Behaviour: on ACTIVATE event (when focused), invokes on_click
  * with user_data. The button does not auto-redraw; the app calls
  * window_render + display refresh after the callback returns if
  * state changed.
+ */
+
+/**
+ * @brief A clickable button.
  */
 typedef struct {
     tiku_kits_ui_widget_t base;

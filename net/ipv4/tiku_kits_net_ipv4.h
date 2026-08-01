@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_ipv4.h - IPv4 header access, checksum, input/output
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Uses byte-offset macros instead of packed structs to avoid MSP430
  * alignment issues and ensure portability across TI and GCC compilers.
  * The IPv4 input pipeline validates version, IHL, header checksum,
@@ -14,11 +18,9 @@
  *
  * A single static buffer (net_buf, TIKU_KITS_NET_MTU bytes) serves
  * as both receive and transmit storage in a half-duplex cycle:
- *   RX -> validate -> process/reply-in-place -> TX -> reset.
+ * RX -> validate -> process/reply-in-place -> TX -> reset.
  * Two accessor functions (get_buf, get_addr) expose it to upper
  * layers that need to construct outgoing packets (e.g. UDP send).
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_IPV4_H_
@@ -136,18 +138,18 @@
 /* CHECKSUM                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief RFC 1071 ones-complement checksum.
- *
+/*
  * Computes the Internet checksum over @p len bytes of @p data using
  * a uint32_t accumulator with byte-pair processing and a final fold.
  * Reused for IPv4 header, ICMP, and UDP pseudo-header checksums.
- *
  * To verify a received header, compute the checksum over the entire
  * header (including the checksum field); the result should be 0.
- *
  * To compute a checksum for transmission, zero the checksum field,
  * compute, and write the result back.
+ */
+
+/**
+ * @brief RFC 1071 ones-complement checksum.
  *
  * @param data  Pointer to the data to checksum
  * @param len   Length in bytes (odd trailing byte handled correctly)
@@ -159,25 +161,26 @@ uint16_t tiku_kits_net_ipv4_chksum(const uint8_t *data, uint16_t len);
 /* INPUT / OUTPUT                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Process an incoming IPv4 packet.
- *
+/*
  * Validates the packet through eight checks in order:
- *   1. Minimum length (>= 20 bytes)
- *   2. Version == 4
- *   3. IHL >= 5 (header >= 20 bytes)
- *   4. IHL <= frame length (prevents buffer over-read)
- *   5. Header checksum == 0
- *   6. total_len is plausible (>= IHL bytes, <= frame length)
- *   7. Packet is not fragmented (MF=0, offset=0)
- *   8. Destination IP matches our address
- *
+ * 1. Minimum length (>= 20 bytes)
+ * 2. Version == 4
+ * 3. IHL >= 5 (header >= 20 bytes)
+ * 4. IHL <= frame length (prevents buffer over-read)
+ * 5. Header checksum == 0
+ * 6. total_len is plausible (>= IHL bytes, <= frame length)
+ * 7. Packet is not fragmented (MF=0, offset=0)
+ * 8. Destination IP matches our address
  * Packets that fail any check are silently dropped (no ICMP error).
  * Valid packets are dispatched by protocol field using total_len
  * (trimming any link-layer padding):
- *   - Protocol 1 (ICMP): tiku_kits_net_icmp_input()
- *   - Protocol 17 (UDP): tiku_kits_net_udp_input()
- *   - Other: silently dropped
+ * - Protocol 1 (ICMP): tiku_kits_net_icmp_input()
+ * - Protocol 17 (UDP): tiku_kits_net_udp_input()
+ * - Other: silently dropped
+ */
+
+/**
+ * @brief Process an incoming IPv4 packet.
  *
  * @param buf  Packet buffer (will be modified in-place for replies)
  * @param len  Packet length in bytes
@@ -228,14 +231,16 @@ const tiku_kits_net_link_t *tiku_kits_net_ipv4_get_link(void);
 /* BUFFER ACCESSORS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Get a pointer to the shared packet buffer.
- *
+/*
  * Upper-layer protocols (e.g. UDP send) use this to construct
  * outgoing packets in-place.  The buffer is MTU bytes long and
  * is shared with the receive path, so it must not be called from
  * inside a receive callback (the buffer already holds the incoming
  * packet at that point).
+ */
+
+/**
+ * @brief Get a pointer to the shared packet buffer.
  *
  * @param size  If non-NULL, receives the buffer capacity (MTU)
  * @return Pointer to the shared net_buf
@@ -263,13 +268,15 @@ const uint8_t *tiku_kits_net_ipv4_get_addr(void);
  */
 void tiku_kits_net_ipv4_set_addr(const uint8_t *addr);
 
-/**
- * @brief Check if the SLIP receive buffer is idle (no partial frame).
- *
+/*
  * Returns 1 if net_buf_len == 0, meaning no partially-decoded SLIP
  * frame is in the buffer.  Used by DHCP to avoid retransmitting
  * (which overwrites net_buf) while an incoming response is being
  * assembled by the SLIP decoder.
+ */
+
+/**
+ * @brief Check if the SLIP receive buffer is idle (no partial frame).
  *
  * @return 1 if idle, 0 if a partial frame is in progress
  */
@@ -279,14 +286,16 @@ uint8_t tiku_kits_net_ipv4_rx_idle(void);
 /* NET PROCESS                                                               */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief The net process protothread.
- *
+/*
  * Initialises SLIP, registers the link backend, and enters a
  * periodic poll loop that drains UART bytes through the SLIP
  * decoder and feeds complete frames to tiku_kits_net_ipv4_input().
  * Defined in tiku_kits_net_ipv4.c; autostarted by the APP=net
  * wrapper (apps/net/tiku_app_net.c).
+ */
+
+/**
+ * @brief The net process protothread.
  */
 extern struct tiku_process tiku_kits_net_process;
 

@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui.h - Retained-mode user interface library
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * A static-allocation, retained-mode UI kit for TikuOS, built on
  * top of tikukits/gfx. The application declares a tree of widgets
  * (window with children: labels, buttons, icons), the kit walks
@@ -16,19 +20,19 @@
  * Architecture
  * ------------
  *
- *     application
- *         |
- *         v   (build widget tree statically, feed events)
- *     +----------------------+
- *     | tiku_kits_ui.h/.c    |   widget base + focus + dispatch
- *     | widgets/             |   window, label, button, icon
- *     +----------------------+
- *         |
- *         v   (renders via tiku_kits_gfx_surface_t)
- *     tikukits/gfx
- *         |
- *         v
- *     display kit (tikukits/epaper) -> physical panel
+ * application
+ * |
+ * v   (build widget tree statically, feed events)
+ * +----------------------+
+ * | tiku_kits_ui.h/.c    |   widget base + focus + dispatch
+ * | widgets/             |   window, label, button, icon
+ * +----------------------+
+ * |
+ * v   (renders via tiku_kits_gfx_surface_t)
+ * tikukits/gfx
+ * |
+ * v
+ * display kit (tikukits/epaper) -> physical panel
  *
  * Visual style: BeOS-inspired hairline frames with red accent
  * tabs and outset bevels on buttons. Renders well on monochrome
@@ -47,21 +51,19 @@
  *
  * Adding new widget types
  * -----------------------
- *  1. Define a struct that embeds tiku_kits_ui_widget_t as its
- *     first member.
- *  2. Implement render() and (optionally) handle_event() and
- *     is_focusable().
- *  3. Export an ops vtable + an init function.
- *  4. Drop the .c file under widgets/ -- the Makefile picks up
- *     `widgets/<file>.c` automatically.
+ * 1. Define a struct that embeds tiku_kits_ui_widget_t as its
+ * first member.
+ * 2. Implement render() and (optionally) handle_event() and
+ * is_focusable().
+ * 3. Export an ops vtable + an init function.
+ * 4. Drop the .c file under widgets/ -- the Makefile picks up
+ * `widgets/<file>.c` automatically.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #ifndef TIKU_KITS_UI_H_
@@ -124,22 +126,24 @@ typedef enum {
 /* Forward declaration so ops can take a pointer to it. */
 typedef struct tiku_kits_ui_widget tiku_kits_ui_widget_t;
 
+/*
+ * - render():         draw the widget into the given surface using
+ * the widget's own coordinates (relative to
+ * the parent's content origin).
+ * - handle_event():   optional. Called when the widget is focused
+ * and an event arrives. Returns 1 if handled,
+ * 0 otherwise.
+ * - is_focusable():   returns 1 if this widget can receive focus
+ * (buttons yes; static labels no).
+ * - intrinsic_size(): optional. Layouts call this to ask the
+ * widget for its natural size given an
+ * available width. NULL = use the widget's
+ * current (w, h) verbatim. Used by vbox / hbox
+ * / grid for "auto"-sized children.
+ */
+
 /**
  * @brief Per-widget-type vtable.
- *
- * - render():         draw the widget into the given surface using
- *                     the widget's own coordinates (relative to
- *                     the parent's content origin).
- * - handle_event():   optional. Called when the widget is focused
- *                     and an event arrives. Returns 1 if handled,
- *                     0 otherwise.
- * - is_focusable():   returns 1 if this widget can receive focus
- *                     (buttons yes; static labels no).
- * - intrinsic_size(): optional. Layouts call this to ask the
- *                     widget for its natural size given an
- *                     available width. NULL = use the widget's
- *                     current (w, h) verbatim. Used by vbox / hbox
- *                     / grid for "auto"-sized children.
  */
 typedef struct {
     void (*render)(const tiku_kits_ui_widget_t *w,
@@ -152,17 +156,11 @@ typedef struct {
                             tiku_kits_gfx_size_t *out);
 } tiku_kits_ui_widget_ops_t;
 
-/**
- * @brief Common header embedded as the first member of every
- *        widget type. Lets the kit operate on widgets generically
- *        through the base pointer.
- *
+/*
  * Geometry: (x, y) is the top-left of the widget in its parent's
  * content-area coordinates. (w, h) is the widget size in pixels.
- *
  * Visibility / focus state are mutated by the kit; apps generally
  * shouldn't poke them directly.
- *
  * Dirty bit: set whenever the widget's visible state changes
  * (mutator helpers like *_set_text / *_set_value / *_set_checked
  * flip it). Cleared by the dirty-aware render walk after the
@@ -170,6 +168,12 @@ typedef struct {
  * this to skip widgets whose pixels have not changed since the
  * last full paint -- the big win on EPDs that support partial
  * refresh.
+ */
+
+/**
+ * @brief Common header embedded as the first member of every
+ * widget type. Lets the kit operate on widgets generically
+ * through the base pointer.
  */
 struct tiku_kits_ui_widget {
     const tiku_kits_ui_widget_ops_t *ops;
@@ -226,15 +230,17 @@ tiku_kits_ui_widget_is_focusable(const tiku_kits_ui_widget_t *w)
     return w->ops->is_focusable(w);
 }
 
-/**
- * @brief Ask @p w for its natural size given @p avail_w of horizontal
- *        space. Falls back to the widget's current (w, h) if its
- *        ops vtable doesn't define intrinsic_size.
- *
+/*
  * Used by layout containers (vbox / hbox / grid) when sizing
  * auto children. Caller widgets that want to be auto-sized
  * implement the ops slot; static widgets leave it NULL and pass
  * their explicit size through.
+ */
+
+/**
+ * @brief Ask @p w for its natural size given @p avail_w of horizontal
+ * space. Falls back to the widget's current (w, h) if its
+ * ops vtable doesn't define intrinsic_size.
  */
 static inline void
 tiku_kits_ui_widget_intrinsic_size(const tiku_kits_ui_widget_t *w,
@@ -255,10 +261,7 @@ tiku_kits_ui_widget_intrinsic_size(const tiku_kits_ui_widget_t *w,
 /* SPATIAL FOCUS WALK                                                        */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Pick the focusable child whose centre best matches a
- *        direction vector starting from @p current.
- *
+/*
  * Implements the "next focus in direction" walk used by D-pad
  * navigation. Each candidate is scored by (a) its offset along
  * the direction axis (must be positive in the requested
@@ -266,14 +269,18 @@ tiku_kits_ui_widget_intrinsic_size(const tiku_kits_ui_widget_t *w,
  * The widget with the lowest score wins; if no child lies in the
  * requested direction the function returns NULL and the caller
  * can fall back to linear navigation.
+ */
+
+/**
+ * @brief Pick the focusable child whose centre best matches a
+ * direction vector starting from @p current.
  *
  * @param children    Caller-owned array of widget pointers.
  * @param n_children  Length of @p children.
  * @param current     Currently focused widget, or NULL to start
- *                    from the corner opposite the direction.
+ * from the corner opposite the direction.
  * @param dx          1 for right, -1 for left, 0 for vertical-only.
  * @param dy          1 for down, -1 for up, 0 for horizontal-only.
- *
  * @return The best candidate, or NULL if none exists.
  */
 tiku_kits_ui_widget_t *

@@ -6,20 +6,22 @@
  *
  * tiku_kits_crypto_tls_handshake.h - TLS 1.3 handshake messages
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Functions to construct and parse TLS 1.3 handshake messages
  * for PSK-only mode.  Messages handled:
- *   - ClientHello (build)
- *   - ServerHello (parse)
- *   - EncryptedExtensions (parse)
- *   - Finished (build and parse)
+ * - ClientHello (build)
+ * - ServerHello (parse)
+ * - EncryptedExtensions (parse)
+ * - Finished (build and parse)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_TLS_HANDSHAKE_H_
@@ -32,33 +34,34 @@
 /* CLIENT HELLO                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Build a TLS 1.3 ClientHello message.
- *
+/*
  * Constructs a minimal ClientHello with:
- *   - legacy_version = 0x0303
- *   - random (32 bytes, caller-provided)
- *   - legacy_session_id = empty
- *   - cipher_suites = { TLS_AES_128_GCM_SHA256 }
- *   - compression_methods = { null }
- *   - Extensions:
- *     - supported_versions: { 0x0304 }
- *     - psk_key_exchange_modes: { psk_ke (0) }
- *     - pre_shared_key: identity + binder placeholder
- *
+ * - legacy_version = 0x0303
+ * - random (32 bytes, caller-provided)
+ * - legacy_session_id = empty
+ * - cipher_suites = { TLS_AES_128_GCM_SHA256 }
+ * - compression_methods = { null }
+ * - Extensions:
+ * - supported_versions: { 0x0304 }
+ * - psk_key_exchange_modes: { psk_ke (0) }
+ * - pre_shared_key: identity + binder placeholder
  * The binder field is filled with zeros; the caller must compute
  * the actual binder value over the transcript hash of the
  * truncated ClientHello (up to but excluding the binder) and
  * patch it in using tiku_kits_crypto_tls_ch_patch_binder().
+ */
+
+/**
+ * @brief Build a TLS 1.3 ClientHello message.
  *
  * @param out             Output buffer (FRAM-backed, >= 200 bytes)
  * @param client_random   32-byte random value
  * @param psk_identity    PSK identity bytes
  * @param psk_id_len      Identity length
  * @param binder_offset   Output: byte offset of the binder value
- *                        in the output buffer (for patching)
+ * in the output buffer (for patching)
  * @return Total ClientHello message length (incl. handshake header),
- *         or 0 on error
+ * or 0 on error
  */
 uint16_t tiku_kits_crypto_tls_build_client_hello(
     uint8_t *out,

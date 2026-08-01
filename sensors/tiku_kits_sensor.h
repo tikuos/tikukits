@@ -26,21 +26,23 @@
 /* RETURN CODES                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @defgroup TIKU_KITS_SENSOR_STATUS Sensor Status Codes
- * @brief Return codes shared by all TikuKits sensor drivers.
- *
+/*
  * Every public sensor function returns one of these codes.  Zero
  * indicates success; negative values indicate distinct error classes.
  * Drivers must never define their own return codes -- all codes live
  * here so that application code can handle errors uniformly across
  * different sensor types.
+ */
+
+/**
+ * @brief Return codes shared by all TikuKits sensor drivers.
  *
+ * @defgroup TIKU_KITS_SENSOR_STATUS Sensor Status Codes
  * @code
- *   int rc = tiku_kits_sensor_mcp9808_read(&temp);
- *   if (rc != TIKU_KITS_SENSOR_OK) {
- *       // handle error: rc is one of the ERR_* codes below
- *   }
+ * int rc = tiku_kits_sensor_mcp9808_read(&temp);
+ * if (rc != TIKU_KITS_SENSOR_OK) {
+ * // handle error: rc is one of the ERR_* codes below
+ * }
  * @endcode
  * @{
  */
@@ -55,44 +57,42 @@
 /* COMMON DATA TYPES                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_sensor_temp
- * @brief Temperature reading shared by all temperature sensors
- *
+/*
  * A platform-independent representation of a temperature value
  * produced by any TikuKits temperature sensor driver.  The reading
  * is split into three fields so that integer-only firmware can
  * display and compare temperatures without floating-point support.
- *
  * The fractional part uses 1/16 degree C units (values 0-15),
  * which matches the native resolution of most digital temperature
  * sensors (MCP9808, ADT7410, DS18B20).  One LSB = 0.0625 C.
- *
  * Sign is stored in a separate @c negative flag rather than making
+ * Example -- reading and displaying a temperature:
+ * Example -- comparing two readings:
+ */
+
+/**
+ * @brief Temperature reading shared by all temperature sensors
+ *
+ * @struct tiku_kits_sensor_temp
  * @c integer a signed value because some sensors encode sign
  * independently of magnitude (e.g. MCP9808 uses a dedicated sign
  * bit, not two's complement).  This flag is 1 when the temperature
  * is below 0 C and 0 otherwise.
- *
  * @note Use the helper macro TIKU_KITS_SENSOR_FRAC_TO_DEC() to
- *       convert the 1/16 C fractional field to a two-digit decimal
- *       suitable for printf-style output.
- *
- * Example -- reading and displaying a temperature:
+ * convert the 1/16 C fractional field to a two-digit decimal
+ * suitable for printf-style output.
  * @code
- *   tiku_kits_sensor_temp_t t;
- *   tiku_kits_sensor_mcp9808_read(&t);
- *   printf("%s%d.%02d C",
- *          t.negative ? "-" : "",
- *          (int)t.integer,
- *          TIKU_KITS_SENSOR_FRAC_TO_DEC(t.frac));
+ * tiku_kits_sensor_temp_t t;
+ * tiku_kits_sensor_mcp9808_read(&t);
+ * printf("%s%d.%02d C",
+ * t.negative ? "-" : "",
+ * (int)t.integer,
+ * TIKU_KITS_SENSOR_FRAC_TO_DEC(t.frac));
  * @endcode
- *
- * Example -- comparing two readings:
  * @code
- *   // Both readings are positive
- *   int whole_diff = t1.integer - t2.integer;
- *   int frac_diff  = t1.frac - t2.frac;  // in 1/16 C units
+ * // Both readings are positive
+ * int whole_diff = t1.integer - t2.integer;
+ * int frac_diff  = t1.frac - t2.frac;  // in 1/16 C units
  * @endcode
  */
 typedef struct tiku_kits_sensor_temp {
@@ -108,29 +108,29 @@ typedef struct tiku_kits_sensor_temp {
 /* HELPER MACROS                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Convert 1/16 C fractional units to a two-digit decimal value.
- *
+/*
  * Temperature sensors store the fractional part in 1/16 C units
  * (0-15), but human-readable output needs a decimal fraction.
  * This macro multiplies by 625 (= 10000/16) and divides by 100 to
  * produce a two-digit decimal in the range 0-93.  The result is
  * intended for use with a @c %02d printf format specifier.
- *
  * Conversion examples:
- *   - 0  -> 00  (0.00 C)
- *   - 1  -> 06  (0.06 C)
- *   - 3  -> 18  (0.18 C)
- *   - 8  -> 50  (0.50 C)
- *   - 15 -> 93  (0.93 C)
+ * - 0  -> 00  (0.00 C)
+ * - 1  -> 06  (0.06 C)
+ * - 3  -> 18  (0.18 C)
+ * - 8  -> 50  (0.50 C)
+ * - 15 -> 93  (0.93 C)
+ */
+
+/**
+ * @brief Convert 1/16 C fractional units to a two-digit decimal value.
  *
  * @param frac16 Fractional value in 1/16 C units (0-15).  Values
- *               outside this range produce undefined but safe results.
+ * outside this range produce undefined but safe results.
  * @return Two-digit decimal fraction suitable for @c %02d output
- *
  * @code
- *   printf("%d.%02d C", temp.integer,
- *          TIKU_KITS_SENSOR_FRAC_TO_DEC(temp.frac));
+ * printf("%d.%02d C", temp.integer,
+ * TIKU_KITS_SENSOR_FRAC_TO_DEC(temp.frac));
  * @endcode
  */
 #define TIKU_KITS_SENSOR_FRAC_TO_DEC(frac16) \

@@ -6,13 +6,15 @@
  *
  * tiku_kits_crypto_gcm.h - AES-128-GCM authenticated encryption
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements AES-128-GCM (NIST SP 800-38D) for embedded systems
  * using the existing AES-128-ECB block cipher as the underlying
  * primitive.  Provides authenticated encryption with associated
  * data (AEAD) suitable for TLS 1.3 record protection.  All
  * storage is statically allocated; no heap usage.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_GCM_H_
@@ -39,24 +41,25 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_crypto_gcm_ctx
- * @brief  AES-128-GCM context (192 bytes).
- *
+/*
  * Holds the expanded AES-128 round keys (176 bytes) and the
  * GHASH subkey H = AES(K, 0^128) (16 bytes).  Must be
  * initialized with @ref tiku_kits_crypto_gcm_init before use.
- *
  * Example:
- * @code
- *   tiku_kits_crypto_gcm_ctx_t ctx;
- *   uint8_t key[16]   = { ... };
- *   uint8_t nonce[12] = { ... };
- *   uint8_t pt[64], ct[64], tag[16];
+ * tiku_kits_crypto_gcm_init(&ctx, key);
+ * tiku_kits_crypto_gcm_encrypt(&ctx, nonce, NULL, 0,
+ * pt, 64, ct, tag);
+ */
+
+/**
+ * @brief  AES-128-GCM context (192 bytes).
  *
- *   tiku_kits_crypto_gcm_init(&ctx, key);
- *   tiku_kits_crypto_gcm_encrypt(&ctx, nonce, NULL, 0,
- *                                 pt, 64, ct, tag);
+ * @struct tiku_kits_crypto_gcm_ctx
+ * @code
+ * tiku_kits_crypto_gcm_ctx_t ctx;
+ * uint8_t key[16]   = { ... };
+ * uint8_t nonce[12] = { ... };
+ * uint8_t pt[64], ct[64], tag[16];
  * @endcode
  */
 typedef struct tiku_kits_crypto_gcm_ctx {
@@ -126,30 +129,31 @@ int tiku_kits_crypto_gcm_encrypt(
     uint8_t *ct,
     uint8_t *tag);
 
-/**
- * @brief Decrypt and verify with AES-128-GCM.
- *
+/*
  * Decrypts @p ct_len bytes of ciphertext using AES-128 in CTR
  * mode and verifies the 16-byte GHASH authentication tag.  Uses
  * constant-time tag comparison to prevent timing side-channels.
- *
  * If authentication fails the plaintext output buffer is zeroed
  * and @ref TIKU_KITS_CRYPTO_ERR_CORRUPT is returned.
+ */
+
+/**
+ * @brief Decrypt and verify with AES-128-GCM.
  *
  * @param[in]  ctx     Initialized GCM context (must not be NULL).
  * @param[in]  nonce   12-byte nonce (must not be NULL).
  * @param[in]  aad     Additional authenticated data (may be NULL
- *                     if @p aad_len is 0).
+ * if @p aad_len is 0).
  * @param[in]  aad_len Length of AAD in bytes.
  * @param[in]  ct      Ciphertext (may be NULL if @p ct_len is 0).
  * @param[in]  ct_len  Ciphertext length in bytes.
  * @param[in]  tag     16-byte authentication tag to verify
- *                     (must not be NULL).
+ * (must not be NULL).
  * @param[out] pt      Plaintext output, same size as ciphertext
- *                     (may be NULL if @p ct_len is 0).
+ * (may be NULL if @p ct_len is 0).
  * @return TIKU_KITS_CRYPTO_OK on success,
- *         TIKU_KITS_CRYPTO_ERR_NULL if a required pointer is NULL,
- *         TIKU_KITS_CRYPTO_ERR_CORRUPT if tag verification fails.
+ * TIKU_KITS_CRYPTO_ERR_NULL if a required pointer is NULL,
+ * TIKU_KITS_CRYPTO_ERR_CORRUPT if tag verification fails.
  */
 int tiku_kits_crypto_gcm_decrypt(
     const tiku_kits_crypto_gcm_ctx_t *ctx,

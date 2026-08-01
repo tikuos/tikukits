@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_radio.h - Radio button + radio group
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Mutually exclusive selection across N radio widgets that share a
  * single tiku_kits_ui_radio_group_t. The group tracks which index
  * is currently selected; activating any button updates the group's
@@ -13,15 +17,13 @@
  *
  * Caller layout:
  *
- *   static tiku_kits_ui_radio_group_t my_group;
- *   static tiku_kits_ui_radio_t       a, b, c;
+ * static tiku_kits_ui_radio_group_t my_group;
+ * static tiku_kits_ui_radio_t       a, b, c;
  *
- *   tiku_kits_ui_radio_group_init(&my_group, 0, on_change, NULL);
- *   tiku_kits_ui_radio_init(&a, ..., "Option A", &my_group, 0);
- *   tiku_kits_ui_radio_init(&b, ..., "Option B", &my_group, 1);
- *   tiku_kits_ui_radio_init(&c, ..., "Option C", &my_group, 2);
- *
- * SPDX-License-Identifier: Apache-2.0
+ * tiku_kits_ui_radio_group_init(&my_group, 0, on_change, NULL);
+ * tiku_kits_ui_radio_init(&a, ..., "Option A", &my_group, 0);
+ * tiku_kits_ui_radio_init(&b, ..., "Option B", &my_group, 1);
+ * tiku_kits_ui_radio_init(&c, ..., "Option C", &my_group, 2);
  */
 
 #ifndef TIKU_KITS_UI_RADIO_H_

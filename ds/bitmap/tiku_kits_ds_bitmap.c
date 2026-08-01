@@ -158,13 +158,15 @@ int tiku_kits_ds_bitmap_toggle(struct tiku_kits_ds_bitmap *bm,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Test whether a single bit is set
- *
+/*
  * Shifts the target word right so the bit of interest lands in
  * position 0, then masks with 1 to produce a clean 0/1 value.
  * The result is written through the caller-provided output pointer.
  * O(1).
+ */
+
+/**
+ * @brief Test whether a single bit is set
  */
 int tiku_kits_ds_bitmap_test(const struct tiku_kits_ds_bitmap *bm,
                              uint16_t bit, uint8_t *result)
@@ -189,14 +191,16 @@ int tiku_kits_ds_bitmap_test(const struct tiku_kits_ds_bitmap *bm,
 /* BULK OPERATIONS                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Set all valid bits to 1
- *
+/*
  * Fully-populated words are written as 0xFFFFFFFF.  The final
  * partial word (if n_bits is not a multiple of 32) is masked so
  * that only the bits within [0, n_bits) are set -- leaving the
  * unused upper bits clear prevents count/search from returning
  * incorrect results.
+ */
+
+/**
+ * @brief Set all valid bits to 1
  */
 int tiku_kits_ds_bitmap_set_all(struct tiku_kits_ds_bitmap *bm)
 {
@@ -253,13 +257,15 @@ int tiku_kits_ds_bitmap_clear_all(struct tiku_kits_ds_bitmap *bm)
 /* COUNTING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Count the number of bits that are set (1)
- *
+/*
  * Sums the population count of each word that holds valid bits.
  * Uses popcount32() (Kernighan's method) which loops once per set
  * bit, making it efficient for sparse bitmaps typical in embedded
  * flag-tracking use cases.
+ */
+
+/**
+ * @brief Count the number of bits that are set (1)
  */
 uint16_t tiku_kits_ds_bitmap_count_set(
     const struct tiku_kits_ds_bitmap *bm)
@@ -301,14 +307,16 @@ uint16_t tiku_kits_ds_bitmap_count_clear(
 /* SEARCH                                                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Find the lowest-index bit that is set (1)
- *
+/*
  * Scans words from index 0 upward, skipping any word that is
  * entirely zero.  Within a non-zero word, the lowest set bit is
  * located by shifting right until bit 0 is set.  The final index
  * is bounds-checked against n_bits to avoid reporting phantom
  * set bits in the unused upper portion of the last word.
+ */
+
+/**
+ * @brief Find the lowest-index bit that is set (1)
  */
 int tiku_kits_ds_bitmap_find_first_set(
     const struct tiku_kits_ds_bitmap *bm, uint16_t *bit)
@@ -350,14 +358,16 @@ int tiku_kits_ds_bitmap_find_first_set(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Find the lowest-index bit that is clear (0)
- *
+/*
  * Uses the same word-scan strategy as find_first_set, but inverts
  * each word before scanning so that clear bits become set bits.
  * Words that are all-ones (0xFFFFFFFF) invert to zero and are
  * skipped.  The final index is bounds-checked against n_bits to
  * avoid reporting unused upper bits in the last word as clear.
+ */
+
+/**
+ * @brief Find the lowest-index bit that is clear (0)
  */
 int tiku_kits_ds_bitmap_find_first_clear(
     const struct tiku_kits_ds_bitmap *bm, uint16_t *bit)

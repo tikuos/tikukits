@@ -6,13 +6,15 @@
  *
  * tiku_kits_net_icmp.c - ICMP echo reply handler
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements the in-place echo reply strategy: the incoming echo
  * request is transformed into an echo reply within the same buffer,
  * avoiding any additional RAM.  Only the ICMP type field, IP
  * addresses, and checksums are modified; the identifier, sequence
  * number, and payload are preserved verbatim.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/
@@ -35,17 +37,18 @@ tiku_kits_net_icmp_set_reply_cb(tiku_kits_net_icmp_reply_cb_t cb)
 /* INPUT HANDLER                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Validate and reply to an incoming ICMP echo request
- *
+/*
  * Three validation steps (silent drop on any failure):
- *   1. ICMP data must be at least ICMP_HDR_LEN (8) bytes
- *   2. Ones-complement checksum over entire ICMP data must be 0
- *   3. Message type must be ECHO_REQUEST (8)
- *
+ * 1. ICMP data must be at least ICMP_HDR_LEN (8) bytes
+ * 2. Ones-complement checksum over entire ICMP data must be 0
+ * 3. Message type must be ECHO_REQUEST (8)
  * Reply is built in-place: swap IPs, set type=0, recompute ICMP
  * checksum, then call ipv4_output.  The 4-byte tmp array on the
  * stack holds one IP address during the swap.
+ */
+
+/**
+ * @brief Validate and reply to an incoming ICMP echo request
  */
 void
 tiku_kits_net_icmp_input(uint8_t *buf, uint16_t len, uint16_t ihl_len)

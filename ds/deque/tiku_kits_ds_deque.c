@@ -23,13 +23,15 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a deque with the given capacity
- *
+/*
  * Zeros the entire backing buffer so that any subsequent reads of
  * unpopulated slots return a deterministic value.  The runtime
  * capacity is clamped to TIKU_KITS_DS_DEQUE_MAX_SIZE at compile time
  * so that the static buffer is never overrun.
+ */
+
+/**
+ * @brief Initialize a deque with the given capacity
  */
 int tiku_kits_ds_deque_init(struct tiku_kits_ds_deque *dq,
                             uint16_t capacity)
@@ -242,13 +244,15 @@ int tiku_kits_ds_deque_get(
 /* CLEAR                                                                     */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Reset the deque to empty
- *
+/*
  * Logically removes all elements by resetting head and count to 0
  * without zeroing the backing buffer.  Old values remain in memory
  * but are inaccessible through the public API because all access
  * functions bounds-check against count.
+ */
+
+/**
+ * @brief Reset the deque to empty
  */
 int tiku_kits_ds_deque_clear(struct tiku_kits_ds_deque *dq)
 {

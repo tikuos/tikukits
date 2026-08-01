@@ -6,13 +6,15 @@
  *
  * tiku_kits_crypto_tls_record.c - TLS 1.3 record layer
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements TLS 1.3 record framing, AEAD encryption/decryption,
  * and nonce construction per RFC 8446 Section 5.  Plaintext records
  * are used for the initial ClientHello; all subsequent records use
  * AES-128-GCM authenticated encryption with the inner content type
  * appended to the plaintext before encryption.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/
@@ -167,13 +169,15 @@ uint16_t tiku_kits_crypto_tls_record_encrypt(
 /* ENCRYPTED RECORD (DECRYPT)                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Decrypt a TLS 1.3 encrypted record.
- *
+/*
  * Parses the 5-byte header, decrypts the AEAD-protected fragment,
  * verifies the authentication tag, and extracts the real content
  * type from the last byte of the decrypted inner plaintext.
  * Trailing zero padding (per RFC 8446 Section 5.4) is stripped.
+ */
+
+/**
+ * @brief Decrypt a TLS 1.3 encrypted record.
  */
 int tiku_kits_crypto_tls_record_decrypt(
     const uint8_t *record,

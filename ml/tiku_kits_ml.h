@@ -27,15 +27,17 @@
 /* RETURN CODES                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @defgroup TIKU_KITS_ML_STATUS ML Status Codes
- * @brief Return codes shared by all ML sub-modules.
- *
+/*
  * Every public ML function returns one of these codes.  Success is
  * always 0; errors are negative so that a simple @c if(rc) test
  * catches any failure.  Sub-modules do NOT define their own return
  * codes -- they reuse these values for consistency.
+ */
+
+/**
+ * @brief Return codes shared by all ML sub-modules.
  *
+ * @defgroup TIKU_KITS_ML_STATUS ML Status Codes
  * @{
  */
 #define TIKU_KITS_ML_OK              0   /**< Operation succeeded */

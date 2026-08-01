@@ -6,13 +6,15 @@
  *
  * tiku_kits_gfx_font_5x7.c - Built-in 5x7 ASCII font data
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Glyph layout: column-major, 1 byte per column, 5 columns per
  * glyph. Bit 0 = top row, bit 6 = bottom row (bit 7 unused).
  * Indexed by (c - 0x20) * 5.
  *
  * Glyph data is the classic Adafruit GFX 5x7 set, public domain.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_gfx_font_5x7.h"

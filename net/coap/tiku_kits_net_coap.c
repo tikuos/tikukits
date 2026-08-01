@@ -6,13 +6,15 @@
  *
  * tiku_kits_net_coap.c - CoAP client/server (RFC 7252)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Poll-based CoAP implementation that runs on top of the UDP layer.
  * The UDP receive callback copies incoming packets into static state;
  * the application calls coap_poll() from its own context to parse
  * messages, dispatch to resource handlers, match responses to
  * outstanding requests, and handle CON retransmission.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/

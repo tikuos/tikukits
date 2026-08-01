@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_box.h - Vertical / horizontal layout container
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * vbox stacks children top-to-bottom; hbox stacks them left-to-right.
  * Both share this struct -- the orientation is set at init via
  * `vbox_init` or `hbox_init`. Each child is given a position computed
@@ -13,13 +17,13 @@
  * weight.
  *
  * Layout algorithm (vbox shown; hbox swaps the axes):
- *   1. Compute available height = h - 2*pad_y - (n - 1)*spacing.
- *   2. For each child with flex == 0, ask for its intrinsic_size
- *      and reserve that many pixels.
- *   3. Distribute the remaining space across flex children in
- *      proportion to their flex weights.
- *   4. Walk children top-to-bottom assigning x = pad_x +
- *      cross_align offset and y = next free pixel.
+ * 1. Compute available height = h - 2*pad_y - (n - 1)*spacing.
+ * 2. For each child with flex == 0, ask for its intrinsic_size
+ * and reserve that many pixels.
+ * 3. Distribute the remaining space across flex children in
+ * proportion to their flex weights.
+ * 4. Walk children top-to-bottom assigning x = pad_x +
+ * cross_align offset and y = next free pixel.
  *
  * Cross-axis alignment (e.g. horizontal alignment of children
  * inside a vbox) is controlled by `cross_align`; LEFT puts children
@@ -34,8 +38,6 @@
  * are forwarded to the internally focused child. Any non-axis
  * navigation event (e.g. FOCUS_LEFT in a vbox) returns 0 so the
  * containing window can rotate to a sibling.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_BOX_H_

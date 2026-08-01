@@ -15,14 +15,15 @@
 #include "../tiku_kits_ui.h"
 #include <tikukits/gfx/tiku_kits_gfx_text.h>
 
-/**
- * @brief A static text label.
- *
+/*
  * Renders @p text at (x, y) inside the parent's content area.
  * Width / height are used for alignment within the rectangle:
  * passing align != LEFT centers / right-aligns within (w, h).
- *
  * Labels are not focusable.
+ */
+
+/**
+ * @brief A static text label.
  */
 typedef struct {
     tiku_kits_ui_widget_t base;

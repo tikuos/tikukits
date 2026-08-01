@@ -26,18 +26,20 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum number of elements the array can hold.
- *
+/*
  * This compile-time constant defines the upper bound on array capacity.
  * Each array instance reserves this many element slots in its static
  * storage, so choose a value that balances memory usage against the
  * largest array your application needs.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of elements the array can hold.
+ *
  * @code
- *   #define TIKU_KITS_DS_ARRAY_MAX_SIZE 64
- *   #include "tiku_kits_ds_array.h"
+ * #define TIKU_KITS_DS_ARRAY_MAX_SIZE 64
+ * #include "tiku_kits_ds_array.h"
  * @endcode
  */
 #ifndef TIKU_KITS_DS_ARRAY_MAX_SIZE
@@ -48,35 +50,35 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_ds_array
- * @brief Fixed-capacity array with contiguous static storage
- *
+/*
  * A general-purpose, index-addressable container that stores elements
  * in a contiguous block of statically allocated memory.  Because all
  * storage lives inside the struct itself, no heap allocation is needed
  * -- just declare the array as a static or local variable.
- *
  * Two sizes are tracked independently:
- *   - @c capacity -- the runtime limit passed to init (must be
- *     <= TIKU_KITS_DS_ARRAY_MAX_SIZE).  This lets different array
- *     instances use different logical sizes while sharing the same
- *     compile-time backing buffer.
- *   - @c size -- the number of elements currently stored.  All
- *     access functions bounds-check against this value.
- *
- * @note Element type is controlled by tiku_kits_ds_elem_t (default
- *       int32_t).  Override at compile time with
- *       @c -DTIKU_KITS_DS_ELEM_TYPE=int16_t to change it globally
- *       for all DS sub-modules.
- *
+ * - @c capacity -- the runtime limit passed to init (must be
+ * <= TIKU_KITS_DS_ARRAY_MAX_SIZE).  This lets different array
+ * instances use different logical sizes while sharing the same
+ * compile-time backing buffer.
+ * - @c size -- the number of elements currently stored.  All
+ * access functions bounds-check against this value.
  * Example:
+ */
+
+/**
+ * @brief Fixed-capacity array with contiguous static storage
+ *
+ * @struct tiku_kits_ds_array
+ * @note Element type is controlled by tiku_kits_ds_elem_t (default
+ * int32_t).  Override at compile time with
+ * @c -DTIKU_KITS_DS_ELEM_TYPE=int16_t to change it globally
+ * for all DS sub-modules.
  * @code
- *   struct tiku_kits_ds_array arr;
- *   tiku_kits_ds_array_init(&arr, 16);   // use 16 of 32 slots
- *   tiku_kits_ds_array_push_back(&arr, 42);
- *   tiku_kits_ds_array_push_back(&arr, 7);
- *   // arr now contains: [42, 7], size == 2
+ * struct tiku_kits_ds_array arr;
+ * tiku_kits_ds_array_init(&arr, 16);   // use 16 of 32 slots
+ * tiku_kits_ds_array_push_back(&arr, 42);
+ * tiku_kits_ds_array_push_back(&arr, 7);
+ * // arr now contains: [42, 7], size == 2
  * @endcode
  */
 struct tiku_kits_ds_array {
@@ -182,21 +184,23 @@ int tiku_kits_ds_array_push_back(struct tiku_kits_ds_array *arr,
 int tiku_kits_ds_array_pop_back(struct tiku_kits_ds_array *arr,
                                 tiku_kits_ds_elem_t *value);
 
-/**
- * @brief Insert an element at the given index, shifting successors right
- *
+/*
  * All elements at positions [index .. size-1] are shifted one slot to
  * the right to make room for the new value.  This is an O(n) operation
  * in the worst case (inserting at index 0).  Inserting at index == size
  * is equivalent to push_back().
+ */
+
+/**
+ * @brief Insert an element at the given index, shifting successors right
  *
  * @param arr   Array (must not be NULL)
  * @param index Insertion position (0 .. size, inclusive)
  * @param value Value to insert
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if arr is NULL,
- *         TIKU_KITS_DS_ERR_BOUNDS if index > size,
- *         TIKU_KITS_DS_ERR_FULL if size == capacity
+ * TIKU_KITS_DS_ERR_NULL if arr is NULL,
+ * TIKU_KITS_DS_ERR_BOUNDS if index > size,
+ * TIKU_KITS_DS_ERR_FULL if size == capacity
  */
 int tiku_kits_ds_array_insert(struct tiku_kits_ds_array *arr,
                               uint16_t index,
@@ -222,22 +226,24 @@ int tiku_kits_ds_array_remove(struct tiku_kits_ds_array *arr,
 /* SEARCH                                                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Linear search for the first occurrence of a value
- *
+/*
  * Scans the array from index 0 to size-1 and returns the position of
  * the first element that matches @p value.  Because elements are
  * unsorted, a linear scan is the only option -- O(n) worst case.
  * For sorted data, prefer tiku_kits_ds_sortarray which provides
  * O(log n) binary search.
+ */
+
+/**
+ * @brief Linear search for the first occurrence of a value
  *
  * @param arr   Array (must not be NULL)
  * @param value Value to search for
  * @param index Output pointer where the found index is written (must
- *              not be NULL)
+ * not be NULL)
  * @return TIKU_KITS_DS_OK if found,
- *         TIKU_KITS_DS_ERR_NULL if arr or index is NULL,
- *         TIKU_KITS_DS_ERR_NOTFOUND if value is not present
+ * TIKU_KITS_DS_ERR_NULL if arr or index is NULL,
+ * TIKU_KITS_DS_ERR_NOTFOUND if value is not present
  */
 int tiku_kits_ds_array_find(const struct tiku_kits_ds_array *arr,
                             tiku_kits_ds_elem_t value,
@@ -262,17 +268,19 @@ int tiku_kits_ds_array_find(const struct tiku_kits_ds_array *arr,
 int tiku_kits_ds_array_fill(struct tiku_kits_ds_array *arr,
                             tiku_kits_ds_elem_t value);
 
-/**
- * @brief Clear the array by resetting size to zero
- *
+/*
  * Logically removes all elements by setting size to 0.  The backing
  * buffer is not zeroed for efficiency -- old values remain in memory
  * but are inaccessible through the public API since all access
  * functions bounds-check against size.
+ */
+
+/**
+ * @brief Clear the array by resetting size to zero
  *
  * @param arr Array (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if arr is NULL
+ * TIKU_KITS_DS_ERR_NULL if arr is NULL
  */
 int tiku_kits_ds_array_clear(struct tiku_kits_ds_array *arr);
 

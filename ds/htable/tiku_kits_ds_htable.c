@@ -25,14 +25,16 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief FNV-1a hash for a uint32_t key, reduced to table capacity
- *
+/*
  * Applies the FNV-1a algorithm byte-by-byte over the 4 bytes of the
  * key (little-endian extraction via shifting).  The 32-bit hash is
  * then reduced to [0, capacity) with a modulus.  FNV-1a provides
  * good distribution for integer keys with minimal code size -- well
  * suited to embedded targets.
+ */
+
+/**
+ * @brief FNV-1a hash for a uint32_t key, reduced to table capacity
  */
 static uint16_t hash_fnv1a(tiku_kits_ds_htable_key_t key,
                             uint16_t capacity)
@@ -54,13 +56,15 @@ static uint16_t hash_fnv1a(tiku_kits_ds_htable_key_t key,
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a hash table with the given capacity
- *
+/*
  * Zeros the entire entries array so that every slot starts in the
  * EMPTY state (TIKU_KITS_DS_HTABLE_EMPTY == 0).  The runtime
  * capacity is clamped to TIKU_KITS_DS_HTABLE_MAX_SIZE so the static
  * buffer is never overrun.
+ */
+
+/**
+ * @brief Initialize a hash table with the given capacity
  */
 int tiku_kits_ds_htable_init(struct tiku_kits_ds_htable *ht,
                               uint16_t capacity)
@@ -82,9 +86,7 @@ int tiku_kits_ds_htable_init(struct tiku_kits_ds_htable *ht,
 /* PUT / GET / REMOVE                                                        */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Insert or update a key-value pair
- *
+/*
  * Linear probe from the FNV-1a hash index.  During the probe, the
  * first DELETED (tombstone) slot is remembered so that new insertions
  * can reclaim it, keeping the table compact.  If the key is found in
@@ -92,6 +94,10 @@ int tiku_kits_ds_htable_init(struct tiku_kits_ds_htable *ht,
  * EMPTY slot is reached before the key is found, the key is new and
  * is inserted at the first tombstone (if one was seen) or at the
  * EMPTY slot itself.
+ */
+
+/**
+ * @brief Insert or update a key-value pair
  */
 int tiku_kits_ds_htable_put(struct tiku_kits_ds_htable *ht,
                              tiku_kits_ds_htable_key_t key,
@@ -163,13 +169,15 @@ int tiku_kits_ds_htable_put(struct tiku_kits_ds_htable *ht,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Look up a key and retrieve its value
- *
+/*
  * Linear probe from the FNV-1a hash index.  DELETED slots are
  * skipped (they must not terminate the search because the target
  * key may reside beyond them in the probe chain).  The search
  * stops at the first EMPTY slot or on a full wrap-around.
+ */
+
+/**
+ * @brief Look up a key and retrieve its value
  */
 int tiku_kits_ds_htable_get(const struct tiku_kits_ds_htable *ht,
                              tiku_kits_ds_htable_key_t key,
@@ -207,13 +215,15 @@ int tiku_kits_ds_htable_get(const struct tiku_kits_ds_htable *ht,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Remove a key from the hash table (tombstone deletion)
- *
+/*
  * Locates the key via the same linear probe used by get(), then
  * marks the slot as DELETED rather than clearing it to EMPTY.  The
  * tombstone preserves probe-chain continuity for keys that were
  * inserted after this one.  The count is decremented by one.
+ */
+
+/**
+ * @brief Remove a key from the hash table (tombstone deletion)
  */
 int tiku_kits_ds_htable_remove(struct tiku_kits_ds_htable *ht,
                                 tiku_kits_ds_htable_key_t key)
@@ -272,14 +282,16 @@ int tiku_kits_ds_htable_contains(const struct tiku_kits_ds_htable *ht,
 /* STATE OPERATIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Clear the hash table, marking all entries EMPTY
- *
+/*
  * Zeros the entire entries array via memset.  Because
  * TIKU_KITS_DS_HTABLE_EMPTY is 0, this sets every slot's state to
  * EMPTY and also clears any lingering key/value data.  Tombstones
  * are removed as well, restoring the table to a freshly-initialized
  * state.
+ */
+
+/**
+ * @brief Clear the hash table, marking all entries EMPTY
  */
 int tiku_kits_ds_htable_clear(struct tiku_kits_ds_htable *ht)
 {

@@ -6,14 +6,16 @@
  *
  * tiku_kits_ui_list.h - Vertical scroll-tracking list widget
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Holds N text rows. INC/DEC events move the highlighted row;
  * ACTIVATE fires `on_select(selected_idx)`. The widget tracks an
  * internal scroll offset so the selected row stays visible when
  * the list overflows the widget rect.
  *
  * Caller-allocated rows array; the list keeps a pointer to it.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_LIST_H_

@@ -24,13 +24,15 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a priority queue
- *
+/*
  * Resets all ring-buffer state (head, tail, count) for each active
  * level and zeroes the backing data arrays.  Unused level slots
  * beyond @p n_levels are also zeroed so the struct is in a clean
  * state regardless of prior contents.
+ */
+
+/**
+ * @brief Initialize a priority queue
  */
 int tiku_kits_ds_pqueue_init(struct tiku_kits_ds_pqueue *pq,
                              uint8_t n_levels,
@@ -73,13 +75,15 @@ int tiku_kits_ds_pqueue_init(struct tiku_kits_ds_pqueue *pq,
 /* ENQUEUE / DEQUEUE                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Enqueue an element at a given priority level
- *
+/*
  * O(1) -- writes the value at the tail position of the target
  * level's ring buffer and advances the tail index with wrap-around.
  * No element shifting is required because the ring buffer uses
  * modular arithmetic.
+ */
+
+/**
+ * @brief Enqueue an element at a given priority level
  */
 int tiku_kits_ds_pqueue_enqueue(struct tiku_kits_ds_pqueue *pq,
                                 tiku_kits_ds_elem_t value,
@@ -110,14 +114,16 @@ int tiku_kits_ds_pqueue_enqueue(struct tiku_kits_ds_pqueue *pq,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Dequeue the highest-priority element
- *
+/*
  * Scans from level 0 (highest priority) to n_levels-1 (lowest) and
  * removes the front element from the first non-empty level.  The
  * scan ensures strict priority ordering; within a single tier,
  * elements come out in FIFO order.  The removal itself is O(1)
  * (ring-buffer head advance).
+ */
+
+/**
+ * @brief Dequeue the highest-priority element
  */
 int tiku_kits_ds_pqueue_dequeue(struct tiku_kits_ds_pqueue *pq,
                                 tiku_kits_ds_elem_t *value)
@@ -181,13 +187,15 @@ int tiku_kits_ds_pqueue_peek(const struct tiku_kits_ds_pqueue *pq,
 /* CLEAR                                                                     */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Clear all levels of the priority queue
- *
+/*
  * Resets head, tail, and count for each active level.  The backing
  * data arrays are not zeroed for efficiency -- old values remain
  * in memory but are inaccessible through the public API since all
  * access functions check against count.
+ */
+
+/**
+ * @brief Clear all levels of the priority queue
  */
 int tiku_kits_ds_pqueue_clear(struct tiku_kits_ds_pqueue *pq)
 {

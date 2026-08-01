@@ -6,13 +6,15 @@
  *
  * tiku_kits_sigfeatures_delta.h - First-order difference (delta)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Computes x[n] - x[n-1] to capture the rate of change. Simple but
  * often a strong ML feature. Provides both a streaming tracker (push
  * one sample at a time) and a batch function for processing buffers.
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_SIGFEATURES_DELTA_H_
@@ -28,36 +30,34 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_sigfeatures_delta
- * @brief Streaming first-order difference tracker
- *
+/*
  * Computes the first-order difference x[n] - x[n-1] incrementally as
  * samples arrive one at a time.  This is the discrete derivative of
  * the signal and is one of the most common features for detecting
  * rate-of-change, trend shifts, and motion onset.
- *
  * The tracker has a simple two-phase lifecycle:
- *   - After the first push, the @c prev field is seeded but no
- *     valid delta exists yet (@c ready == 0).
- *   - From the second push onward, @c last_delta holds the most
- *     recent difference and @c ready == 1.
- *
+ * - After the first push, the @c prev field is seeded but no
+ * valid delta exists yet (@c ready == 0).
+ * - From the second push onward, @c last_delta holds the most
+ * recent difference and @c ready == 1.
  * All storage is contained within the struct itself (no pointers,
  * no heap), so it can be declared as a static or local variable.
- *
- * @note For batch processing of an entire buffer in one call, use
- *       tiku_kits_sigfeatures_delta_compute() instead.
- *
  * Example:
- * @code
- *   struct tiku_kits_sigfeatures_delta d;
- *   tiku_kits_sigfeatures_elem_t result;
+ * tiku_kits_sigfeatures_delta_init(&d);
+ * tiku_kits_sigfeatures_delta_push(&d, 100);  // seeds prev
+ * tiku_kits_sigfeatures_delta_push(&d, 130);  // delta = 30
+ * tiku_kits_sigfeatures_delta_get(&d, &result);  // result = 30
+ */
+
+/**
+ * @brief Streaming first-order difference tracker
  *
- *   tiku_kits_sigfeatures_delta_init(&d);
- *   tiku_kits_sigfeatures_delta_push(&d, 100);  // seeds prev
- *   tiku_kits_sigfeatures_delta_push(&d, 130);  // delta = 30
- *   tiku_kits_sigfeatures_delta_get(&d, &result);  // result = 30
+ * @struct tiku_kits_sigfeatures_delta
+ * @note For batch processing of an entire buffer in one call, use
+ * tiku_kits_sigfeatures_delta_compute() instead.
+ * @code
+ * struct tiku_kits_sigfeatures_delta d;
+ * tiku_kits_sigfeatures_elem_t result;
  * @endcode
  */
 struct tiku_kits_sigfeatures_delta {
@@ -84,17 +84,19 @@ struct tiku_kits_sigfeatures_delta {
 int tiku_kits_sigfeatures_delta_init(
     struct tiku_kits_sigfeatures_delta *d);
 
-/**
- * @brief Reset a delta tracker, clearing all accumulated state
- *
+/*
  * Equivalent to calling init() again.  The tracker returns to its
  * pre-first-push state: ready is cleared and prev/last_delta are
  * zeroed.  Useful when the input stream changes context (e.g.
  * starting a new measurement window).
+ */
+
+/**
+ * @brief Reset a delta tracker, clearing all accumulated state
  *
  * @param d Delta tracker to reset (must not be NULL)
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if d is NULL
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if d is NULL
  */
 int tiku_kits_sigfeatures_delta_reset(
     struct tiku_kits_sigfeatures_delta *d);
@@ -149,25 +151,26 @@ int tiku_kits_sigfeatures_delta_get(
 /* Batch operation                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute first-order differences for an entire buffer
- *
+/*
  * Batch alternative to the streaming push/get interface.  Produces
  * (src_len - 1) output values where dst[i] = src[i+1] - src[i].
  * O(n) where n is src_len.
- *
  * The caller must provide a @p dst buffer of at least
  * (src_len - 1) elements.  The source and destination buffers
  * must not overlap.
+ */
+
+/**
+ * @brief Compute first-order differences for an entire buffer
  *
  * @param src     Input sample buffer (length src_len, must not be
- *                NULL)
+ * NULL)
  * @param src_len Number of input samples (must be >= 2)
  * @param dst     Output delta buffer (length >= src_len - 1, must
- *                not be NULL)
+ * not be NULL)
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if src or dst is NULL,
- *         TIKU_KITS_SIGFEATURES_ERR_SIZE if src_len < 2
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if src or dst is NULL,
+ * TIKU_KITS_SIGFEATURES_ERR_SIZE if src_len < 2
  */
 int tiku_kits_sigfeatures_delta_compute(
     const tiku_kits_sigfeatures_elem_t *src, uint16_t src_len,

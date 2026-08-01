@@ -24,16 +24,17 @@
 #define TIKU_KITS_UI_WINDOW_MAX_CHILDREN 16
 #endif
 
-/**
- * @brief A window container with a BeOS-style title tab.
- *
+/*
  * Children draw into the content area below the title tab;
  * the window establishes a subsurface so child coordinates are
  * relative to the inside of the frame.
- *
  * Focus management: the window tracks which child is currently
  * focused (focus_idx). Focus events advance / retreat the index
  * to the next focusable child, wrapping at the ends.
+ */
+
+/**
+ * @brief A window container with a BeOS-style title tab.
  */
 typedef struct {
     tiku_kits_ui_widget_t base;
@@ -83,38 +84,40 @@ int tiku_kits_ui_window_add(tiku_kits_ui_window_t *win,
 void tiku_kits_ui_window_render(const tiku_kits_ui_window_t *win,
                                  const tiku_kits_gfx_surface_t *s);
 
-/**
- * @brief Feed an input event into the window.
- *
+/*
  * FOCUS_NEXT / FOCUS_PREV walk the focusable children, wrapping.
  * ACTIVATE dispatches to the focused child's handle_event.
- *
  * The window does NOT trigger a re-render -- the application is
  * responsible for calling render() and then refreshing the
  * display kit when ready.
  */
+
+/**
+ * @brief Feed an input event into the window.
+ */
 void tiku_kits_ui_window_event(tiku_kits_ui_window_t *win,
                                 tiku_kits_ui_event_t evt);
 
-/**
- * @brief Render only the children whose `dirty` flag is set.
- *
+/*
  * For each dirty child:
- *   1. Clears its rectangle on the content area with @p bg_color.
- *   2. Renders the child.
- *   3. Clears the child's dirty flag.
- *   4. Accumulates the child's screen-absolute rectangle into
- *      @p out_dirty_rect (if non-NULL).
- *
+ * 1. Clears its rectangle on the content area with @p bg_color.
+ * 2. Renders the child.
+ * 3. Clears the child's dirty flag.
+ * 4. Accumulates the child's screen-absolute rectangle into
  * The window's title tab and frame are NOT redrawn -- only the
  * content area inside the frame. If you need to repaint the
  * chrome (e.g. the title text changed), call window_render
  * instead.
+ */
+
+/**
+ * @brief Render only the children whose `dirty` flag is set.
  *
+ * @p out_dirty_rect (if non-NULL).
  * @return Number of children repainted. When 0, the surface was
- *         not touched and @p out_dirty_rect is set to an empty
- *         rectangle. Useful with epaper_refresh_rect() to skip
- *         the refresh entirely when nothing changed.
+ * not touched and @p out_dirty_rect is set to an empty
+ * rectangle. Useful with epaper_refresh_rect() to skip
+ * the refresh entirely when nothing changed.
  */
 uint16_t tiku_kits_ui_window_render_dirty(
     tiku_kits_ui_window_t *win,

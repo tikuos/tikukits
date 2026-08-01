@@ -6,20 +6,22 @@
  *
  * tiku_kits_gfx_image.c - Multi-format image rendering
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Two access patterns coexist in this file:
  *
  * 1. Sequential iterator (`seq_iter_*`)
- *    For row-major blit() walks. RLE images decode incrementally
- *    so the worst-case cost is O(W * H), even though random access
- *    on RLE would be O(N) per pixel.
+ * For row-major blit() walks. RLE images decode incrementally
+ * so the worst-case cost is O(W * H), even though random access
+ * on RLE would be O(N) per pixel.
  *
  * 2. Random-access (`tiku_kits_gfx_image_pixel`)
- *    For scaled / rotated / 9-slice blits where pixels are read
- *    in a non-row-major order. RLE images pay O(N) per access; for
- *    that reason RLE is strongly discouraged for scaled/rotated
- *    use, although it still works correctly.
- *
- * SPDX-License-Identifier: Apache-2.0
+ * For scaled / rotated / 9-slice blits where pixels are read
+ * in a non-row-major order. RLE images pay O(N) per access; for
+ * that reason RLE is strongly discouraged for scaled/rotated
+ * use, although it still works correctly.
  */
 
 #include "tiku_kits_gfx_image.h"

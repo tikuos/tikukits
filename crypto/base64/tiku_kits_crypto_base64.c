@@ -6,13 +6,15 @@
  *
  * tiku_kits_crypto_base64.c - Base64 encoding/decoding for embedded systems
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements RFC 4648 standard Base64.  Zero heap allocation.
  *
  * Encoding uses a 64-byte lookup table.  Decoding uses a 128-byte
  * reverse lookup table (ASCII range), where -1 marks invalid
  * characters.  Total const data: 192 bytes.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/

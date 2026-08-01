@@ -6,6 +6,10 @@
  *
  * tiku_kits_time_ntp.h - SNTP client (RFC 4330) for TikuOS
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Lightweight SNTP (Simple Network Time Protocol) client that
  * queries an NTP server over UDP to obtain wall-clock time.
  * Designed for ultra-low-power MSP430 microcontrollers with
@@ -23,19 +27,17 @@
  *
  * Typical usage:
  * @code
- *   static const uint8_t ntp_server[] = {216, 239, 35, 0};
- *   tiku_kits_time_ntp_init();
- *   tiku_kits_time_ntp_request(ntp_server);
- *   while (tiku_kits_time_ntp_get_state() < TIKU_KITS_TIME_NTP_STATE_DONE) {
- *       tiku_kits_time_ntp_poll();
- *   }
- *   if (tiku_kits_time_ntp_get_state() == TIKU_KITS_TIME_NTP_STATE_DONE) {
- *       tiku_kits_time_unix_t t;
- *       tiku_kits_time_ntp_get_time(&t);
- *   }
+ * static const uint8_t ntp_server[] = {216, 239, 35, 0};
+ * tiku_kits_time_ntp_init();
+ * tiku_kits_time_ntp_request(ntp_server);
+ * while (tiku_kits_time_ntp_get_state() < TIKU_KITS_TIME_NTP_STATE_DONE) {
+ * tiku_kits_time_ntp_poll();
+ * }
+ * if (tiku_kits_time_ntp_get_state() == TIKU_KITS_TIME_NTP_STATE_DONE) {
+ * tiku_kits_time_unix_t t;
+ * tiku_kits_time_ntp_get_time(&t);
+ * }
  * @endcode
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_TIME_NTP_H_
@@ -141,37 +143,39 @@ typedef enum {
  */
 void tiku_kits_time_ntp_init(void);
 
-/**
- * @brief Send an NTP request to a server.
- *
+/*
  * Constructs a 48-byte SNTP client request and sends it to the
  * specified server via UDP port 123.  Binds the local NTP port
  * to receive the reply.
- *
  * After calling request(), poll ntp_poll() until get_state()
  * returns DONE or ERROR.
+ */
+
+/**
+ * @brief Send an NTP request to a server.
  *
  * @param server_addr  NTP server IPv4 address (4 bytes, network order)
  * @return TIKU_KITS_TIME_OK on success,
- *         TIKU_KITS_TIME_ERR_NULL if server_addr is NULL,
- *         TIKU_KITS_TIME_ERR_PARAM if a request is already active,
- *         TIKU_KITS_TIME_ERR_NET if UDP send fails.
+ * TIKU_KITS_TIME_ERR_NULL if server_addr is NULL,
+ * TIKU_KITS_TIME_ERR_PARAM if a request is already active,
+ * TIKU_KITS_TIME_ERR_NET if UDP send fails.
  */
 int tiku_kits_time_ntp_request(const uint8_t *server_addr);
+
+/*
+ * Checks if a reply has been received by the UDP callback.
+ * If so, parses the NTP response, extracts the transmit
+ * timestamp, converts to Unix epoch, and transitions to DONE.
+ * Must be called from application context (not from inside
+ * a UDP receive callback).
+ */
 
 /**
  * @brief Poll for NTP reply and update state.
  *
- * Checks if a reply has been received by the UDP callback.
- * If so, parses the NTP response, extracts the transmit
- * timestamp, converts to Unix epoch, and transitions to DONE.
- *
- * Must be called from application context (not from inside
- * a UDP receive callback).
- *
  * @return TIKU_KITS_TIME_OK if reply processed,
- *         TIKU_KITS_TIME_ERR_NODATA if no reply yet,
- *         TIKU_KITS_TIME_ERR_TIMEOUT if max retries exhausted.
+ * TIKU_KITS_TIME_ERR_NODATA if no reply yet,
+ * TIKU_KITS_TIME_ERR_TIMEOUT if max retries exhausted.
  */
 int tiku_kits_time_ntp_poll(void);
 

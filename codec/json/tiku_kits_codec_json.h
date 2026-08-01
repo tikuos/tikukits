@@ -6,34 +6,36 @@
  *
  * tiku_kits_codec_json.h - Minimal JSON encoder/decoder for embedded systems
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Streaming JSON emitter and pull-parser designed for ultra-low-power
  * MCUs.  No DOM tree, no heap, no recursion in the hot path.
  *
  * Design:
- *   - Zero heap allocation.  The writer emits JSON text into a
- *     caller-provided buffer via a cursor struct.  The reader
- *     tokenizes a const buffer one token at a time.
- *   - Streaming API: values are emitted/consumed incrementally so
- *     the caller never needs to hold an entire object model.
- *   - The writer tracks nesting depth and comma state so the caller
- *     does not need to manage separators manually.
- *   - The reader is a pull-parser: each call to next_token() returns
- *     the type and value of the next JSON token.
+ * - Zero heap allocation.  The writer emits JSON text into a
+ * caller-provided buffer via a cursor struct.  The reader
+ * tokenizes a const buffer one token at a time.
+ * - Streaming API: values are emitted/consumed incrementally so
+ * the caller never needs to hold an entire object model.
+ * - The writer tracks nesting depth and comma state so the caller
+ * does not need to manage separators manually.
+ * - The reader is a pull-parser: each call to next_token() returns
+ * the type and value of the next JSON token.
  *
  * Supported JSON types:
- *   - Numbers: signed 32-bit integers (no floating-point)
- *   - Strings: caller-provided, escaped on output, unescaped on input
- *   - Booleans: true / false
- *   - Null
- *   - Arrays: [ ... ]
- *   - Objects: { "key": value, ... }
+ * - Numbers: signed 32-bit integers (no floating-point)
+ * - Strings: caller-provided, escaped on output, unescaped on input
+ * - Booleans: true / false
+ * - Null
+ * - Arrays: [ ... ]
+ * - Objects: { "key": value, ... }
  *
  * Not supported:
- *   - Floating-point numbers
- *   - Unicode escape sequences (\uXXXX) in the decoder
- *   - Nested depth beyond TIKU_KITS_CODEC_JSON_MAX_DEPTH
- *
- * SPDX-License-Identifier: Apache-2.0
+ * - Floating-point numbers
+ * - Unicode escape sequences (\uXXXX) in the decoder
+ * - Nested depth beyond TIKU_KITS_CODEC_JSON_MAX_DEPTH
  */
 
 #ifndef TIKU_KITS_CODEC_JSON_H_
@@ -49,16 +51,18 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum nesting depth for the JSON writer.
- *
+/*
  * Each open array or object consumes one level.  The writer tracks
  * whether a comma is needed at each depth.  8 levels handles most
  * IoT payloads (e.g. {"sensors":[{"temp":23,"hum":55}]}).
- *
  * Override before including this header to change:
+ */
+
+/**
+ * @brief Maximum nesting depth for the JSON writer.
+ *
  * @code
- *   #define TIKU_KITS_CODEC_JSON_MAX_DEPTH 16
+ * #define TIKU_KITS_CODEC_JSON_MAX_DEPTH 16
  * @endcode
  */
 #ifndef TIKU_KITS_CODEC_JSON_MAX_DEPTH
@@ -91,27 +95,28 @@ typedef enum {
 /* WRITER                                                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_codec_json_writer
- * @brief JSON writer cursor over a caller-provided buffer.
- *
+/*
  * Tracks the output buffer, current position, nesting depth, and
  * per-level comma state.  The writer automatically inserts commas
  * between sibling values and colons after object keys.
- *
  * Example:
- * @code
- *   uint8_t buf[128];
- *   tiku_kits_codec_json_writer_t w;
- *   tiku_kits_codec_json_writer_init(&w, buf, sizeof(buf));
+ * tiku_kits_codec_json_open_object(&w);
+ * tiku_kits_codec_json_write_key(&w, "temp", 4);
+ * tiku_kits_codec_json_write_int(&w, 23);
+ * tiku_kits_codec_json_write_key(&w, "ok", 2);
+ * tiku_kits_codec_json_write_bool(&w, 1);
+ * tiku_kits_codec_json_close_object(&w);
+ * // buf contains: {"temp":23,"ok":true}
+ */
+
+/**
+ * @brief JSON writer cursor over a caller-provided buffer.
  *
- *   tiku_kits_codec_json_open_object(&w);
- *   tiku_kits_codec_json_write_key(&w, "temp", 4);
- *   tiku_kits_codec_json_write_int(&w, 23);
- *   tiku_kits_codec_json_write_key(&w, "ok", 2);
- *   tiku_kits_codec_json_write_bool(&w, 1);
- *   tiku_kits_codec_json_close_object(&w);
- *   // buf contains: {"temp":23,"ok":true}
+ * @struct tiku_kits_codec_json_writer
+ * @code
+ * uint8_t buf[128];
+ * tiku_kits_codec_json_writer_t w;
+ * tiku_kits_codec_json_writer_init(&w, buf, sizeof(buf));
  * @endcode
  */
 typedef struct {
@@ -236,27 +241,28 @@ int tiku_kits_codec_json_write_null(tiku_kits_codec_json_writer_t *w);
 /* READER (PULL-PARSER)                                                      */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_codec_json_reader
- * @brief JSON pull-parser over a const buffer.
- *
+/*
  * Each call to next_token() returns the type of the next token and,
  * for strings and numbers, the value.  Structural tokens ({, }, [, ],
  * :, ,) are returned individually.
- *
  * Example:
- * @code
- *   tiku_kits_codec_json_reader_t r;
- *   tiku_kits_codec_json_reader_init(&r, buf, len);
+ * tiku_kits_codec_json_tok_t tok;
+ * while (tiku_kits_codec_json_next_token(&r, &tok) == TIKU_KITS_CODEC_OK
+ * && tok != TIKU_KITS_CODEC_JSON_TOK_END) {
+ * if (tok == TIKU_KITS_CODEC_JSON_TOK_STRING) {
+ * const char *s; uint16_t slen;
+ * tiku_kits_codec_json_token_string(&r, &s, &slen);
+ * }
+ * }
+ */
+
+/**
+ * @brief JSON pull-parser over a const buffer.
  *
- *   tiku_kits_codec_json_tok_t tok;
- *   while (tiku_kits_codec_json_next_token(&r, &tok) == TIKU_KITS_CODEC_OK
- *          && tok != TIKU_KITS_CODEC_JSON_TOK_END) {
- *       if (tok == TIKU_KITS_CODEC_JSON_TOK_STRING) {
- *           const char *s; uint16_t slen;
- *           tiku_kits_codec_json_token_string(&r, &s, &slen);
- *       }
- *   }
+ * @struct tiku_kits_codec_json_reader
+ * @code
+ * tiku_kits_codec_json_reader_t r;
+ * tiku_kits_codec_json_reader_init(&r, buf, len);
  * @endcode
  */
 typedef struct {
@@ -291,13 +297,15 @@ int tiku_kits_codec_json_reader_init(tiku_kits_codec_json_reader_t *r,
 uint16_t tiku_kits_codec_json_reader_remaining(
              const tiku_kits_codec_json_reader_t *r);
 
-/**
- * @brief Advance to the next JSON token.
- *
+/*
  * Skips whitespace, then identifies the next token.  For strings,
  * the token boundaries are stored so that token_string() can
  * retrieve the value.  For numbers, the value is parsed into
  * tok_int.
+ */
+
+/**
+ * @brief Advance to the next JSON token.
  *
  * @param r    Reader
  * @param tok  Output: token type
@@ -306,13 +314,15 @@ uint16_t tiku_kits_codec_json_reader_remaining(
 int tiku_kits_codec_json_next_token(tiku_kits_codec_json_reader_t *r,
                                      tiku_kits_codec_json_tok_t *tok);
 
-/**
- * @brief Retrieve the string value of the most recent STRING token.
- *
+/*
  * Returns a pointer into the input buffer (between the quotes).
  * The string is NOT unescaped — escape sequences like \" and \\
  * appear as-is.  For IoT payloads with simple ASCII keys this is
  * sufficient.
+ */
+
+/**
+ * @brief Retrieve the string value of the most recent STRING token.
  *
  * @param r    Reader
  * @param str  Output: pointer to string start (within input buffer)

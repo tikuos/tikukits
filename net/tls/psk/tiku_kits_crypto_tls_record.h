@@ -6,25 +6,27 @@
  *
  * tiku_kits_crypto_tls_record.h - TLS 1.3 record layer
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Handles TLS record framing, AEAD encryption/decryption, and
  * nonce construction per RFC 8446 Section 5.
  *
  * Record format (on the wire):
- *   [content_type(1)] [legacy_version(2)] [length(2)] [fragment(N)]
+ * [content_type(1)] [legacy_version(2)] [length(2)] [fragment(N)]
  *
  * For encrypted records:
- *   - Outer content_type is always application_data (23)
- *   - Fragment = AEAD-encrypted(inner_content || content_type)
- *   - The real content type is the last byte of the inner plaintext
- *   - Fragment includes the 16-byte AEAD authentication tag
+ * - Outer content_type is always application_data (23)
+ * - Fragment = AEAD-encrypted(inner_content || content_type)
+ * - The real content type is the last byte of the inner plaintext
+ * - Fragment includes the 16-byte AEAD authentication tag
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_TLS_RECORD_H_
@@ -57,16 +59,17 @@ uint16_t tiku_kits_crypto_tls_record_build_plain(
     const uint8_t *content,
     uint16_t content_len);
 
-/**
- * @brief Encrypt and build a TLS 1.3 encrypted record.
- *
+/*
  * Constructs an encrypted record:
- *   outer header: type=23, version=0x0303, length=N+tag+1
- *   fragment: AEAD(inner_content || real_content_type)
- *
+ * outer header: type=23, version=0x0303, length=N+tag+1
+ * fragment: AEAD(inner_content || real_content_type)
  * The nonce is constructed as IV XOR padded_sequence_number
  * per RFC 8446 Section 5.3.  The sequence number is incremented
  * after each record.
+ */
+
+/**
+ * @brief Encrypt and build a TLS 1.3 encrypted record.
  *
  * @param out          Output buffer (FRAM-backed)
  * @param ctx          GCM context for encryption
@@ -76,7 +79,7 @@ uint16_t tiku_kits_crypto_tls_record_build_plain(
  * @param content      Plaintext to encrypt
  * @param content_len  Plaintext length
  * @return Total record length (5 + content_len + 1 + 16), or
- *         0 on error
+ * 0 on error
  */
 uint16_t tiku_kits_crypto_tls_record_encrypt(
     uint8_t *out,

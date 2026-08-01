@@ -19,16 +19,17 @@
  */
 typedef void (*tiku_kits_ui_icon_cb_t)(void *user_data);
 
-/**
- * @brief A 1bpp bitmap icon, optionally clickable.
- *
+/*
  * Icons render the bitmap at (x, y) with @p color. If @p bordered
  * is non-zero, draws a 1-px black hairline frame around the
  * bitmap (frame colour switches to RED when focused, mirroring
  * the button widget).
- *
  * Icons with a non-NULL @p on_click are focusable. Static
  * decorative icons (on_click = NULL) are not.
+ */
+
+/**
+ * @brief A 1bpp bitmap icon, optionally clickable.
  */
 typedef struct {
     tiku_kits_ui_widget_t base;

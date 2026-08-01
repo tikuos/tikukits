@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_dns.c - DNS stub resolver implementation
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements a lightweight DNS stub resolver (A records only) over
  * UDP.  Uses the same poll-based architecture as the NTP client:
  * the UDP receive callback copies the response into a FRAM-backed
@@ -16,8 +20,6 @@
  * redundant queries for recently resolved hostnames.
  *
  * Memory footprint: ~60 bytes static SRAM + 102 bytes FRAM.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_net_dns.h"
@@ -101,14 +103,16 @@ static struct dns_cache_entry dns_cache[TIKU_KITS_NET_DNS_CACHE_SIZE];
 /* FRAM RECEIVE BUFFER                                                       */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief FRAM-backed receive buffer for DNS responses.
- *
+/*
  * 100 bytes is sufficient for a minimal DNS response containing
  * one A record: 12 (header) + ~20 (question echo) + ~30 (answer
  * with compressed name) = ~62 bytes typical.  The extra headroom
  * accommodates longer hostnames or additional answer records that
  * we skip past.
+ */
+
+/**
+ * @brief FRAM-backed receive buffer for DNS responses.
  */
 /* Session buffer: capacity placement only (MSP430 FRAM spill; ample-SRAM
  * parts stay in .bss -- same pattern as TIKU_KITS_NET_TCP_BUF_ATTR). */
@@ -126,13 +130,15 @@ static uint16_t dns_rx_len;
 /* HOSTNAME HASH                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute a 16-bit hash of a hostname using djb2.
- *
+/*
  * Used as a compact key for cache lookups.  Collisions are
  * harmless -- a false hit returns a cached address that may
  * not match the requested name, but in practice the 2-entry
  * cache makes collisions unlikely for embedded use.
+ */
+
+/**
+ * @brief Compute a 16-bit hash of a hostname using djb2.
  *
  * @param hostname  Null-terminated hostname string
  * @return 16-bit hash value
@@ -152,19 +158,21 @@ static uint16_t dns_hostname_hash(const char *hostname)
 /* HOSTNAME ENCODING                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Encode a hostname into DNS wire format.
- *
+/*
  * Converts "pool.ntp.org" into the label sequence
  * \\x04pool\\x03ntp\\x03org\\x00.  Validates that no single
  * label exceeds 63 bytes, no empty labels exist, and the total
  * encoded length does not exceed DNS_MAX_HOSTNAME.
+ */
+
+/**
+ * @brief Encode a hostname into DNS wire format.
  *
  * @param hostname  Null-terminated dot-separated hostname
  * @param out       Output buffer (must be at least
- *                  DNS_MAX_HOSTNAME + 2 bytes)
+ * DNS_MAX_HOSTNAME + 2 bytes)
  * @return Encoded length in bytes (including trailing 0x00),
- *         or 0 on validation error.
+ * or 0 on validation error.
  */
 static uint16_t dns_encode_hostname(const char *hostname,
                                      uint8_t *out)
@@ -235,15 +243,16 @@ static uint32_t dns_read_be32(const uint8_t *p)
 /* UDP RECEIVE CALLBACK                                                      */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief UDP callback for DNS responses.
- *
+/*
  * Called by the UDP layer when a packet arrives on our bound port.
  * Performs minimal validation (length, transaction ID, QR bit)
  * and copies the payload into the FRAM-backed dns_rx_buf.
  * Full parsing is deferred to dns_poll() in application context.
- *
  * Does NOT call udp_send() -- just sets a flag for poll().
+ */
+
+/**
+ * @brief UDP callback for DNS responses.
  */
 static void dns_udp_recv(const uint8_t *src_addr,
                           uint16_t       src_port,
@@ -428,16 +437,18 @@ static uint16_t dns_skip_name(const uint8_t *buf, uint16_t pos,
 /* DNS RESPONSE PARSER                                                       */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Parse a DNS response from dns_rx_buf.
- *
+/*
  * Validates RCODE, checks for truncation (TC bit), reads the
  * answer count, skips the question section, then iterates
  * through answer RRs looking for the first A record (TYPE=1,
  * CLASS=1, RDLENGTH=4).  Extracts the 4-byte address and TTL.
+ */
+
+/**
+ * @brief Parse a DNS response from dns_rx_buf.
  *
  * @return TIKU_KITS_NET_OK on success (address extracted),
- *         TIKU_KITS_NET_ERR_PARAM on parse or protocol error.
+ * TIKU_KITS_NET_ERR_PARAM on parse or protocol error.
  */
 static int8_t dns_parse_response(void)
 {
@@ -601,15 +612,17 @@ int8_t tiku_kits_net_dns_set_server(const uint8_t *addr)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Pick the best default resolver for this network.
- *
+/*
  * Prefers the DHCP-lease-provided DNS server (option 6) when a lease
  * is bound and carried one: campus/corporate networks often block
  * outbound UDP/53 to public resolvers, so hardcoding 8.8.8.8 made
  * every hostname lookup fail there.  Falls back to Google public DNS
  * when there is no lease (SLIP builds, static setups) or the server
  * sent no option 6.
+ */
+
+/**
+ * @brief Pick the best default resolver for this network.
  */
 void tiku_kits_net_dns_default_server(uint8_t out[4])
 {
@@ -628,9 +641,7 @@ void tiku_kits_net_dns_default_server(uint8_t out[4])
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Start a DNS A-record query for the given hostname.
- *
+/*
  * First computes a djb2 hash of the hostname and checks the 2-entry
  * cache.  On a cache hit the resolver transitions directly to DONE
  * without sending a packet.  On a miss, the hostname is encoded into
@@ -638,9 +649,12 @@ void tiku_kits_net_dns_default_server(uint8_t out[4])
  * is built on the stack (ID, RD=1, QDCOUNT=1, QTYPE=A, QCLASS=IN),
  * the local UDP port is bound for receiving the response, and the
  * packet is sent to the configured DNS server on port 53.
- *
  * After calling resolve(), poll dns_poll() periodically until
  * get_state() returns DONE or ERROR.
+ */
+
+/**
+ * @brief Start a DNS A-record query for the given hostname.
  */
 int8_t tiku_kits_net_dns_resolve(const char *hostname)
 {
@@ -760,18 +774,19 @@ int8_t tiku_kits_net_dns_resolve(const char *hostname)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Poll for a DNS reply and drive the state machine.
- *
+/*
  * If the UDP callback has set dns_reply_ready, parses the response
  * from the FRAM-backed rx buffer, extracts the first A record,
  * caches the result (hash + address + TTL), unbinds the port, and
  * transitions to DONE.  If the parse fails (NXDOMAIN, truncation,
  * no A record), transitions to ERROR.
- *
  * If no reply has arrived, increments the retry counter.  When
  * retries reach DNS_MAX_RETRIES the port is unbound and the state
  * moves to ERROR with a TIMEOUT return code.
+ */
+
+/**
+ * @brief Poll for a DNS reply and drive the state machine.
  */
 int8_t tiku_kits_net_dns_poll(void)
 {

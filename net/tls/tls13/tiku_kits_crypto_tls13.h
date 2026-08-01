@@ -6,6 +6,10 @@
  *
  * tiku_kits_crypto_tls13.h - TLS 1.3 client (ECDHE + X.509 certificate)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * A TLS 1.3 client that authenticates the server with a certificate chain
  * (X25519 key exchange, AES-128-GCM/SHA-256, certificate + CertificateVerify
  * verified against a baked-in trust store).  This is the certificate-based
@@ -15,8 +19,6 @@
  * Transport- and entropy-agnostic: the caller supplies blocking send/recv
  * callbacks and a random-fill callback, so the same code runs on a host
  * socket (for testing) or the TikuOS TCP stack.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_TLS13_H_
@@ -38,8 +40,7 @@ typedef struct {
     int (*send)(void *ctx, const uint8_t *buf, size_t len);
     int (*recv)(void *ctx, uint8_t *buf, size_t len);
     void *ctx;
-    /**
-     * Optional heavy-crypto offload.  When non-NULL, the handshake runs
+        /*
      * its CPU-bound public-key ops (ECDHE scalar-mult, CertVerify, the
      * certificate-chain verify) through this hook instead of calling them
      * inline: @p fn is a pure closure over caller buffers, @p closure its
@@ -50,6 +51,10 @@ typedef struct {
      * serialise crypto — the underlying primitives carry non-reentrant
      * static scratch — so a single dedicated worker, never concurrent with
      * any other crypto.
+     */
+
+    /**
+     * Optional heavy-crypto offload.  When non-NULL, the handshake runs
      */
     int (*offload)(int (*fn)(void *closure), void *closure);
 } tiku_kits_crypto_tls13_io_t;

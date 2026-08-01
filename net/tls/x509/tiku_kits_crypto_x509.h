@@ -6,14 +6,16 @@
  *
  * tiku_kits_crypto_x509.h - minimal X.509 (DER) certificate parser
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Parses the fields a TLS 1.3 client needs to authenticate a server:
  * the signed TBSCertificate, the subject public key (RSA or EC P-256),
  * validity window, issuer/subject DNs (for chain linking), the
  * subjectAltName DNS list (for hostname matching), and the certificate
  * signature + algorithm.  Zero-copy: parsed fields point into the caller's
  * DER buffer, which must outlive the parsed struct.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_X509_H_

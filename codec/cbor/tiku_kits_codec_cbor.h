@@ -6,6 +6,10 @@
  *
  * tiku_kits_codec_cbor.h - CBOR encoder/decoder for embedded systems
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements a subset of CBOR (RFC 8949) suitable for ultra-low-power
  * microcontrollers.  Supports the five major types needed for IoT
  * payloads: unsigned integers, negative integers, byte strings, text
@@ -13,32 +17,30 @@
  * supported to keep code size and RAM usage minimal.
  *
  * Design:
- *   - Zero heap allocation.  The encoder writes into a caller-provided
- *     buffer via a cursor struct (tiku_kits_codec_cbor_writer_t).  The
- *     decoder reads from a const buffer via a reader struct.
- *   - Incremental API: items are encoded/decoded one at a time, so
- *     arbitrarily large payloads can be built without holding the
- *     entire object model in memory.
- *   - No nested container tracking.  The caller is responsible for
- *     encoding the correct number of items after opening an array or
- *     map.  This keeps the struct size at ~8 bytes.
+ * - Zero heap allocation.  The encoder writes into a caller-provided
+ * buffer via a cursor struct (tiku_kits_codec_cbor_writer_t).  The
+ * decoder reads from a const buffer via a reader struct.
+ * - Incremental API: items are encoded/decoded one at a time, so
+ * arbitrarily large payloads can be built without holding the
+ * entire object model in memory.
+ * - No nested container tracking.  The caller is responsible for
+ * encoding the correct number of items after opening an array or
+ * map.  This keeps the struct size at ~8 bytes.
  *
  * Supported CBOR major types:
- *   0 - Unsigned integer  (0 .. 2^32-1)
- *   1 - Negative integer  (-1 .. -2^32)
- *   2 - Byte string       (definite length)
- *   3 - Text string       (definite length, UTF-8 not validated)
- *   4 - Array             (definite length)
- *   5 - Map               (definite length)
- *   7 - Simple values     (true, false, null)
+ * 0 - Unsigned integer  (0 .. 2^32-1)
+ * 1 - Negative integer  (-1 .. -2^32)
+ * 2 - Byte string       (definite length)
+ * 3 - Text string       (definite length, UTF-8 not validated)
+ * 4 - Array             (definite length)
+ * 5 - Map               (definite length)
+ * 7 - Simple values     (true, false, null)
  *
  * Not supported:
- *   - Indefinite-length containers
- *   - Floating-point (half/single/double)
- *   - Tags (major type 6)
- *   - 64-bit integers (values > 2^32-1)
- *
- * SPDX-License-Identifier: Apache-2.0
+ * - Indefinite-length containers
+ * - Floating-point (half/single/double)
+ * - Tags (major type 6)
+ * - 64-bit integers (values > 2^32-1)
  */
 
 #ifndef TIKU_KITS_CODEC_CBOR_H_
@@ -85,30 +87,30 @@ typedef enum {
 /* ENCODER                                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_codec_cbor_writer
- * @brief CBOR encoder cursor over a caller-provided buffer.
- *
+/*
  * The writer tracks a byte buffer, its capacity, and the current
  * write position.  Each encode function advances the position.
  * If any encode call would overflow the buffer, it returns
  * TIKU_KITS_CODEC_ERR_OVERFLOW and the writer is left unchanged
  * (the partial item is not written).
- *
  * Example:
+ * tiku_kits_codec_cbor_encode_map(&w, 2);       // map with 2 pairs
+ * tiku_kits_codec_cbor_encode_tstr(&w, "temp", 4);
+ * tiku_kits_codec_cbor_encode_uint(&w, 23);
+ * tiku_kits_codec_cbor_encode_tstr(&w, "hum", 3);
+ * tiku_kits_codec_cbor_encode_uint(&w, 55);
+ * uint16_t len = tiku_kits_codec_cbor_writer_len(&w);
+ * // buf[0..len) contains valid CBOR: {\"temp\": 23, \"hum\": 55}
+ */
+
+/**
+ * @brief CBOR encoder cursor over a caller-provided buffer.
+ *
+ * @struct tiku_kits_codec_cbor_writer
  * @code
- *   uint8_t buf[64];
- *   tiku_kits_codec_cbor_writer_t w;
- *   tiku_kits_codec_cbor_writer_init(&w, buf, sizeof(buf));
- *
- *   tiku_kits_codec_cbor_encode_map(&w, 2);       // map with 2 pairs
- *   tiku_kits_codec_cbor_encode_tstr(&w, "temp", 4);
- *   tiku_kits_codec_cbor_encode_uint(&w, 23);
- *   tiku_kits_codec_cbor_encode_tstr(&w, "hum", 3);
- *   tiku_kits_codec_cbor_encode_uint(&w, 55);
- *
- *   uint16_t len = tiku_kits_codec_cbor_writer_len(&w);
- *   // buf[0..len) contains valid CBOR: {\"temp\": 23, \"hum\": 55}
+ * uint8_t buf[64];
+ * tiku_kits_codec_cbor_writer_t w;
+ * tiku_kits_codec_cbor_writer_init(&w, buf, sizeof(buf));
  * @endcode
  */
 typedef struct {
@@ -259,25 +261,26 @@ int tiku_kits_codec_cbor_encode_null(tiku_kits_codec_cbor_writer_t *w);
 /* DECODER                                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_codec_cbor_reader
- * @brief CBOR decoder cursor over a const buffer.
- *
+/*
  * The reader tracks a byte buffer, its length, and the current read
  * position.  Each decode function advances the position past the
  * consumed item.  If the buffer is exhausted mid-item, the function
  * returns TIKU_KITS_CODEC_ERR_UNDERFLOW and the reader position is
  * left unchanged.
- *
  * Example:
- * @code
- *   tiku_kits_codec_cbor_reader_t r;
- *   tiku_kits_codec_cbor_reader_init(&r, buf, len);
+ * tiku_kits_codec_cbor_type_t type;
+ * uint32_t val;
+ * tiku_kits_codec_cbor_peek_type(&r, &type);  // check what's next
+ * tiku_kits_codec_cbor_decode_uint(&r, &val);  // read it
+ */
+
+/**
+ * @brief CBOR decoder cursor over a const buffer.
  *
- *   tiku_kits_codec_cbor_type_t type;
- *   uint32_t val;
- *   tiku_kits_codec_cbor_peek_type(&r, &type);  // check what's next
- *   tiku_kits_codec_cbor_decode_uint(&r, &val);  // read it
+ * @struct tiku_kits_codec_cbor_reader
+ * @code
+ * tiku_kits_codec_cbor_reader_t r;
+ * tiku_kits_codec_cbor_reader_init(&r, buf, len);
  * @endcode
  */
 typedef struct {

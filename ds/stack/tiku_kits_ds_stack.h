@@ -26,18 +26,20 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum number of elements the stack can hold.
- *
+/*
  * This compile-time constant defines the upper bound on stack
  * capacity.  Each stack instance reserves this many element slots
  * in its static storage, so choose a value that balances memory
  * usage against the deepest stack your application needs.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of elements the stack can hold.
+ *
  * @code
- *   #define TIKU_KITS_DS_STACK_MAX_SIZE 64
- *   #include "tiku_kits_ds_stack.h"
+ * #define TIKU_KITS_DS_STACK_MAX_SIZE 64
+ * #include "tiku_kits_ds_stack.h"
  * @endcode
  */
 #ifndef TIKU_KITS_DS_STACK_MAX_SIZE
@@ -48,39 +50,39 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_ds_stack
- * @brief Fixed-capacity LIFO stack with contiguous static storage.
- *
+/*
  * A last-in-first-out container that stores elements in a
  * contiguous block of statically allocated memory.  Because all
  * storage lives inside the struct itself, no heap allocation is
  * needed -- just declare the stack as a static or local variable.
- *
  * Two sizes are tracked independently:
- *   - @c capacity -- the runtime limit passed to init (must be
- *     <= TIKU_KITS_DS_STACK_MAX_SIZE).  This lets different stack
- *     instances use different logical sizes while sharing the same
- *     compile-time backing buffer.
- *   - @c top -- the index of the next free slot, which also equals
- *     the number of elements currently stored.  Push writes at
- *     data[top] and increments top; pop decrements top and reads
- *     from data[top].
- *
- * @note Element type is controlled by tiku_kits_ds_elem_t (default
- *       int32_t).  Override at compile time with
- *       @c -DTIKU_KITS_DS_ELEM_TYPE=int16_t to change it globally
- *       for all DS sub-modules.
- *
+ * - @c capacity -- the runtime limit passed to init (must be
+ * <= TIKU_KITS_DS_STACK_MAX_SIZE).  This lets different stack
+ * instances use different logical sizes while sharing the same
+ * compile-time backing buffer.
+ * - @c top -- the index of the next free slot, which also equals
+ * the number of elements currently stored.  Push writes at
+ * data[top] and increments top; pop decrements top and reads
+ * from data[top].
  * Example:
+ */
+
+/**
+ * @brief Fixed-capacity LIFO stack with contiguous static storage.
+ *
+ * @struct tiku_kits_ds_stack
+ * @note Element type is controlled by tiku_kits_ds_elem_t (default
+ * int32_t).  Override at compile time with
+ * @c -DTIKU_KITS_DS_ELEM_TYPE=int16_t to change it globally
+ * for all DS sub-modules.
  * @code
- *   struct tiku_kits_ds_stack stk;
- *   tiku_kits_ds_stack_init(&stk, 8);   // use 8 of 16 slots
- *   tiku_kits_ds_stack_push(&stk, 42);
- *   tiku_kits_ds_stack_push(&stk, 7);
- *   // stk now contains: [42, 7], top == 2
- *   tiku_kits_ds_elem_t v;
- *   tiku_kits_ds_stack_pop(&stk, &v);   // v == 7, top == 1
+ * struct tiku_kits_ds_stack stk;
+ * tiku_kits_ds_stack_init(&stk, 8);   // use 8 of 16 slots
+ * tiku_kits_ds_stack_push(&stk, 42);
+ * tiku_kits_ds_stack_push(&stk, 7);
+ * // stk now contains: [42, 7], top == 2
+ * tiku_kits_ds_elem_t v;
+ * tiku_kits_ds_stack_pop(&stk, &v);   // v == 7, top == 1
  * @endcode
  */
 struct tiku_kits_ds_stack {
@@ -130,21 +132,23 @@ int tiku_kits_ds_stack_init(struct tiku_kits_ds_stack *stk,
 int tiku_kits_ds_stack_push(struct tiku_kits_ds_stack *stk,
                             tiku_kits_ds_elem_t value);
 
-/**
- * @brief Pop the top element from the stack.
- *
+/*
  * Decrements top by one and copies the removed element into the
  * caller-provided location pointed to by @p value.  This is an
  * O(1) operation.  The element's memory slot is not cleared; it
  * becomes inaccessible through the public API since all access
  * functions check against top.  Fails if the stack is empty.
+ */
+
+/**
+ * @brief Pop the top element from the stack.
  *
  * @param stk   Stack (must not be NULL)
  * @param value Output pointer where the popped element is written
- *              (must not be NULL)
+ * (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if stk or value is NULL,
- *         TIKU_KITS_DS_ERR_EMPTY if top == 0
+ * TIKU_KITS_DS_ERR_NULL if stk or value is NULL,
+ * TIKU_KITS_DS_ERR_EMPTY if top == 0
  */
 int tiku_kits_ds_stack_pop(struct tiku_kits_ds_stack *stk,
                            tiku_kits_ds_elem_t *value);
@@ -170,17 +174,19 @@ int tiku_kits_ds_stack_peek(const struct tiku_kits_ds_stack *stk,
 /* STATE OPERATIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Clear the stack by resetting top to zero.
- *
+/*
  * Logically removes all elements by setting top to 0.  The backing
  * buffer is not zeroed for efficiency -- old values remain in
  * memory but are inaccessible through the public API since all
  * access functions bounds-check against top.
+ */
+
+/**
+ * @brief Clear the stack by resetting top to zero.
  *
  * @param stk Stack (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if stk is NULL
+ * TIKU_KITS_DS_ERR_NULL if stk is NULL
  */
 int tiku_kits_ds_stack_clear(struct tiku_kits_ds_stack *stk);
 

@@ -6,6 +6,10 @@
  *
  * tiku_kits_time_ntp.c - SNTP client implementation
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements a lightweight SNTP client (RFC 4330) over UDP.
  * Uses the same poll-based architecture as the TFTP client:
  * the UDP receive callback stores response data into static
@@ -13,8 +17,6 @@
  * application context.
  *
  * Memory footprint: ~64 bytes static RAM (no heap).
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <string.h>

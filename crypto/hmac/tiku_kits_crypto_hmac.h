@@ -35,23 +35,23 @@
 /* PUBLIC API                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute HMAC-SHA256 over a message in one shot.
- *
+/*
  * Implements RFC 2104 HMAC using SHA-256:
- *   MAC = H(K' XOR opad || H(K' XOR ipad || message))
- *
+ * MAC = H(K' XOR opad || H(K' XOR ipad || message))
  * If the key is longer than the SHA-256 block size (64 bytes), it is
  * first hashed to 32 bytes.  Keys shorter than 64 bytes are zero-padded.
+ */
+
+/**
+ * @brief Compute HMAC-SHA256 over a message in one shot.
  *
  * @param[in]  key       HMAC key
  * @param[in]  key_len   Key length in bytes
  * @param[in]  data      Message data to authenticate
  * @param[in]  data_len  Message length in bytes
  * @param[out] mac       Output buffer for the 32-byte MAC
- *
  * @return TIKU_KITS_CRYPTO_OK on success,
- *         TIKU_KITS_CRYPTO_ERR_NULL if any pointer is NULL
+ * TIKU_KITS_CRYPTO_ERR_NULL if any pointer is NULL
  */
 int tiku_kits_crypto_hmac_sha256(const uint8_t *key,
                                   uint16_t key_len,

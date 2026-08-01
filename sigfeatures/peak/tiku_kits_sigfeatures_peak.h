@@ -6,20 +6,22 @@
  *
  * tiku_kits_sigfeatures_peak.h - Peak detector with hysteresis
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Streaming peak detector that finds local maxima using a configurable
  * deadband (hysteresis). Essential for heartbeat/pulse detection, step
  * counting, and any application that needs to identify signal peaks
  * while rejecting noise.
  *
  * The detector uses a two-state machine:
- *   RISING  -- tracking the running maximum; a peak is confirmed when
- *              the signal drops by more than the hysteresis threshold
- *   FALLING -- tracking the running minimum; a new rise begins when
- *              the signal climbs by more than the hysteresis threshold
+ * RISING  -- tracking the running maximum; a peak is confirmed when
+ * the signal drops by more than the hysteresis threshold
+ * FALLING -- tracking the running minimum; a new rise begins when
+ * the signal climbs by more than the hysteresis threshold
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_SIGFEATURES_PEAK_H_
@@ -45,42 +47,39 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_sigfeatures_peak
- * @brief Streaming peak detector with hysteresis deadband
- *
+/*
  * Tracks local maxima in a signal stream using a two-state machine:
- *
- *   - RISING: the detector tracks the running maximum.  When the
- *     signal drops by more than @c hysteresis below that maximum,
- *     a peak is confirmed at the maximum's value and sample index.
- *   - FALLING: the detector tracks the running minimum.  When the
- *     signal rises by more than @c hysteresis above that minimum,
- *     the detector switches back to RISING and begins looking for
- *     the next peak.
- *
+ * - RISING: the detector tracks the running maximum.  When the
+ * signal drops by more than @c hysteresis below that maximum,
+ * a peak is confirmed at the maximum's value and sample index.
+ * - FALLING: the detector tracks the running minimum.  When the
+ * signal rises by more than @c hysteresis above that minimum,
+ * the detector switches back to RISING and begins looking for
+ * the next peak.
  * The hysteresis deadband prevents noise-induced false peaks: small
  * fluctuations around a local maximum are ignored unless the signal
  * moves far enough to be considered a genuine reversal.
- *
  * All storage is contained within the struct -- no pointers, no
  * heap -- so it can be declared as a static or local variable.
- *
- * @note The detected flag is valid only for the most recent push.
- *       It is cleared at the start of every push() call, so the
- *       caller must check it before the next push.
- *
  * Example:
- * @code
- *   struct tiku_kits_sigfeatures_peak p;
- *   tiku_kits_sigfeatures_peak_init(&p, 10);  // hysteresis = 10
+ * for (i = 0; i < n; i++) {
+ * tiku_kits_sigfeatures_peak_push(&p, samples[i]);
+ * if (tiku_kits_sigfeatures_peak_detected(&p)) {
+ * // peak at last_value(), index last_index()
+ * }
+ * }
+ */
+
+/**
+ * @brief Streaming peak detector with hysteresis deadband
  *
- *   for (i = 0; i < n; i++) {
- *       tiku_kits_sigfeatures_peak_push(&p, samples[i]);
- *       if (tiku_kits_sigfeatures_peak_detected(&p)) {
- *           // peak at last_value(), index last_index()
- *       }
- *   }
+ * @struct tiku_kits_sigfeatures_peak
+ * @note The detected flag is valid only for the most recent push.
+ * It is cleared at the start of every push() call, so the
+ * caller must check it before the next push.
+ * @code
+ * struct tiku_kits_sigfeatures_peak p;
+ * tiku_kits_sigfeatures_peak_init(&p, 10);  // hysteresis = 10
  * @endcode
  */
 struct tiku_kits_sigfeatures_peak {
@@ -136,23 +135,24 @@ int tiku_kits_sigfeatures_peak_reset(
 /* Sample input                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push a new sample into the peak detector
- *
+/*
  * Updates the state machine with the new sample value.  In the
  * RISING state the running maximum is tracked; in the FALLING
  * state the running minimum is tracked.  State transitions occur
  * when the signal deviates from the current extreme by more than
  * the hysteresis threshold.  O(1) per call.
- *
  * The @c detected flag is set to 1 if a peak was confirmed on
  * this push and 0 otherwise.  The flag is only valid until the
  * next push() call.
+ */
+
+/**
+ * @brief Push a new sample into the peak detector
  *
  * @param p     Peak detector (must not be NULL)
  * @param value New sample value
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if p is NULL
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if p is NULL
  */
 int tiku_kits_sigfeatures_peak_push(
     struct tiku_kits_sigfeatures_peak *p,
@@ -194,21 +194,23 @@ int tiku_kits_sigfeatures_peak_last_value(
     const struct tiku_kits_sigfeatures_peak *p,
     tiku_kits_sigfeatures_elem_t *result);
 
-/**
- * @brief Get the sample index of the most recently confirmed peak
- *
+/*
  * Returns the 0-based sample index at which the last confirmed
  * peak was observed.  This is the index of the running maximum
  * that was later confirmed by a sufficient drop, not the index of
  * the sample that triggered the confirmation.
+ */
+
+/**
+ * @brief Get the sample index of the most recently confirmed peak
  *
  * @param p      Peak detector (must not be NULL)
  * @param result Output pointer where the sample index is written
- *               (must not be NULL)
+ * (must not be NULL)
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if p or result is NULL,
- *         TIKU_KITS_SIGFEATURES_ERR_NODATA if no peaks have been
- *         confirmed yet
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if p or result is NULL,
+ * TIKU_KITS_SIGFEATURES_ERR_NODATA if no peaks have been
+ * confirmed yet
  */
 int tiku_kits_sigfeatures_peak_last_index(
     const struct tiku_kits_sigfeatures_peak *p,

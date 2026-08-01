@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_coap.h - CoAP client/server (RFC 7252)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Lightweight Constrained Application Protocol implementation for
  * ultra-low-power microcontrollers.  Supports both client and server
  * roles (peer model) with Confirmable and Non-confirmable messages,
@@ -13,10 +17,10 @@
  * retransmission with exponential backoff.
  *
  * Designed for the TikuOS networking stack constraints:
- *   - Static memory allocation only (no heap)
- *   - Single shared packet buffer (half-duplex RX/TX)
- *   - Cannot call udp_send() from inside a receive callback
- *   - 100-byte maximum UDP payload (128-byte MTU)
+ * - Static memory allocation only (no heap)
+ * - Single shared packet buffer (half-duplex RX/TX)
+ * - Cannot call udp_send() from inside a receive callback
+ * - 100-byte maximum UDP payload (128-byte MTU)
  *
  * Uses the same poll-based architecture as TFTP and NTP: the UDP
  * receive callback copies incoming data into static state, and the
@@ -24,27 +28,25 @@
  * message processing and transmission.
  *
  * Typical server usage:
- *   tiku_kits_net_coap_init();
- *   tiku_kits_net_coap_resource_register("/temp", temp_handler);
- *   // In protothread loop:
- *   tiku_kits_net_coap_poll();
+ * tiku_kits_net_coap_init();
+ * tiku_kits_net_coap_resource_register("/temp", temp_handler);
+ * // In protothread loop:
+ * tiku_kits_net_coap_poll();
  *
  * Typical client usage:
- *   tiku_kits_net_coap_init();
- *   tiku_kits_net_coap_get(server, 5683, "/temp",
- *                          TIKU_KITS_NET_COAP_TYPE_CON,
- *                          my_response_cb);
- *   // In protothread loop:
- *   tiku_kits_net_coap_poll();
+ * tiku_kits_net_coap_init();
+ * tiku_kits_net_coap_get(server, 5683, "/temp",
+ * TIKU_KITS_NET_COAP_TYPE_CON,
+ * my_response_cb);
+ * // In protothread loop:
+ * tiku_kits_net_coap_poll();
  *
  * RAM budget (~250 bytes):
- *   rx_buf[100]  -- received message copy           100 B
- *   tx_buf[100]  -- outgoing CON for retransmit     100 B
- *   CON state    -- msg_id, token, timer, callback   24 B
- *   Resources[4] -- path + handler pointers          16 B
- *   Misc         -- counters, flags                  10 B
- *
- * SPDX-License-Identifier: Apache-2.0
+ * rx_buf[100]  -- received message copy           100 B
+ * tx_buf[100]  -- outgoing CON for retransmit     100 B
+ * CON state    -- msg_id, token, timer, callback   24 B
+ * Resources[4] -- path + handler pointers          16 B
+ * Misc         -- counters, flags                  10 B
  */
 
 #ifndef TIKU_KITS_NET_COAP_H_
@@ -339,15 +341,16 @@ int8_t tiku_kits_net_coap_delete(
 /* POLLING                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Must be called periodically from application context (~500 ms).
+ * Processing order:
+ * 1. If rx_pending: parse, match ACK/response to outstanding CON,
+ * or dispatch to resource handler and send piggybacked reply.
+ * 2. If CON retransmit timer expired: retransmit or signal timeout.
+ */
+
 /**
  * @brief Poll for incoming messages and CON retransmit timeouts.
- *
- * Must be called periodically from application context (~500 ms).
- *
- * Processing order:
- *   1. If rx_pending: parse, match ACK/response to outstanding CON,
- *      or dispatch to resource handler and send piggybacked reply.
- *   2. If CON retransmit timer expired: retransmit or signal timeout.
  */
 void tiku_kits_net_coap_poll(void);
 

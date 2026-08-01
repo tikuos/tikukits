@@ -26,18 +26,20 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum number of elements the deque can hold.
- *
+/*
  * This compile-time constant defines the upper bound on deque capacity.
  * Each deque instance reserves this many element slots in its static
  * circular buffer, so choose a value that balances memory usage against
  * the largest deque your application needs.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of elements the deque can hold.
+ *
  * @code
- *   #define TIKU_KITS_DS_DEQUE_MAX_SIZE 64
- *   #include "tiku_kits_ds_deque.h"
+ * #define TIKU_KITS_DS_DEQUE_MAX_SIZE 64
+ * #include "tiku_kits_ds_deque.h"
  * @endcode
  */
 #ifndef TIKU_KITS_DS_DEQUE_MAX_SIZE
@@ -48,40 +50,40 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_ds_deque
- * @brief Fixed-capacity double-ended queue with static circular-buffer storage
- *
+/*
  * A general-purpose double-ended queue that stores elements in a
  * statically allocated circular buffer.  Because all storage lives
  * inside the struct itself, no heap allocation is needed -- just
  * declare the deque as a static or local variable.
- *
  * The circular-buffer design allows O(1) push/pop at both ends by
  * maintaining a @c head index and a @c count:
- *   - @c head -- index of the front element in the backing array.
- *     When an element is pushed to the front, head wraps backwards
- *     modulo capacity; when popped from the front, head advances
- *     forward modulo capacity.
- *   - @c count -- the number of elements currently stored.  All
- *     access functions bounds-check against this value.
- *   - @c capacity -- the runtime limit passed to init (must be
- *     <= TIKU_KITS_DS_DEQUE_MAX_SIZE).  This lets different deque
- *     instances use different logical sizes while sharing the same
- *     compile-time backing buffer.
- *
- * @note Element type is controlled by tiku_kits_ds_elem_t (default
- *       int32_t).  Override at compile time with
- *       @c -DTIKU_KITS_DS_ELEM_TYPE=int16_t to change it globally
- *       for all DS sub-modules.
- *
+ * - @c head -- index of the front element in the backing array.
+ * When an element is pushed to the front, head wraps backwards
+ * modulo capacity; when popped from the front, head advances
+ * forward modulo capacity.
+ * - @c count -- the number of elements currently stored.  All
+ * access functions bounds-check against this value.
+ * - @c capacity -- the runtime limit passed to init (must be
+ * <= TIKU_KITS_DS_DEQUE_MAX_SIZE).  This lets different deque
+ * instances use different logical sizes while sharing the same
+ * compile-time backing buffer.
  * Example:
+ */
+
+/**
+ * @brief Fixed-capacity double-ended queue with static circular-buffer storage
+ *
+ * @struct tiku_kits_ds_deque
+ * @note Element type is controlled by tiku_kits_ds_elem_t (default
+ * int32_t).  Override at compile time with
+ * @c -DTIKU_KITS_DS_ELEM_TYPE=int16_t to change it globally
+ * for all DS sub-modules.
  * @code
- *   struct tiku_kits_ds_deque dq;
- *   tiku_kits_ds_deque_init(&dq, 16);   // use 16 of 32 slots
- *   tiku_kits_ds_deque_push_back(&dq, 42);
- *   tiku_kits_ds_deque_push_front(&dq, 7);
- *   // dq now contains: [7, 42], count == 2
+ * struct tiku_kits_ds_deque dq;
+ * tiku_kits_ds_deque_init(&dq, 16);   // use 16 of 32 slots
+ * tiku_kits_ds_deque_push_back(&dq, 42);
+ * tiku_kits_ds_deque_push_front(&dq, 7);
+ * // dq now contains: [7, 42], count == 2
  * @endcode
  */
 struct tiku_kits_ds_deque {
@@ -115,19 +117,21 @@ int tiku_kits_ds_deque_init(struct tiku_kits_ds_deque *dq,
 /* PUSH / POP                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Add an element to the front of the deque
- *
+/*
  * Decrements the head index (wrapping around via modular arithmetic)
  * and stores @p value at the new head position.  This is an O(1)
  * operation since no element shifting is required -- only the head
  * pointer moves.  Fails if the deque has reached its capacity.
+ */
+
+/**
+ * @brief Add an element to the front of the deque
  *
  * @param dq    Deque (must not be NULL)
  * @param value Element to insert
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if dq is NULL,
- *         TIKU_KITS_DS_ERR_FULL if count == capacity
+ * TIKU_KITS_DS_ERR_NULL if dq is NULL,
+ * TIKU_KITS_DS_ERR_FULL if count == capacity
  */
 int tiku_kits_ds_deque_push_front(struct tiku_kits_ds_deque *dq,
                                   tiku_kits_ds_elem_t value);
@@ -148,20 +152,22 @@ int tiku_kits_ds_deque_push_front(struct tiku_kits_ds_deque *dq,
 int tiku_kits_ds_deque_push_back(struct tiku_kits_ds_deque *dq,
                                  tiku_kits_ds_elem_t value);
 
-/**
- * @brief Remove and return the front element of the deque
- *
+/*
  * Copies the element at the head position into @p value, then
  * advances the head index forward (wrapping modulo capacity) and
  * decrements the count.  This is an O(1) operation.  Fails if the
  * deque is empty.
+ */
+
+/**
+ * @brief Remove and return the front element of the deque
  *
  * @param dq    Deque (must not be NULL)
  * @param value Output pointer where the removed element is written
- *              (must not be NULL)
+ * (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if dq or value is NULL,
- *         TIKU_KITS_DS_ERR_EMPTY if count == 0
+ * TIKU_KITS_DS_ERR_NULL if dq or value is NULL,
+ * TIKU_KITS_DS_ERR_EMPTY if count == 0
  */
 int tiku_kits_ds_deque_pop_front(struct tiku_kits_ds_deque *dq,
                                  tiku_kits_ds_elem_t *value);
@@ -205,20 +211,22 @@ int tiku_kits_ds_deque_peek_front(
     const struct tiku_kits_ds_deque *dq,
     tiku_kits_ds_elem_t *value);
 
-/**
- * @brief Read the back element without removing it
- *
+/*
  * Computes the back index as (head + count - 1) % capacity and
  * copies the element at that position into @p value.  The element
  * remains in the deque and the head/count are unchanged.  This is
  * an O(1) operation.
+ */
+
+/**
+ * @brief Read the back element without removing it
  *
  * @param dq    Deque (must not be NULL)
  * @param value Output pointer where the back element is written
- *              (must not be NULL)
+ * (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if dq or value is NULL,
- *         TIKU_KITS_DS_ERR_EMPTY if count == 0
+ * TIKU_KITS_DS_ERR_NULL if dq or value is NULL,
+ * TIKU_KITS_DS_ERR_EMPTY if count == 0
  */
 int tiku_kits_ds_deque_peek_back(
     const struct tiku_kits_ds_deque *dq,
@@ -228,21 +236,23 @@ int tiku_kits_ds_deque_peek_back(
 /* RANDOM ACCESS                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Read an element by logical index (0 = front)
- *
+/*
  * Maps the logical index to a physical position in the circular
  * buffer via (head + index) % capacity, then copies the element
  * into @p value.  The deque contents are not modified.  This is
  * an O(1) operation.
+ */
+
+/**
+ * @brief Read an element by logical index (0 = front)
  *
  * @param dq    Deque (must not be NULL)
  * @param index Logical index from the front (0 .. count-1)
  * @param value Output pointer where the element is written (must
- *              not be NULL)
+ * not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if dq or value is NULL,
- *         TIKU_KITS_DS_ERR_BOUNDS if index >= count
+ * TIKU_KITS_DS_ERR_NULL if dq or value is NULL,
+ * TIKU_KITS_DS_ERR_BOUNDS if index >= count
  */
 int tiku_kits_ds_deque_get(
     const struct tiku_kits_ds_deque *dq,
@@ -253,17 +263,19 @@ int tiku_kits_ds_deque_get(
 /* CLEAR                                                                     */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Reset the deque to empty
- *
+/*
  * Logically removes all elements by resetting head and count to 0.
  * The backing buffer is not zeroed for efficiency -- old values
  * remain in memory but are inaccessible through the public API
  * since all access functions bounds-check against count.
+ */
+
+/**
+ * @brief Reset the deque to empty
  *
  * @param dq Deque to clear (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if dq is NULL
+ * TIKU_KITS_DS_ERR_NULL if dq is NULL
  */
 int tiku_kits_ds_deque_clear(struct tiku_kits_ds_deque *dq);
 

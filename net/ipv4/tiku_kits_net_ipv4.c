@@ -44,12 +44,15 @@
 /* STATIC DATA                                                               */
 /*---------------------------------------------------------------------------*/
 
-/**
- * Single static packet buffer used for both RX and TX (half-duplex).
+/*
  * The processing cycle is: link RX fills the buffer, ipv4_input
  * validates and dispatches, the handler may modify the buffer
  * in-place for a reply, ipv4_output transmits, then the buffer is
  * reset for the next frame.
+ */
+
+/**
+ * Single static packet buffer used for both RX and TX (half-duplex).
  */
 static uint8_t net_buf[TIKU_KITS_NET_MTU];
 
@@ -121,13 +124,15 @@ tiku_kits_net_ipv4_get_link(void)
 /* INPUT PIPELINE                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Validate and dispatch an incoming IPv4 packet
- *
+/*
  * Performs five sequential checks (any failure silently drops the
  * packet).  On success, dispatches to the appropriate upper-layer
  * handler based on the protocol field.  The LED2 toggling provides
  * a visual heartbeat on the LaunchPad for debugging.
+ */
+
+/**
+ * @brief Validate and dispatch an incoming IPv4 packet
  */
 void
 tiku_kits_net_ipv4_input(uint8_t *buf, uint16_t len)
@@ -257,17 +262,18 @@ tiku_kits_net_ipv4_output(uint8_t *buf, uint16_t len)
 /* BUFFER ACCESSORS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Return a pointer to the shared packet buffer for TX use.
- *
+/*
  * Used by upper-layer send functions (e.g. udp_send, dhcp_send)
  * to construct outgoing packets directly in the shared buffer,
  * avoiding an extra copy.  Resets the RX decode position so that
  * any partially-received SLIP frame is discarded -- the buffer
  * is half-duplex and cannot hold RX data while being used for TX.
- *
  * The caller must not be inside a receive callback (the buffer
  * already holds the incoming packet at that point).
+ */
+
+/**
+ * @brief Return a pointer to the shared packet buffer for TX use.
  */
 uint8_t *
 tiku_kits_net_ipv4_get_buf(uint16_t *size)
@@ -340,16 +346,17 @@ tiku_kits_net_ipv4_rx_idle(void)
 
 TIKU_PROCESS(tiku_kits_net_process, "net");
 
-/**
- * Net process protothread.
- *
+/*
  * One-time init: reset SLIP decoder, register the SLIP link backend,
  * initialise the UDP binding table, configure LEDs, flush any stale
  * UART bytes, and start the periodic poll timer.
- *
  * Main loop: on each timer event, drain all complete SLIP frames from
  * the UART and feed each through the IPv4 input pipeline.  The timer
  * resets at the bottom of each iteration for continuous polling.
+ */
+
+/**
+ * Net process protothread.
  */
 TIKU_PROCESS_THREAD(tiku_kits_net_process, ev, data)
 {

@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_dns.h - DNS stub resolver (A record only)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Lightweight DNS stub resolver that queries a recursive DNS server
  * over UDP to resolve hostnames to IPv4 addresses.  Only A (address)
  * records are supported.  Designed for ultra-low-power MSP430
@@ -22,22 +26,20 @@
  *
  * Typical usage:
  * @code
- *   static const uint8_t dns_srv[] = {8, 8, 8, 8};
- *   tiku_kits_net_dns_init();
- *   tiku_kits_net_dns_set_server(dns_srv);
- *   tiku_kits_net_dns_resolve("pool.ntp.org");
- *   while (tiku_kits_net_dns_get_state()
- *          < TIKU_KITS_NET_DNS_STATE_DONE) {
- *       tiku_kits_net_dns_poll();
- *   }
- *   if (tiku_kits_net_dns_get_state()
- *       == TIKU_KITS_NET_DNS_STATE_DONE) {
- *       uint8_t addr[4];
- *       tiku_kits_net_dns_get_addr(addr);
- *   }
+ * static const uint8_t dns_srv[] = {8, 8, 8, 8};
+ * tiku_kits_net_dns_init();
+ * tiku_kits_net_dns_set_server(dns_srv);
+ * tiku_kits_net_dns_resolve("pool.ntp.org");
+ * while (tiku_kits_net_dns_get_state()
+ * < TIKU_KITS_NET_DNS_STATE_DONE) {
+ * tiku_kits_net_dns_poll();
+ * }
+ * if (tiku_kits_net_dns_get_state()
+ * == TIKU_KITS_NET_DNS_STATE_DONE) {
+ * uint8_t addr[4];
+ * tiku_kits_net_dns_get_addr(addr);
+ * }
  * @endcode
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_DNS_H_
@@ -166,43 +168,44 @@ int8_t tiku_kits_net_dns_set_server(const uint8_t *addr);
  */
 void tiku_kits_net_dns_default_server(uint8_t out[4]);
 
-/**
- * @brief Start a DNS A-record query for @p hostname.
- *
+/*
  * Checks the cache first; if a valid entry exists, transitions
  * directly to DONE without sending a packet.  Otherwise builds
  * a DNS query, binds the local UDP port, sends the packet, and
  * sets the state to SENT.
- *
  * After calling resolve(), poll dns_poll() until get_state()
  * returns DONE or ERROR.
+ */
+
+/**
+ * @brief Start a DNS A-record query for @p hostname.
  *
  * @param hostname  Dot-separated hostname (e.g. "pool.ntp.org")
  * @return TIKU_KITS_NET_OK on success (query sent or cache hit),
- *         TIKU_KITS_NET_ERR_NULL if @p hostname is NULL,
- *         TIKU_KITS_NET_ERR_PARAM if hostname is invalid or
- *         no server has been set,
- *         negative error code if UDP send fails.
+ * TIKU_KITS_NET_ERR_NULL if @p hostname is NULL,
+ * TIKU_KITS_NET_ERR_PARAM if hostname is invalid or
+ * no server has been set,
+ * negative error code if UDP send fails.
  */
 int8_t tiku_kits_net_dns_resolve(const char *hostname);
+
+/*
+ * Checks if a reply has been received by the UDP callback.
+ * If so, parses the DNS response, extracts the first A record,
+ * caches it, unbinds the port, and transitions to DONE.
+ * If no reply has arrived, increments the retry counter.  When
+ * retries reach DNS_MAX_RETRIES, unbinds the port and
+ * transitions to ERROR.
+ * Must be called from application context (not from inside a
+ * UDP receive callback).
+ */
 
 /**
  * @brief Poll for DNS reply and update state.
  *
- * Checks if a reply has been received by the UDP callback.
- * If so, parses the DNS response, extracts the first A record,
- * caches it, unbinds the port, and transitions to DONE.
- *
- * If no reply has arrived, increments the retry counter.  When
- * retries reach DNS_MAX_RETRIES, unbinds the port and
- * transitions to ERROR.
- *
- * Must be called from application context (not from inside a
- * UDP receive callback).
- *
  * @return TIKU_KITS_NET_OK if reply processed (state == DONE),
- *         TIKU_KITS_NET_ERR_PARAM if no query is active,
- *         TIKU_KITS_NET_ERR_TIMEOUT if max retries exhausted.
+ * TIKU_KITS_NET_ERR_PARAM if no query is active,
+ * TIKU_KITS_NET_ERR_TIMEOUT if max retries exhausted.
  */
 int8_t tiku_kits_net_dns_poll(void);
 

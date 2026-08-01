@@ -58,16 +58,17 @@ void tiku_kits_net_slip_init(void);
  */
 int8_t tiku_kits_net_slip_send(const uint8_t *pkt, uint16_t len);
 
-/**
- * @brief Non-blocking SLIP RX: decode available UART bytes.
- *
+/*
  * Reads all bytes available from tiku_uart_rx_ready()/getc() and
  * feeds them through the SLIP state machine.  When a complete frame
  * has been assembled in @p buf, sets *pos to the frame length and
  * returns 1.
- *
  * If the frame exceeds @p buf_size, it is silently discarded and
  * decoding resets for the next frame.
+ */
+
+/**
+ * @brief Non-blocking SLIP RX: decode available UART bytes.
  *
  * @param buf       Receive buffer
  * @param buf_size  Buffer capacity (typically TIKU_KITS_NET_MTU)

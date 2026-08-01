@@ -6,13 +6,15 @@
  *
  * tiku_kits_crypto_rsa.h - RSA signature verification (PKCS#1 v1.5 + PSS)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Verification-only RSA over moduli up to 4096 bits, for authenticating
  * RSA links in an X.509 certificate chain (PKCS#1 v1.5, sha256WithRSA-
  * Encryption) and TLS 1.3 server CertificateVerify (RSASSA-PSS, MGF1-
  * SHA-256).  Public-key operation with a small public exponent, so the
  * modexp is cheap; nothing here is secret, so it is not constant-time.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_RSA_H_

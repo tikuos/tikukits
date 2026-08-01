@@ -43,14 +43,16 @@ static int32_t compute_inv_range(int32_t out_max,
     return (int32_t)(((int64_t)out_max << shift) / range);
 }
 
-/**
- * @brief Scale and clamp a single value using the precomputed reciprocal
- *
+/*
  * Handles boundary clamping first (value <= in_min or >= in_max)
  * to avoid unnecessary multiplication.  For in-range values the
  * fixed-point multiply is widened to int64_t to prevent overflow,
  * and the result is clamped a second time to guard against
  * fixed-point rounding at the boundaries.
+ */
+
+/**
+ * @brief Scale and clamp a single value using the precomputed reciprocal
  */
 static int32_t scale_one(const struct tiku_kits_sigfeatures_scale *s,
                          tiku_kits_sigfeatures_elem_t value)
@@ -82,13 +84,15 @@ static int32_t scale_one(const struct tiku_kits_sigfeatures_scale *s,
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a min-max scaler
- *
+/*
  * Validates all parameters, stores the range and shift, and
  * precomputes the fixed-point range reciprocal via
  * compute_inv_range().  After this call the scaler is ready
  * for normalize() / normalize_batch().
+ */
+
+/**
+ * @brief Initialize a min-max scaler
  */
 int tiku_kits_sigfeatures_scale_init(
     struct tiku_kits_sigfeatures_scale *s,

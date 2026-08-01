@@ -23,13 +23,15 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a z-score normalizer
- *
+/*
  * Stores the mean and shift, then precomputes the fixed-point
  * reciprocal of stddev: inv_stddev_q = (1 << shift) / stddev.
  * The numerator is widened to int64_t to support large shift
  * values without overflow.
+ */
+
+/**
+ * @brief Initialize a z-score normalizer
  */
 int tiku_kits_sigfeatures_zscore_init(
     struct tiku_kits_sigfeatures_zscore *z,
@@ -123,13 +125,15 @@ int tiku_kits_sigfeatures_zscore_normalize(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Normalize an entire buffer to z-scores
- *
+/*
  * Applies (src[i] - mean) * inv_stddev_q for each element.  The
  * subtraction is widened to int64_t before the multiply to prevent
  * overflow.  O(len); forward iteration for sequential memory
  * access.
+ */
+
+/**
+ * @brief Normalize an entire buffer to z-scores
  */
 int tiku_kits_sigfeatures_zscore_normalize_batch(
     const struct tiku_kits_sigfeatures_zscore *z,

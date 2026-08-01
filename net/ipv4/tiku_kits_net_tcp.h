@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_tcp.h - TCP transport protocol (RFC 793)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Provides connection-oriented reliable byte-stream transport for
  * TikuOS embedded networking.  Uses FRAM-backed buffers for TX
  * retransmission (via the kernel pool allocator) and RX data
@@ -13,32 +17,30 @@
  * larger buffer capacity from non-volatile memory.
  *
  * Design constraints for ultra-low-power embedded targets:
- *   - Static allocation only (no heap)
- *   - Fixed maximum connections (compile-time configurable)
- *   - No out-of-order segment reassembly (OOO segments dropped)
- *   - No congestion control (assume controlled/point-to-point link)
- *   - No urgent data, no Nagle, no window scaling
- *   - MSS option only (negotiated during SYN exchange)
- *   - Simple fixed retransmission timeout (no Karn/Jacobson)
+ * - Static allocation only (no heap)
+ * - Fixed maximum connections (compile-time configurable)
+ * - No out-of-order segment reassembly (OOO segments dropped)
+ * - No congestion control (assume controlled/point-to-point link)
+ * - No urgent data, no Nagle, no window scaling
+ * - MSS option only (negotiated during SYN exchange)
+ * - Simple fixed retransmission timeout (no Karn/Jacobson)
  *
  * FRAM buffer strategy:
- *   TX retransmission pool -- fixed-size segment blocks managed by
- *   the kernel pool allocator (tiku_pool_t).  Each block stores a
- *   copy of the payload data and metadata needed to reconstruct the
- *   segment for retransmission.  Blocks are freed when the peer
- *   ACKs the corresponding sequence range.
+ * TX retransmission pool -- fixed-size segment blocks managed by
+ * the kernel pool allocator (tiku_pool_t).  Each block stores a
+ * copy of the payload data and metadata needed to reconstruct the
+ * segment for retransmission.  Blocks are freed when the peer
+ * ACKs the corresponding sequence range.
  *
- *   RX ring buffer -- per-connection circular buffer for incoming
- *   data that has been validated and ACK'd but not yet read by the
- *   application.  The receive window (rcv_wnd) tracks free space,
- *   providing end-to-end flow control.
+ * RX ring buffer -- per-connection circular buffer for incoming
+ * data that has been validated and ACK'd but not yet read by the
+ * application.  The receive window (rcv_wnd) tracks free space,
+ * providing end-to-end flow control.
  *
  * Both buffer types are placed in FRAM (.persistent section) so
  * they survive power loss and provide larger capacity than SRAM.
  * Connection control blocks remain in SRAM for fast access to
  * frequently updated fields (sequence numbers, state, timers).
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_TCP_H_
@@ -311,13 +313,15 @@
 #define TIKU_KITS_NET_TCP_MAX_LISTENERS     2
 #endif
 
-/**
- * @brief Enable the built-in TCP echo service on port 7.
- *
+/*
  * When enabled, tcp_init() registers an echo listener on port 7
  * that reads incoming data and sends it back.  This provides a
  * simple integration test alongside ICMP and UDP echo.  Consumes
  * one listener slot.  Set to 0 to disable and save code space.
+ */
+
+/**
+ * @brief Enable the built-in TCP echo service on port 7.
  */
 #ifndef TIKU_KITS_NET_TCP_ECHO_ENABLE
 #define TIKU_KITS_NET_TCP_ECHO_ENABLE       1
@@ -347,13 +351,15 @@
 #define TIKU_KITS_NET_TCP_RX_BUF_SIZE       256
 #endif
 
-/**
- * @brief Initial retransmission timeout in periodic intervals.
- *
+/*
  * Each periodic interval is approximately 50 ms (POLL_TICKS).
  * Default 200 intervals = ~10 seconds.  Longer than typical
  * TCP stacks to accommodate the eZ-FET backchannel reopen
  * delay (~7 seconds).  Doubled on each retry.
+ */
+
+/**
+ * @brief Initial retransmission timeout in periodic intervals.
  */
 #ifndef TIKU_KITS_NET_TCP_RTO_INIT
 #define TIKU_KITS_NET_TCP_RTO_INIT          200
@@ -376,10 +382,7 @@
 #define TIKU_KITS_NET_TCP_TIME_WAIT_TICKS   80
 #endif
 
-/**
- * @brief Idle timeout for transient (half-open / closing) states, in periodic
- * intervals (~50 ms each).
- *
+/*
  * A connection that sits in a non-ESTABLISHED, non-TIME_WAIT live state
  * (SYN_SENT / SYN_RCVD / FIN_WAIT_* / CLOSE_WAIT / CLOSING / LAST_ACK) past
  * this many ticks is aborted and its slot freed.  Without it an orphaned
@@ -391,6 +394,11 @@
  * directly-attached SLIP link, well below the lifetime of a real session.
  * ESTABLISHED connections are exempt (their idle clock is held at zero), so a
  * quiet keep-alive session is never reaped.
+ */
+
+/**
+ * @brief Idle timeout for transient (half-open / closing) states, in periodic
+ * intervals (~50 ms each).
  */
 #ifndef TIKU_KITS_NET_TCP_IDLE_REAP_TICKS
 #define TIKU_KITS_NET_TCP_IDLE_REAP_TICKS   60
@@ -563,21 +571,23 @@ void tiku_kits_net_tcp_init(void);
 /* PASSIVE OPEN (SERVER)                                                     */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Listen for incoming TCP connections on a port.
- *
+/*
  * Registers callbacks that will be inherited by connections
  * accepted on this port.  When a SYN arrives for the port,
  * a connection is automatically allocated and the 3-way
  * handshake proceeds.  On completion, event_cb is called
  * with TIKU_KITS_NET_TCP_EVT_CONNECTED.
+ */
+
+/**
+ * @brief Listen for incoming TCP connections on a port.
  *
  * @param port      Port number in host byte order (must be > 0)
  * @param recv_cb   Data callback for accepted connections
  * @param event_cb  Event callback for accepted connections
  * @return TIKU_KITS_NET_OK on success,
- *         TIKU_KITS_NET_ERR_PARAM if callbacks are NULL or port 0,
- *         TIKU_KITS_NET_ERR_OVERFLOW if listener table is full
+ * TIKU_KITS_NET_ERR_PARAM if callbacks are NULL or port 0,
+ * TIKU_KITS_NET_ERR_OVERFLOW if listener table is full
  */
 int8_t tiku_kits_net_tcp_listen(
     uint16_t port,
@@ -600,13 +610,15 @@ int8_t tiku_kits_net_tcp_unlisten(uint16_t port);
 /* ACTIVE OPEN (CLIENT)                                                      */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initiate a TCP connection to a remote host.
- *
+/*
  * Allocates a connection slot, sends a SYN with MSS option,
  * and enters SYN_SENT state.  The event_cb will be called
  * with TIKU_KITS_NET_TCP_EVT_CONNECTED when the handshake
  * completes, or ABORTED if it fails.
+ */
+
+/**
+ * @brief Initiate a TCP connection to a remote host.
  *
  * @param dst_addr   Destination IP address (4 bytes, network order)
  * @param dst_port   Destination port in host byte order
@@ -614,7 +626,7 @@ int8_t tiku_kits_net_tcp_unlisten(uint16_t port);
  * @param recv_cb    Data callback
  * @param event_cb   Event callback
  * @return Pointer to the new connection, or NULL on failure
- *         (no free slot, NULL arguments, or send failure)
+ * (no free slot, NULL arguments, or send failure)
  */
 tiku_kits_net_tcp_conn_t *tiku_kits_net_tcp_connect(
     const uint8_t *dst_addr,
@@ -627,43 +639,46 @@ tiku_kits_net_tcp_conn_t *tiku_kits_net_tcp_connect(
 /* DATA TRANSFER                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Send data on an established TCP connection.
- *
+/*
  * Copies the payload into a FRAM-backed TX segment pool block
  * for retransmission, constructs a TCP segment in the shared
  * net_buf, and transmits it.  The caller's buffer is free to
  * reuse immediately after this function returns.
- *
  * Data length must not exceed snd_mss (the negotiated MSS).
  * The caller is responsible for chunking larger payloads.
+ */
+
+/**
+ * @brief Send data on an established TCP connection.
  *
  * @param conn      Connection (must be ESTABLISHED or CLOSE_WAIT)
  * @param data      Payload bytes to send
  * @param data_len  Payload length (max conn->snd_mss)
  * @return TIKU_KITS_NET_OK on success,
- *         TIKU_KITS_NET_ERR_PARAM if conn/data is NULL or wrong state,
- *         TIKU_KITS_NET_ERR_OVERFLOW if data exceeds MSS or
- *         TX pool is exhausted
+ * TIKU_KITS_NET_ERR_PARAM if conn/data is NULL or wrong state,
+ * TIKU_KITS_NET_ERR_OVERFLOW if data exceeds MSS or
+ * TX pool is exhausted
  */
 int8_t tiku_kits_net_tcp_send(
     tiku_kits_net_tcp_conn_t *conn,
     const uint8_t *data,
     uint16_t data_len);
 
-/**
- * @brief Read data from a connection's RX ring buffer.
- *
+/*
  * Copies up to @p buf_len bytes from the RX ring buffer into
  * the caller's buffer.  Advances the read position and updates
  * the receive window.  If the window was zero and opens up,
  * an ACK is sent to unblock the peer.
+ */
+
+/**
+ * @brief Read data from a connection's RX ring buffer.
  *
  * @param conn     Connection to read from
  * @param buf      Destination buffer
  * @param buf_len  Maximum bytes to read
  * @return Number of bytes actually read (0 if no data available),
- *         or 0 if conn/buf is NULL
+ * or 0 if conn/buf is NULL
  */
 uint16_t tiku_kits_net_tcp_read(
     tiku_kits_net_tcp_conn_t *conn,

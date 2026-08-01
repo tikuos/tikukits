@@ -6,20 +6,22 @@
  *
  * tiku_kits_ui_button.c - BeOS-styled button implementation
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Visual recipe:
- *   - 1-px outer border (BLACK normally, RED when focused)
- *   - 1-px white highlight on top and left edges (just inside
- *     the outer border) -> outset bevel
- *   - 1-px black shadow on bottom and right edges (just inside)
- *   - Centered text label
+ * - 1-px outer border (BLACK normally, RED when focused)
+ * - 1-px white highlight on top and left edges (just inside
+ * the outer border) -> outset bevel
+ * - 1-px black shadow on bottom and right edges (just inside)
+ * - Centered text label
  *
  * The bevel works on a 2-colour background (everything else is
  * white) because the highlight is drawn explicitly even though it
  * matches the background; on a coloured background it would still
  * read as a bevel because the contrast against the shadow side
  * defines the 3-D illusion.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_ui_button.h"

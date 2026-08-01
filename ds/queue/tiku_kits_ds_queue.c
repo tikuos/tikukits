@@ -23,13 +23,15 @@
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a queue with the given capacity
- *
+/*
  * Zeros the entire backing buffer so that any subsequent reads of
  * unpopulated slots return a deterministic value.  The runtime
  * capacity is clamped to TIKU_KITS_DS_QUEUE_MAX_SIZE at compile time
  * so that the static buffer is never overrun.
+ */
+
+/**
+ * @brief Initialize a queue with the given capacity
  */
 int tiku_kits_ds_queue_init(struct tiku_kits_ds_queue *q,
                             uint16_t capacity)

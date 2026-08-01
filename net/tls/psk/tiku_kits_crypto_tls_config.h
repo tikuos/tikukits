@@ -34,17 +34,17 @@
 /* ENTROPY SOURCE                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * User-supplied function that fills a buffer with random bytes.
- *
+/*
  * Signature: void func(uint8_t *buf, uint8_t len)
- *
  * Define this macro to the name of your platform RNG before including
  * this header or via EXTRA_CFLAGS, e.g.:
- *   -DTIKU_KITS_CRYPTO_TLS_RNG_FILL=my_hw_rng_fill
- *
+ * -DTIKU_KITS_CRYPTO_TLS_RNG_FILL=my_hw_rng_fill
  * If left undefined, the build will fail with an error — there is no
  * insecure fallback.
+ */
+
+/**
+ * User-supplied function that fills a buffer with random bytes.
  */
 #ifndef TIKU_KITS_CRYPTO_TLS_RNG_FILL
 /*
@@ -70,9 +70,7 @@
        "with signature void f(uint8_t *buf, uint8_t len) that provides " \
        "cryptographically suitable random bytes."
 #endif
-/**
- * @brief TLS entropy source backed by the platform hardware TRNG.
- *
+/*
  * Adapts tiku_trng_arch_read_bytes() (`int f(uint8_t*, size_t)`, which
  * auto-initialises the on-die TRNG on first use) to the kit's `void
  * f(uint8_t*, uint8_t)` contract.  The void contract can't propagate a
@@ -80,6 +78,10 @@
  * CryptoCell-312) spins internally, so a failure here means a genuinely dead
  * RNG -- the handshake then fails closed at the peer rather than this layer
  * silently downgrading security.
+ */
+
+/**
+ * @brief TLS entropy source backed by the platform hardware TRNG.
  */
 static inline void
 tiku_kits_crypto_tls_rng_fill_trng(uint8_t *buf, uint8_t len)
@@ -93,8 +95,7 @@ tiku_kits_crypto_tls_rng_fill_trng(uint8_t *buf, uint8_t len)
 /* WORKING-BUFFER PLACEMENT                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * Storage attribute for the kit's per-session working buffers (record TX/RX,
+/*
  * transcript, key schedule).  These are EPHEMERAL per-handshake state -- the
  * placement is about CAPACITY, not durability.  On FRAM parts (MSP430) they
  * live in .persistent purely to conserve scarce 8 KB SRAM.  Every other part
@@ -104,6 +105,10 @@ tiku_kits_crypto_tls_rng_fill_trng(uint8_t *buf, uint8_t len)
  * handshake-stall amplification); Nordic = the small RRAM reserve + wear.
  * So: plain .bss everywhere except MSP430.  Override by defining the macro
  * before this header.
+ */
+
+/**
+ * Storage attribute for the kit's per-session working buffers (record TX/RX,
  */
 #ifndef TIKU_KITS_CRYPTO_TLS_BUF_ATTR
 #  if defined(PLATFORM_MSP430)
@@ -118,25 +123,29 @@ tiku_kits_crypto_tls_rng_fill_trng(uint8_t *buf, uint8_t len)
 /* BUFFER SIZES (FRAM-backed)                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * Handshake transcript buffer size.
- *
+/*
  * Must hold the raw bytes of all handshake messages for transcript
  * hashing: ClientHello (~150B) + ServerHello (~100B) +
  * EncryptedExtensions (~50B) + Finished (~36B) = ~336B typical.
  * 512B provides headroom for server extensions.
  */
+
+/**
+ * Handshake transcript buffer size.
+ */
 #ifndef TIKU_KITS_CRYPTO_TLS_TRANSCRIPT_SIZE
 #define TIKU_KITS_CRYPTO_TLS_TRANSCRIPT_SIZE    512
 #endif
 
-/**
- * TLS record buffer size (used for both RX and TX).
- *
+/*
  * A TLS record can carry up to 2^14 bytes of payload, but we limit
  * to a value that fits the SLIP MTU.  The 5-byte record header plus
  * up to 256 bytes of content plus 16-byte AEAD tag plus 1-byte
  * inner content type = 278 bytes.  300 provides margin.
+ */
+
+/**
+ * TLS record buffer size (used for both RX and TX).
  */
 #ifndef TIKU_KITS_CRYPTO_TLS_RECORD_BUF_SIZE
 #define TIKU_KITS_CRYPTO_TLS_RECORD_BUF_SIZE    300

@@ -47,13 +47,15 @@ static void init_node(struct tiku_kits_ds_trie_node *node)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Allocate a new node from the static pool.
- *
+/*
  * Uses a simple bump allocator: the next free node is always at
  * nodes[pool_used].  After allocation pool_used is incremented.
  * The newly allocated node is initialized to empty state via
  * init_node().  Returns TRIE_NONE if the pool is exhausted.
+ */
+
+/**
+ * @brief Allocate a new node from the static pool.
  */
 static uint16_t alloc_node(struct tiku_kits_ds_trie *trie)
 {
@@ -101,13 +103,15 @@ static uint8_t low_nibble(uint8_t b)
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a trie to empty state.
- *
+/*
  * Zeros the entire node pool for deterministic state, resets the
  * bump allocator and key counter, then allocates the root node
  * (index 0).  The root is always present so that insert/search
  * can assume node 0 exists without an extra check.
+ */
+
+/**
+ * @brief Initialize a trie to empty state.
  */
 int tiku_kits_ds_trie_init(struct tiku_kits_ds_trie *trie)
 {
@@ -131,18 +135,19 @@ int tiku_kits_ds_trie_init(struct tiku_kits_ds_trie *trie)
 /* INSERT / SEARCH / REMOVE                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Insert a key-value pair into the trie.
- *
+/*
  * O(key_len) -- for each key byte, two nibble lookups and
  * potential node allocations are performed.  Existing path nodes
  * are reused (prefix sharing), so keys with common prefixes are
  * stored efficiently.  If the key already exists the value is
  * overwritten and the key count is not incremented.
- *
  * Note: if the pool is exhausted mid-insert, the partially
  * created path remains in the trie.  This is harmless because
  * the terminal flag is only set after the full path succeeds.
+ */
+
+/**
+ * @brief Insert a key-value pair into the trie.
  */
 int tiku_kits_ds_trie_insert(struct tiku_kits_ds_trie *trie,
                               const uint8_t *key,
@@ -204,14 +209,16 @@ int tiku_kits_ds_trie_insert(struct tiku_kits_ds_trie *trie,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Search for a key and retrieve its value.
- *
+/*
  * O(key_len) -- walks the nibble path from root to leaf.  Returns
  * NOTFOUND as soon as a missing child is encountered, so searches
  * for absent keys terminate early when prefixes diverge.  The
  * value is copied out through @p value so the caller owns its own
  * copy.
+ */
+
+/**
+ * @brief Search for a key and retrieve its value.
  */
 int tiku_kits_ds_trie_search(
     const struct tiku_kits_ds_trie *trie,
@@ -312,14 +319,16 @@ int tiku_kits_ds_trie_contains(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Remove a key from the trie (lazy deletion).
- *
+/*
  * O(key_len) -- walks the nibble path to locate the terminal node
  * and clears its is_terminal flag.  The node itself is not freed
  * back to the pool because the bump allocator does not support
  * deallocation.  This keeps the implementation simple at the cost
  * of not reclaiming memory for deleted keys.
+ */
+
+/**
+ * @brief Remove a key from the trie (lazy deletion).
  */
 int tiku_kits_ds_trie_remove(struct tiku_kits_ds_trie *trie,
                               const uint8_t *key,
@@ -396,13 +405,15 @@ uint16_t tiku_kits_ds_trie_count(
 /* CLEAR                                                                     */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Reset the trie to empty state.
- *
+/*
  * Zeros the entire node pool, resets the bump allocator and key
  * counter, and re-allocates the root node.  This restores the
  * full pool capacity, unlike lazy deletion which cannot reclaim
  * nodes.
+ */
+
+/**
+ * @brief Reset the trie to empty state.
  */
 int tiku_kits_ds_trie_clear(struct tiku_kits_ds_trie *trie)
 {

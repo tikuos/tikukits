@@ -139,13 +139,15 @@ int tiku_kits_ds_timerwheel_cancel(tiku_kits_ds_timerwheel_t *tw,
 /* TICK PROCESSING                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Advance the wheel by one tick.
- *
+/*
  * Increments the tick counter, then scans all active timers.  Any
  * timer whose deadline matches the new tick is marked in the fired
  * bitmask (bit position = slot index).  The bitmask is cleared at
  * the start so that only timers firing on this tick are reported.
+ */
+
+/**
+ * @brief Advance the wheel by one tick.
  */
 int tiku_kits_ds_timerwheel_tick(tiku_kits_ds_timerwheel_t *tw)
 {
@@ -170,14 +172,16 @@ int tiku_kits_ds_timerwheel_tick(tiku_kits_ds_timerwheel_t *tw)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Retrieve timer IDs that fired during the last tick().
- *
+/*
  * Iterates the fired bitmask.  For each set bit the corresponding
  * timer ID is written to @p ids.  One-shot timers (interval == 0)
  * are deactivated and their slot freed.  Periodic timers have their
  * deadline advanced by their interval for the next firing.  The
  * fired bitmask is cleared when done.
+ */
+
+/**
+ * @brief Retrieve timer IDs that fired during the last tick().
  */
 int tiku_kits_ds_timerwheel_expired(tiku_kits_ds_timerwheel_t *tw,
                                     uint8_t *ids,

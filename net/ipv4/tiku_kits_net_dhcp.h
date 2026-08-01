@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_dhcp.h - DHCP client (RFC 2131)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Lightweight DHCP client that obtains an IPv4 address, subnet mask,
  * default gateway, and lease time from a DHCP server.  Designed for
  * ultra-low-power embedded targets with static allocation only.
@@ -33,16 +37,14 @@
  *
  * Typical usage:
  * @code
- *   static const uint8_t hw[] = {0x54, 0x49, 0x4B, 0x55, 0x01, 0x00};
- *   tiku_kits_net_dhcp_init();
- *   tiku_kits_net_dhcp_start(hw);
- *   while (tiku_kits_net_dhcp_get_state() < TIKU_KITS_NET_DHCP_STATE_BOUND) {
- *       tiku_kits_net_dhcp_poll();
- *   }
- *   const tiku_kits_net_dhcp_lease_t *l = tiku_kits_net_dhcp_get_lease();
+ * static const uint8_t hw[] = {0x54, 0x49, 0x4B, 0x55, 0x01, 0x00};
+ * tiku_kits_net_dhcp_init();
+ * tiku_kits_net_dhcp_start(hw);
+ * while (tiku_kits_net_dhcp_get_state() < TIKU_KITS_NET_DHCP_STATE_BOUND) {
+ * tiku_kits_net_dhcp_poll();
+ * }
+ * const tiku_kits_net_dhcp_lease_t *l = tiku_kits_net_dhcp_get_lease();
  * @endcode
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_DHCP_H_
@@ -103,15 +105,17 @@
 #define TIKU_KITS_NET_DHCP_OFF_OPTIONS 240    /**< Options start */
 #define TIKU_KITS_NET_DHCP_HDR_LEN     236    /**< Fixed header (before cookie) */
 
-/**
- * @brief Compact DHCP header offsets.
- *
+/*
  * The eZ-FET backchannel UART has a small host-to-target buffer
  * (~150 bytes) that cannot carry a full 240+ byte DHCP reply.
  * In "compact" format the 192 unused sname(64) + file(128) bytes
  * are omitted: the magic cookie sits at offset 44 (right after
  * chaddr) and options at offset 48.  Outbound packets (DISCOVER,
  * REQUEST) still use the standard format.
+ */
+
+/**
+ * @brief Compact DHCP header offsets.
  */
 #define TIKU_KITS_NET_DHCP_COMPACT_MAGIC    44  /**< Cookie in compact format */
 #define TIKU_KITS_NET_DHCP_COMPACT_OPTIONS  48  /**< Options in compact format */
@@ -256,32 +260,34 @@ void tiku_kits_net_dhcp_init(void);
 /* DHCP EXCHANGE                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Start a DHCP exchange (send DISCOVER).
- *
+/*
  * Binds UDP port 68, sets our IP to 0.0.0.0, and broadcasts a
  * DHCPDISCOVER message.  After calling start(), poll dhcp_poll()
  * until get_state() returns BOUND or ERROR.
- *
  * Only one exchange can be active at a time.
+ */
+
+/**
+ * @brief Start a DHCP exchange (send DISCOVER).
  *
  * @param client_hw  6-byte client identifier (e.g. MAC address
- *                   or fabricated ID for SLIP links).  If NULL,
- *                   the default "TIKU\x01\x00" is used.
+ * or fabricated ID for SLIP links).  If NULL,
+ * the default "TIKU\x01\x00" is used.
  * @return TIKU_KITS_NET_OK on success,
- *         TIKU_KITS_NET_ERR_PARAM if already active,
- *         TIKU_KITS_NET_ERR_NOLINK if no link backend set.
+ * TIKU_KITS_NET_ERR_PARAM if already active,
+ * TIKU_KITS_NET_ERR_NOLINK if no link backend set.
  */
 int8_t tiku_kits_net_dhcp_start(const uint8_t *client_hw);
 
-/**
- * @brief Poll for DHCP events and drive the state machine.
- *
+/*
  * Checks for pending events set by the UDP receive callback,
  * handles state transitions (OFFER -> send REQUEST, ACK -> BOUND),
  * and updates the system IP address on success.
- *
  * Must be called from application context.
+ */
+
+/**
+ * @brief Poll for DHCP events and drive the state machine.
  *
  * @return The event that was processed, or EVT_NONE.
  */

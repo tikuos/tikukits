@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_theme.h - Theme abstraction for the UI kit
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Bundles palette, fonts, spacing and style switches that widgets
  * read at render time. Apps can either use one of the built-in
  * themes (BeOS, flat, mono) or define their own.
@@ -14,8 +18,6 @@
  * doesn't own its own colours / fonts. Set it once at boot via
  * `tiku_kits_ui_theme_set()`; widgets created before or after the
  * call all pick up the new theme on their next render.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_THEME_H_

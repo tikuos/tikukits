@@ -27,19 +27,21 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum number of bits the bitmap can hold.
- *
+/*
  * This compile-time constant defines the upper bound on bitmap capacity.
  * Each bitmap instance reserves enough 32-bit words to store this many
  * bits in its static storage, so choose a value that balances memory
  * usage against the largest bitmap your application needs.  The actual
  * memory consumed is (MAX_BITS + 31) / 32 * 4 bytes.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of bits the bitmap can hold.
+ *
  * @code
- *   #define TIKU_KITS_DS_BITMAP_MAX_BITS 512
- *   #include "tiku_kits_ds_bitmap.h"
+ * #define TIKU_KITS_DS_BITMAP_MAX_BITS 512
+ * #include "tiku_kits_ds_bitmap.h"
  * @endcode
  */
 #ifndef TIKU_KITS_DS_BITMAP_MAX_BITS
@@ -59,39 +61,38 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_ds_bitmap
- * @brief Fixed-capacity bitmap with statically allocated word storage
- *
+/*
  * A compact, index-addressable boolean container that packs one flag
  * per bit into 32-bit words.  Because all storage lives inside the
  * struct itself, no heap allocation is needed -- just declare the
  * bitmap as a static or local variable.
- *
  * Bit N is stored in @c words[N/32] at bit position @c (N%32).  Using
  * 32-bit words (rather than bytes) gives efficient bulk operations on
  * both 16-bit MSP430 (two 16-bit ops) and 32-bit targets (single op).
- *
  * The runtime bit count is tracked independently:
- *   - @c n_bits -- the user-requested size passed to init (must be
- *     <= TIKU_KITS_DS_BITMAP_MAX_BITS).  All single-bit operations
- *     bounds-check against this value, so different bitmap instances
- *     can use different logical sizes while sharing the same
- *     compile-time backing buffer.
- *
- * @note The backing word type is uint32_t.  On 16-bit targets the
- *       compiler will split 32-bit operations into two 16-bit
- *       instructions, which is still more efficient than byte-level
- *       packing for bulk set/clear/count operations.
- *
+ * - @c n_bits -- the user-requested size passed to init (must be
+ * <= TIKU_KITS_DS_BITMAP_MAX_BITS).  All single-bit operations
+ * bounds-check against this value, so different bitmap instances
+ * can use different logical sizes while sharing the same
+ * compile-time backing buffer.
  * Example:
+ */
+
+/**
+ * @brief Fixed-capacity bitmap with statically allocated word storage
+ *
+ * @struct tiku_kits_ds_bitmap
+ * @note The backing word type is uint32_t.  On 16-bit targets the
+ * compiler will split 32-bit operations into two 16-bit
+ * instructions, which is still more efficient than byte-level
+ * packing for bulk set/clear/count operations.
  * @code
- *   struct tiku_kits_ds_bitmap bm;
- *   tiku_kits_ds_bitmap_init(&bm, 64);  // use 64 of 256 bits
- *   tiku_kits_ds_bitmap_set(&bm, 0);
- *   tiku_kits_ds_bitmap_set(&bm, 63);
- *   // bm now has bits 0 and 63 set, all others clear
- *   uint16_t n = tiku_kits_ds_bitmap_count_set(&bm);  // n == 2
+ * struct tiku_kits_ds_bitmap bm;
+ * tiku_kits_ds_bitmap_init(&bm, 64);  // use 64 of 256 bits
+ * tiku_kits_ds_bitmap_set(&bm, 0);
+ * tiku_kits_ds_bitmap_set(&bm, 63);
+ * // bm now has bits 0 and 63 set, all others clear
+ * uint16_t n = tiku_kits_ds_bitmap_count_set(&bm);  // n == 2
  * @endcode
  */
 struct tiku_kits_ds_bitmap {
@@ -103,19 +104,21 @@ struct tiku_kits_ds_bitmap {
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a bitmap with the given number of bits
- *
+/*
  * Resets the bitmap to an all-clear state and sets the runtime bit
  * count limit.  The backing word array is zeroed so that every bit
  * starts in a deterministic (clear) state regardless of prior memory
  * contents.
+ */
+
+/**
+ * @brief Initialize a bitmap with the given number of bits
  *
  * @param bm     Bitmap to initialize (must not be NULL)
  * @param n_bits Number of bits to use (1..BITMAP_MAX_BITS)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if bm is NULL,
- *         TIKU_KITS_DS_ERR_PARAM if n_bits is 0 or exceeds MAX_BITS
+ * TIKU_KITS_DS_ERR_NULL if bm is NULL,
+ * TIKU_KITS_DS_ERR_PARAM if n_bits is 0 or exceeds MAX_BITS
  */
 int tiku_kits_ds_bitmap_init(struct tiku_kits_ds_bitmap *bm,
                              uint16_t n_bits);
@@ -194,17 +197,19 @@ int tiku_kits_ds_bitmap_test(const struct tiku_kits_ds_bitmap *bm,
 /* BULK OPERATIONS                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Set all valid bits to 1
- *
+/*
  * Fills every fully-populated 32-bit word with 0xFFFFFFFF and masks
  * the final partial word so that only the bits within [0, n_bits)
  * are set.  Bits beyond n_bits in the last word remain clear to
  * avoid corrupting count and search operations.
+ */
+
+/**
+ * @brief Set all valid bits to 1
  *
  * @param bm Bitmap (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if bm is NULL
+ * TIKU_KITS_DS_ERR_NULL if bm is NULL
  */
 int tiku_kits_ds_bitmap_set_all(struct tiku_kits_ds_bitmap *bm);
 
@@ -225,14 +230,16 @@ int tiku_kits_ds_bitmap_clear_all(struct tiku_kits_ds_bitmap *bm);
 /* COUNTING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Count the number of bits that are set (1)
- *
+/*
  * Iterates over all words that contain valid bits and sums the
  * population count of each word using Kernighan's bit-clearing
  * algorithm.  O(W) where W is the number of words, with each
  * word's inner loop proportional to its set-bit count.  Safe to
  * call with a NULL pointer -- returns 0.
+ */
+
+/**
+ * @brief Count the number of bits that are set (1)
  *
  * @param bm Bitmap, or NULL
  * @return Number of set bits, or 0 if bm is NULL
@@ -257,39 +264,43 @@ uint16_t tiku_kits_ds_bitmap_count_clear(
 /* SEARCH                                                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Find the lowest-index bit that is set (1)
- *
+/*
  * Scans words from index 0 upward, skipping any word that is
  * entirely zero.  Within a non-zero word, the lowest set bit is
  * found by shifting right until bit 0 is set.  O(W) worst case
  * where W is the number of words; early exit on the first non-zero
  * word makes the common case fast.
+ */
+
+/**
+ * @brief Find the lowest-index bit that is set (1)
  *
  * @param bm  Bitmap (must not be NULL)
  * @param bit Output pointer where the found index is written (must
- *            not be NULL)
+ * not be NULL)
  * @return TIKU_KITS_DS_OK if a set bit was found,
- *         TIKU_KITS_DS_ERR_NULL if bm or bit is NULL,
- *         TIKU_KITS_DS_ERR_NOTFOUND if all bits are clear
+ * TIKU_KITS_DS_ERR_NULL if bm or bit is NULL,
+ * TIKU_KITS_DS_ERR_NOTFOUND if all bits are clear
  */
 int tiku_kits_ds_bitmap_find_first_set(
     const struct tiku_kits_ds_bitmap *bm, uint16_t *bit);
 
-/**
- * @brief Find the lowest-index bit that is clear (0)
- *
+/*
  * Scans words from index 0 upward.  Each word is bitwise inverted
  * so that clear bits become set bits, then the same lowest-set-bit
  * scan is applied.  Words that are all-ones (0xFFFFFFFF) are skipped
  * since their inversion is zero.  O(W) worst case.
+ */
+
+/**
+ * @brief Find the lowest-index bit that is clear (0)
  *
  * @param bm  Bitmap (must not be NULL)
  * @param bit Output pointer where the found index is written (must
- *            not be NULL)
+ * not be NULL)
  * @return TIKU_KITS_DS_OK if a clear bit was found,
- *         TIKU_KITS_DS_ERR_NULL if bm or bit is NULL,
- *         TIKU_KITS_DS_ERR_NOTFOUND if all bits are set
+ * TIKU_KITS_DS_ERR_NULL if bm or bit is NULL,
+ * TIKU_KITS_DS_ERR_NOTFOUND if all bits are set
  */
 int tiku_kits_ds_bitmap_find_first_clear(
     const struct tiku_kits_ds_bitmap *bm, uint16_t *bit);

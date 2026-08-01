@@ -6,6 +6,10 @@
  *
  * tiku_kits_epaper_itc_smallcj.c - Pervasive iTC small-CJ implementation
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements the Pervasive Displays "small CJ" controller protocol
  * for monochrome (FILM_C/H/K) and colour (FILM_J) iTC panels up
  * to 4.37". Verified on E2266KS0C1 (BW) and E2370JS0C1 (BWR).
@@ -18,39 +22,37 @@
  *
  * Protocol summary (Pervasive iTC small-CJ application note):
  *
- *   reset      -> 5 ms / RESET high / 5 ms / RESET low / 10 ms /
- *                 RESET high / 5 ms / CS high / 5 ms
- *   initial    -> 0x00 + 0x0E (soft reset)
- *                 0xE5 + temperature
- *                 0xE0 + 0x02 (engage temperature)
- *                 0x00 + {psr0, psr1} (panel-specific PSR)
- *   sendImage  -> 0x10 + black plane (DTM1, with mid-frame CS pulse)
- *                 0x13 + red plane   (DTM2, same framing) for colour;
- *                          for BW panels, DTM2 may be omitted
- *   update     -> wait BUSY, 0x04, wait BUSY, 0x12, delay 5 ms,
- *                 wait BUSY
- *   powerOff   -> 0x02, wait BUSY
+ * reset      -> 5 ms / RESET high / 5 ms / RESET low / 10 ms /
+ * RESET high / 5 ms / CS high / 5 ms
+ * initial    -> 0x00 + 0x0E (soft reset)
+ * 0xE5 + temperature
+ * 0xE0 + 0x02 (engage temperature)
+ * 0x00 + {psr0, psr1} (panel-specific PSR)
+ * sendImage  -> 0x10 + black plane (DTM1, with mid-frame CS pulse)
+ * 0x13 + red plane   (DTM2, same framing) for colour;
+ * for BW panels, DTM2 may be omitted
+ * update     -> wait BUSY, 0x04, wait BUSY, 0x12, delay 5 ms,
+ * wait BUSY
+ * powerOff   -> 0x02, wait BUSY
  *
  * Critical SPI framing detail:
- *   The DTM1/DTM2 commands use "index_data" framing -- between the
- *   opcode byte and the data block, CS pulses HIGH then LOW with
- *   DC switched to data mode while CS is high. Without this pulse
- *   the controller silently rejects the frame data and the panel
- *   produces no visible change. Single-byte data commands (E5, E0)
- *   do NOT need this pulse.
+ * The DTM1/DTM2 commands use "index_data" framing -- between the
+ * opcode byte and the data block, CS pulses HIGH then LOW with
+ * DC switched to data mode while CS is high. Without this pulse
+ * the controller silently rejects the frame data and the panel
+ * produces no visible change. Single-byte data commands (E5, E0)
+ * do NOT need this pulse.
  *
  * BUSY semantics:
- *   Pervasive iTC drives BUSY HIGH when ready, LOW when busy.
- *   Internal helper inverts this so wait sites can read naturally
- *   as "while busy()".
+ * Pervasive iTC drives BUSY HIGH when ready, LOW when busy.
+ * Internal helper inverts this so wait sites can read naturally
+ * as "while busy()".
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #include "tiku_kits_epaper_itc_smallcj.h"

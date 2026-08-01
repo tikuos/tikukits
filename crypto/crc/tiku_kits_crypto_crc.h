@@ -6,14 +6,16 @@
  *
  * tiku_kits_crypto_crc.h - CRC-32 and CRC-16/CCITT for embedded systems
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Provides two widely used CRC algorithms optimized for ultra-low-power
  * microcontrollers:
- *   - CRC-32 (IEEE 802.3) using a 16-entry nibble table (64 bytes RAM)
- *   - CRC-16/CCITT-FALSE using bit-by-bit computation (zero table RAM)
+ * - CRC-32 (IEEE 802.3) using a 16-entry nibble table (64 bytes RAM)
+ * - CRC-16/CCITT-FALSE using bit-by-bit computation (zero table RAM)
  *
  * Zero heap allocation.  All state is stack-local.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_CRC_H_

@@ -6,16 +6,18 @@
  *
  * tiku_kits_ui_slider.h - Horizontal value slider
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Visual: a thin horizontal track with a square thumb at the
  * value's position. Focused thumbs render in the focus colour;
  * un-focused in the foreground colour.
  *
  * Events:
- *   ACTIVATE  -> increment by step (wraps at max).
- *   INC       -> increment by step (clamps at max).
- *   DEC       -> decrement by step (clamps at min).
- *
- * SPDX-License-Identifier: Apache-2.0
+ * ACTIVATE  -> increment by step (wraps at max).
+ * INC       -> increment by step (clamps at max).
+ * DEC       -> decrement by step (clamps at min).
  */
 
 #ifndef TIKU_KITS_UI_SLIDER_H_

@@ -26,15 +26,17 @@
 /* RETURN CODES                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @defgroup TIKU_KITS_CODEC_STATUS Codec Status Codes
- * @brief Return codes shared by all TikuKits codec sub-modules.
- *
+/*
  * Every public codec function returns one of these codes.  Zero
  * indicates success; negative values indicate distinct error classes.
  * Sub-modules must never define their own return codes -- all codes
  * live here so that application code can handle errors uniformly.
+ */
+
+/**
+ * @brief Return codes shared by all TikuKits codec sub-modules.
  *
+ * @defgroup TIKU_KITS_CODEC_STATUS Codec Status Codes
  * @{
  */
 #define TIKU_KITS_CODEC_OK            0   /**< Operation succeeded */

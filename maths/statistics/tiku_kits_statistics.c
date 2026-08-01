@@ -22,14 +22,16 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief 64-bit integer square root (floor)
- *
+/*
  * Non-restoring bit-shift algorithm operating entirely with shifts,
  * adds, and compares -- no multiplication needed.  Used internally
  * by the energy tracker's RMS computation where mean_sq is int64_t
  * and may exceed 32-bit range.  Runs in at most 32 iterations
  * (bit starts at 2^62 and shifts right by 2 each iteration).
+ */
+
+/**
+ * @brief 64-bit integer square root (floor)
  *
  * @param x Non-negative input
  * @return floor(sqrt(x)), or 0 if x <= 0
@@ -177,13 +179,15 @@ int tiku_kits_statistics_mean(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute the population variance of the current window
- *
+/*
  * Two-pass approach: first compute the mean from the running sum,
  * then scan the buffer to accumulate sum((x_i - mean)^2).  O(n)
  * where n is the current count.  Population variance (denominator n,
  * not n-1).
+ */
+
+/**
+ * @brief Compute the population variance of the current window
  */
 int tiku_kits_statistics_variance(
     const struct tiku_kits_statistics *s,
@@ -375,17 +379,18 @@ int tiku_kits_statistics_welford_reset(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push a new sample into the Welford tracker
- *
+/*
  * Implements Welford's online algorithm in O(1):
- *   delta  = value - old_mean
- *   mean  += delta / n
- *   delta2 = value - new_mean
- *   M2    += delta * delta2
- *
+ * delta  = value - old_mean
+ * mean  += delta / n
+ * delta2 = value - new_mean
+ * M2    += delta * delta2
  * The delta product is widened to int64_t to prevent overflow when
  * element values are large int32_t.
+ */
+
+/**
+ * @brief Push a new sample into the Welford tracker
  */
 int tiku_kits_statistics_welford_push(
     struct tiku_kits_statistics_welford *w,
@@ -573,18 +578,19 @@ int tiku_kits_statistics_minmax_reset(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push a new sample into the min/max tracker
- *
+/*
  * O(1) amortized.  For each deque (min and max):
- *   1. Expire front entries whose sequence number falls outside
- *      the window (unsigned modular age >= capacity).
- *   2. Pop back entries dominated by the new value (they can never
- *      become the min/max while the new value is in the window).
- *   3. Push the current sequence number onto the back.
- *
+ * 1. Expire front entries whose sequence number falls outside
+ * the window (unsigned modular age >= capacity).
+ * 2. Pop back entries dominated by the new value (they can never
+ * become the min/max while the new value is in the window).
+ * 3. Push the current sequence number onto the back.
  * Each element enters and leaves each deque at most once, so the
  * total work over n pushes is O(n).
+ */
+
+/**
+ * @brief Push a new sample into the min/max tracker
  */
 int tiku_kits_statistics_minmax_push(
     struct tiku_kits_statistics_minmax *m,
@@ -901,13 +907,15 @@ int tiku_kits_statistics_energy_reset(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push a new sample into the energy tracker
- *
+/*
  * Computes x^2 in int64_t (safe for the full int32_t range) and
  * updates the running mean incrementally:
- *   mean_sq += (x^2 - mean_sq) / n
+ * mean_sq += (x^2 - mean_sq) / n
  * This keeps mean_sq bounded and avoids accumulator overflow.
+ */
+
+/**
+ * @brief Push a new sample into the energy tracker
  */
 int tiku_kits_statistics_energy_push(
     struct tiku_kits_statistics_energy *e,
@@ -997,14 +1005,16 @@ uint32_t tiku_kits_statistics_energy_count(
 /*                                                                           */
 /*===========================================================================*/
 
-/**
- * @brief Integer square root (floor) for element-width values
- *
+/*
  * Non-restoring bit-shift algorithm.  No multiplication -- only
  * shifts, adds, and comparisons.  The starting bit position is
  * derived from the element type's width so the same code works for
  * int16_t and int32_t elements.  Runs in O(b/2) iterations where
  * b is the bit width.
+ */
+
+/**
+ * @brief Integer square root (floor) for element-width values
  */
 tiku_kits_statistics_elem_t tiku_kits_statistics_isqrt(
     tiku_kits_statistics_elem_t x)

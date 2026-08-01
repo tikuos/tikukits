@@ -100,8 +100,7 @@ led_handler(const tiku_kits_net_coap_msg_t *req,
 
 TIKU_PROCESS(tiku_kits_net_coap_process, "coap");
 
-/** Boot delay before starting CoAP (wait for net process).
- *
+/*
  * The net process initialises SLIP and UDP immediately at boot
  * (no delay), so CoAP only needs to wait long enough for the
  * first net-process poll-loop iteration to run (~100 ms).  One
@@ -109,6 +108,10 @@ TIKU_PROCESS(tiku_kits_net_coap_process, "coap");
  * server available quickly after reset -- important for test
  * frameworks that open the serial port (triggering an eZ-FET
  * reset) and then send a request within a few seconds.
+ */
+
+/**
+ * Boot delay before starting CoAP (wait for net process).
  */
 #define COAP_BOOT_DELAY_SEC  1
 

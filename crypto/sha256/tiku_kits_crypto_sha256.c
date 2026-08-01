@@ -214,13 +214,15 @@ int tiku_kits_crypto_sha256_init(
 /* INCREMENTAL HASHING                                                       */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Feed data into the SHA-256 computation
- *
+/*
  * Buffers incoming bytes until a full 64-byte block is available,
  * then compresses.  Handles arbitrary input lengths including zero.
  * The bit-length counter is maintained as a split 32+32-bit pair to
  * avoid requiring 64-bit arithmetic on 16-bit targets.
+ */
+
+/**
+ * @brief Feed data into the SHA-256 computation
  */
 int tiku_kits_crypto_sha256_update(
     tiku_kits_crypto_sha256_ctx_t *ctx,
@@ -267,13 +269,15 @@ int tiku_kits_crypto_sha256_update(
 /* FINALIZATION                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Finalize the hash and write the 32-byte digest
- *
+/*
  * Applies FIPS 180-4 padding: append bit '1', then zeros, then the
  * 64-bit message length in big-endian.  If the current partial block
  * has 56 or more bytes, an extra block is needed for the length
  * field.  The final digest is written in big-endian byte order.
+ */
+
+/**
+ * @brief Finalize the hash and write the 32-byte digest
  */
 int tiku_kits_crypto_sha256_final(
     tiku_kits_crypto_sha256_ctx_t *ctx,

@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_toast.c - Toast banner impl
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Renders a filled accent-colour pill with the message centred.
  * Each render decrements a frame counter; when it reaches zero
  * the widget marks itself invisible.
@@ -15,8 +19,6 @@
  * but the ops vtable signs render() as const for symmetry with
  * widgets that don't mutate. Future revs may move dirty/lifetime
  * state into a side struct.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_ui_toast.h"

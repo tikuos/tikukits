@@ -6,23 +6,25 @@
  *
  * tiku_kits_gfx_font_7seg.c - 12x16 7-segment digit font
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Cell layout (12 cols x 16 rows):
  *
- *   col:  0 1 2 3 4 5 6 7 8 9 10 11
- *   row 0/1   .    a a a a a a a a    .
- *   row 2-6   f    .                  b
- *                  .                  .
- *   row 7/8   .    g g g g g g g g    .
- *   row 9-13  e    .                  c
- *                  .                  .
- *   row 14/15 .    d d d d d d d d    .
+ * col:  0 1 2 3 4 5 6 7 8 9 10 11
+ * row 0/1   .    a a a a a a a a    .
+ * row 2-6   f    .                  b
+ * .                  .
+ * row 7/8   .    g g g g g g g g    .
+ * row 9-13  e    .                  c
+ * .                  .
+ * row 14/15 .    d d d d d d d d    .
  *
  * Segments are 2 px thick. Side verticals (b/c/e/f) span 5 rows
  * each; horizontals (a/g/d) span 8 cols each.
  *
  * Storage: column-major, LSB top, 2 bytes per column.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_gfx_font_7seg.h"

@@ -6,13 +6,15 @@
  *
  * tiku_kits_ui_indicator.h - Battery / WiFi / signal indicators
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Single widget covering three common status icons. Pick the
  * @kind at init time, then update level (0..4) at runtime. Renders
  * are programmatic geometry (no font dependency); the widget rect
  * scales to fit. Recommended size: 16x10 for battery, 16x12 for
  * wifi/signal.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_INDICATOR_H_

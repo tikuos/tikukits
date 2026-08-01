@@ -6,14 +6,16 @@
  *
  * tiku_kits_sensor_ds18b20.c - DS18B20 1-Wire temperature sensor driver
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Dallas/Maxim DS18B20 programmable-resolution digital temperature
  * sensor driver using the TikuOS 1-Wire bus abstraction.  Issues a
  * Convert T command, waits for the conversion delay (750 ms at 12-bit
  * resolution), reads the 9-byte scratchpad, validates the CRC, and
  * converts the raw 16-bit two's-complement value to a
  * tiku_kits_sensor_temp_t.  Accuracy is +/-0.5 C from -10 to +85 C.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/
@@ -28,23 +30,27 @@
 /* DS18B20 COMMAND DEFINITIONS                                               */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Convert T command byte.
- *
+/*
  * Instructs the DS18B20 to begin a temperature conversion.  The
  * sensor writes the result into its internal scratchpad memory
  * once the conversion completes (up to 750 ms at 12-bit
  * resolution).
  */
-#define DS18B20_CMD_CONVERT_T       0x44
 
 /**
- * @brief Read Scratchpad command byte.
- *
+ * @brief Convert T command byte.
+ */
+#define DS18B20_CMD_CONVERT_T       0x44
+
+/*
  * Instructs the DS18B20 to transmit all 9 bytes of its scratchpad
  * memory.  Bytes 0-1 contain the temperature; bytes 2-4 hold
  * alarm thresholds and configuration; bytes 5-7 are reserved;
  * byte 8 is a CRC.
+ */
+
+/**
+ * @brief Read Scratchpad command byte.
  */
 #define DS18B20_CMD_READ_SCRATCHPAD 0xBE
 
@@ -61,13 +67,15 @@
 /* PUBLIC API                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize and verify a DS18B20 is present
- *
+/*
  * Issues a 1-Wire reset pulse.  If a slave responds with a
  * presence pulse the bus is considered ready.  No ROM-level
  * identification is performed -- any 1-Wire slave will satisfy
  * this check.
+ */
+
+/**
+ * @brief Initialize and verify a DS18B20 is present
  */
 int tiku_kits_sensor_ds18b20_init(void)
 {
@@ -104,15 +112,17 @@ int tiku_kits_sensor_ds18b20_start_conversion(void)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Read the temperature result from the DS18B20 scratchpad
- *
+/*
  * Issues Skip ROM + Read Scratchpad, reads all 9 bytes, then
  * extracts the 12-bit signed temperature from bytes 0-1.  The
  * bus is reset after the full scratchpad has been read to
  * terminate the transaction cleanly.  The raw value is a 16-bit
  * signed two's complement integer whose lower 4 bits are the
  * fractional part (1/16 C per LSB).
+ */
+
+/**
+ * @brief Read the temperature result from the DS18B20 scratchpad
  */
 int tiku_kits_sensor_ds18b20_read(tiku_kits_sensor_temp_t *temp)
 {

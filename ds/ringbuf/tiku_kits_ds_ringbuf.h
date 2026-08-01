@@ -26,18 +26,20 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum number of elements the ring buffer can hold.
- *
+/*
  * This compile-time constant defines the upper bound on ring buffer
  * capacity.  Each ring buffer instance reserves this many element
  * slots in its static storage, so choose a value that balances memory
  * usage against the largest buffer your application needs.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of elements the ring buffer can hold.
+ *
  * @code
- *   #define TIKU_KITS_DS_RINGBUF_MAX_SIZE 64
- *   #include "tiku_kits_ds_ringbuf.h"
+ * #define TIKU_KITS_DS_RINGBUF_MAX_SIZE 64
+ * #include "tiku_kits_ds_ringbuf.h"
  * @endcode
  */
 #ifndef TIKU_KITS_DS_RINGBUF_MAX_SIZE
@@ -48,44 +50,43 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_ds_ringbuf
- * @brief Fixed-capacity circular buffer with contiguous static storage
- *
+/*
  * A general-purpose ring buffer (circular buffer) that stores elements
  * in a contiguous block of statically allocated memory.  Because all
  * storage lives inside the struct itself, no heap allocation is needed
  * -- just declare the ring buffer as a static or local variable.
- *
  * Two indices and two counters are tracked:
- *   - @c head -- the read position: index of the next element that
- *     pop() will return.  Advances forward via modulo arithmetic on
- *     each pop.
- *   - @c tail -- the write position: index of the next free slot
- *     where push() will store a new element.  Advances forward via
- *     modulo arithmetic on each push.
- *   - @c count -- the number of elements currently stored.  This
- *     disambiguates the full vs. empty state (head == tail in both
- *     cases without a separate counter).
- *   - @c capacity -- the runtime limit passed to init (must be
- *     <= TIKU_KITS_DS_RINGBUF_MAX_SIZE).  This lets different ring
- *     buffer instances use different logical sizes while sharing the
- *     same compile-time backing buffer.
- *
- * @note Element type is controlled by tiku_kits_ds_elem_t (default
- *       int32_t).  Override at compile time with
- *       @c -DTIKU_KITS_DS_ELEM_TYPE=int16_t to change it globally
- *       for all DS sub-modules.
- *
+ * - @c head -- the read position: index of the next element that
+ * pop() will return.  Advances forward via modulo arithmetic on
+ * each pop.
+ * - @c tail -- the write position: index of the next free slot
+ * where push() will store a new element.  Advances forward via
+ * modulo arithmetic on each push.
+ * - @c count -- the number of elements currently stored.  This
+ * disambiguates the full vs. empty state (head == tail in both
+ * cases without a separate counter).
+ * - @c capacity -- the runtime limit passed to init (must be
+ * <= TIKU_KITS_DS_RINGBUF_MAX_SIZE).  This lets different ring
+ * buffer instances use different logical sizes while sharing the
+ * same compile-time backing buffer.
  * Example:
- * @code
- *   struct tiku_kits_ds_ringbuf rb;
- *   tiku_kits_ds_ringbuf_init(&rb, 16);   // use 16 of 32 slots
- *   tiku_kits_ds_ringbuf_push(&rb, 42);
- *   tiku_kits_ds_ringbuf_push(&rb, 7);
+ * tiku_kits_ds_elem_t val;
+ * tiku_kits_ds_ringbuf_pop(&rb, &val);  // val == 42 (FIFO order)
+ */
+
+/**
+ * @brief Fixed-capacity circular buffer with contiguous static storage
  *
- *   tiku_kits_ds_elem_t val;
- *   tiku_kits_ds_ringbuf_pop(&rb, &val);  // val == 42 (FIFO order)
+ * @struct tiku_kits_ds_ringbuf
+ * @note Element type is controlled by tiku_kits_ds_elem_t (default
+ * int32_t).  Override at compile time with
+ * @c -DTIKU_KITS_DS_ELEM_TYPE=int16_t to change it globally
+ * for all DS sub-modules.
+ * @code
+ * struct tiku_kits_ds_ringbuf rb;
+ * tiku_kits_ds_ringbuf_init(&rb, 16);   // use 16 of 32 slots
+ * tiku_kits_ds_ringbuf_push(&rb, 42);
+ * tiku_kits_ds_ringbuf_push(&rb, 7);
  * @endcode
  */
 struct tiku_kits_ds_ringbuf {
@@ -121,55 +122,61 @@ int tiku_kits_ds_ringbuf_init(struct tiku_kits_ds_ringbuf *rb,
 /* PUSH / POP / PEEK                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push an element into the ring buffer
- *
+/*
  * Stores @p value at the current tail position and advances the tail
  * index via modulo arithmetic.  This is an O(1) operation since no
  * element shifting is required.  Fails if the ring buffer has already
  * reached its capacity.
+ */
+
+/**
+ * @brief Push an element into the ring buffer
  *
  * @param rb    Ring buffer (must not be NULL)
  * @param value Value to push
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if rb is NULL,
- *         TIKU_KITS_DS_ERR_FULL if count == capacity
+ * TIKU_KITS_DS_ERR_NULL if rb is NULL,
+ * TIKU_KITS_DS_ERR_FULL if count == capacity
  */
 int tiku_kits_ds_ringbuf_push(struct tiku_kits_ds_ringbuf *rb,
                               tiku_kits_ds_elem_t value);
 
-/**
- * @brief Pop the oldest element from the ring buffer
- *
+/*
  * Copies the element at the head position into the caller-provided
  * location pointed to by @p value, then advances the head index via
  * modulo arithmetic.  This is an O(1) operation.  Fails if the ring
  * buffer is empty.
+ */
+
+/**
+ * @brief Pop the oldest element from the ring buffer
  *
  * @param rb    Ring buffer (must not be NULL)
  * @param value Output pointer where the popped element is written
- *              (must not be NULL)
+ * (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if rb or value is NULL,
- *         TIKU_KITS_DS_ERR_EMPTY if count == 0
+ * TIKU_KITS_DS_ERR_NULL if rb or value is NULL,
+ * TIKU_KITS_DS_ERR_EMPTY if count == 0
  */
 int tiku_kits_ds_ringbuf_pop(struct tiku_kits_ds_ringbuf *rb,
                              tiku_kits_ds_elem_t *value);
 
-/**
- * @brief Read the oldest element without removing it
- *
+/*
  * Copies the element at the head position into the caller-provided
  * location pointed to by @p value without advancing the head index.
  * The element remains in the ring buffer and will be returned again
  * by the next pop() call.  This is an O(1) operation.
+ */
+
+/**
+ * @brief Read the oldest element without removing it
  *
  * @param rb    Ring buffer (must not be NULL)
  * @param value Output pointer where the head element is written
- *              (must not be NULL)
+ * (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if rb or value is NULL,
- *         TIKU_KITS_DS_ERR_EMPTY if count == 0
+ * TIKU_KITS_DS_ERR_NULL if rb or value is NULL,
+ * TIKU_KITS_DS_ERR_EMPTY if count == 0
  */
 int tiku_kits_ds_ringbuf_peek(const struct tiku_kits_ds_ringbuf *rb,
                               tiku_kits_ds_elem_t *value);
@@ -178,17 +185,19 @@ int tiku_kits_ds_ringbuf_peek(const struct tiku_kits_ds_ringbuf *rb,
 /* STATE OPERATIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Clear the ring buffer by resetting head, tail, and count
- *
+/*
  * Logically removes all elements by resetting the indices and count
  * to zero.  The backing buffer is not zeroed for efficiency -- old
  * values remain in memory but are inaccessible through the public API
  * since all access functions check count before reading.
+ */
+
+/**
+ * @brief Clear the ring buffer by resetting head, tail, and count
  *
  * @param rb Ring buffer (must not be NULL)
  * @return TIKU_KITS_DS_OK on success,
- *         TIKU_KITS_DS_ERR_NULL if rb is NULL
+ * TIKU_KITS_DS_ERR_NULL if rb is NULL
  */
 int tiku_kits_ds_ringbuf_clear(struct tiku_kits_ds_ringbuf *rb);
 

@@ -23,14 +23,16 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute squared Euclidean distance between two feature vectors
- *
+/*
  * Accumulates sum_j (a[j] - b[j])^2 in int64_t to prevent overflow.
  * On a 16-bit target with int32_t features, a single squared
  * difference can reach 2^62, so int64_t is essential.  The result
  * is always non-negative.  No sqrt() is needed because k-NN only
  * requires relative distance ordering, not absolute distances.
+ */
+
+/**
+ * @brief Compute squared Euclidean distance between two feature vectors
  */
 static int64_t sq_distance(const tiku_kits_ml_elem_t *a,
                            const tiku_kits_ml_elem_t *b,
@@ -129,13 +131,15 @@ int tiku_kits_ml_knn_set_k(struct tiku_kits_ml_knn *knn,
 /* TRAINING (SAMPLE STORAGE)                                                 */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Add one training sample to the ring buffer
- *
+/*
  * Copies the feature vector element-by-element into the current
  * write slot, stores the label, then advances the write pointer.
  * When the buffer is full the oldest sample is silently overwritten
  * (ring-buffer semantics).  O(n_features) per call.
+ */
+
+/**
+ * @brief Add one training sample to the ring buffer
  */
 int tiku_kits_ml_knn_add(struct tiku_kits_ml_knn *knn,
                             const tiku_kits_ml_elem_t *x,
@@ -175,22 +179,24 @@ int tiku_kits_ml_knn_add(struct tiku_kits_ml_knn *knn,
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Algorithm overview:
+ * 1. Compute squared Euclidean distance from the query to every
+ * stored sample -- O(n_samples * n_features).
+ * 2. Maintain a sorted array of the k nearest neighbors using
+ * insertion sort.  For each new distance, if the array is not
+ * full or the distance beats the current k-th nearest, shift
+ * elements right and insert in sorted position -- O(k) per
+ * candidate, O(n_samples * k) total.
+ * 3. Tally votes per class among the k nearest neighbors, also
+ * tracking the nearest representative per class for tie-breaking.
+ * 4. Return the class with the most votes.  Ties are broken by
+ * whichever tied class has its nearest representative closest
+ * to the query.
+ */
+
 /**
  * @brief Classify a feature vector by majority vote of k neighbors
- *
- * Algorithm overview:
- *   1. Compute squared Euclidean distance from the query to every
- *      stored sample -- O(n_samples * n_features).
- *   2. Maintain a sorted array of the k nearest neighbors using
- *      insertion sort.  For each new distance, if the array is not
- *      full or the distance beats the current k-th nearest, shift
- *      elements right and insert in sorted position -- O(k) per
- *      candidate, O(n_samples * k) total.
- *   3. Tally votes per class among the k nearest neighbors, also
- *      tracking the nearest representative per class for tie-breaking.
- *   4. Return the class with the most votes.  Ties are broken by
- *      whichever tied class has its nearest representative closest
- *      to the query.
  */
 int tiku_kits_ml_knn_predict(const struct tiku_kits_ml_knn *knn,
                                const tiku_kits_ml_elem_t *x,

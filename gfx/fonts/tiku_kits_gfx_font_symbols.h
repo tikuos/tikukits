@@ -6,26 +6,28 @@
  *
  * tiku_kits_gfx_font_symbols.h - 16x16 starter symbol font
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * A small bitmap font of common UI glyphs at 16x16 cell size,
  * exposed through the standard tiku_kits_gfx_font_t interface so
  * apps can draw icons inline with text via tiku_kits_gfx_draw_char.
  *
  * Glyph map (ASCII offset -> icon):
- *   '0'  battery (full)
- *   '1'  wifi (signal bars)
- *   '2'  check
- *   '3'  cross
+ * '0'  battery (full)
+ * '1'  wifi (signal bars)
+ * '2'  check
+ * '3'  cross
  *
  * To add more glyphs, either:
- *   1. Hand-code into tiku_kits_gfx_font_symbols.c and bump @last
- *      in the descriptor; OR
- *   2. Skip the font entirely and ship icons as
- *      tiku_kits_gfx_image_t assets baked from PNGs through
- *      tools/icon_bake.py.
+ * 1. Hand-code into tiku_kits_gfx_font_symbols.c and bump @last
+ * in the descriptor; OR
+ * 2. Skip the font entirely and ship icons as
+ * tiku_kits_gfx_image_t assets baked from PNGs through
+ * tools/icon_bake.py.
  *
  * Total cost: ~128 B glyph data + descriptor.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_GFX_FONT_SYMBOLS_H_

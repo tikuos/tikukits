@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_dhcp.c - DHCP client implementation (RFC 2131)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Poll-based DHCP client that runs the DORA exchange (Discover-Offer-
  * Request-Ack) to obtain an IPv4 address from a DHCP server.
  *
@@ -15,11 +19,9 @@
  * port 68 binding and parsed in the receive callback.
  *
  * RAM budget:
- *   - Static state: ~42 bytes
- *   - MTU increase: +172 bytes (128 -> 300)
- *   - Total:        ~214 bytes additional
- *
- * SPDX-License-Identifier: Apache-2.0
+ * - Static state: ~42 bytes
+ * - MTU increase: +172 bytes (128 -> 300)
+ * - Total:        ~214 bytes additional
  */
 
 /*---------------------------------------------------------------------------*/
@@ -189,21 +191,21 @@ parse_options(const uint8_t *opts, uint16_t opts_len)
 /* UDP RECEIVE CALLBACK                                                      */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief UDP callback for DHCP responses on port 68.
- *
+/*
  * Validates the response (op=2, XID match, magic cookie), parses
  * options, and sets the appropriate pending event for poll().
  * Does NOT call udp_send (re-entrancy guard).
- *
  * Accepts two payload layouts:
- *   Standard (>= 241 B): magic cookie at offset 236, options at 240
- *   Compact  (>=  49 B): magic cookie at offset  44, options at  48
- *
+ * Standard (>= 241 B): magic cookie at offset 236, options at 240
+ * Compact  (>=  49 B): magic cookie at offset  44, options at  48
  * The compact layout omits the 192-byte sname + file fields that
  * this client never inspects.  It exists because the eZ-FET debug
  * probe's backchannel UART buffer (~150 B) is too small to carry
  * a standard DHCP reply (~296 B on the wire).
+ */
+
+/**
+ * @brief UDP callback for DHCP responses on port 68.
  */
 static void
 dhcp_recv_cb(const uint8_t *src_addr, uint16_t src_port,
@@ -279,13 +281,15 @@ dhcp_recv_cb(const uint8_t *src_addr, uint16_t src_port,
 /* PACKET BUILDER                                                            */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Constructs the full IPv4 + UDP + DHCP packet in the shared buffer:
+ * - IPv4: src=0.0.0.0, dst=255.255.255.255, proto=UDP
+ * - UDP:  sport=68, dport=67, checksum=0 (optional per RFC 768)
+ * - DHCP: fixed header + magic cookie + options
+ */
+
 /**
  * @brief Build and send a DHCP packet directly in net_buf.
- *
- * Constructs the full IPv4 + UDP + DHCP packet in the shared buffer:
- *   - IPv4: src=0.0.0.0, dst=255.255.255.255, proto=UDP
- *   - UDP:  sport=68, dport=67, checksum=0 (optional per RFC 768)
- *   - DHCP: fixed header + magic cookie + options
  *
  * @param msg_type  DHCP message type (DISCOVER, REQUEST, RELEASE)
  * @return TIKU_KITS_NET_OK on success, negative on error.
@@ -436,13 +440,15 @@ dhcp_send(uint8_t msg_type)
 /* INITIALISATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Reset the DHCP client to its initial idle state.
- *
+/*
  * Unbinds the DHCP client port (68), clears the lease, hardware
  * address, transaction ID, retry counter, and saved IP.  After
  * init the client is in IDLE state and ready for a new exchange.
  * Safe to call at any time to forcibly abort a running exchange.
+ */
+
+/**
+ * @brief Reset the DHCP client to its initial idle state.
  */
 void
 tiku_kits_net_dhcp_init(void)
@@ -463,20 +469,20 @@ tiku_kits_net_dhcp_init(void)
 /* DHCP EXCHANGE                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Begin a DHCP exchange by broadcasting a DISCOVER.
- *
+/*
  * Saves the current IP address, sets our IP to 0.0.0.0 (as required
  * by RFC 2131), stores the client hardware address (or the default
  * "TIKU\x01\x00" if NULL), generates a transaction ID by XOR-ing
  * the first 4 hardware bytes with "DHCP", binds UDP port 68 for
  * receiving responses, and transmits a DHCPDISCOVER.
- *
  * On any failure (already active, bind failure, send failure) the
  * saved IP is restored and the client port is unbound.
- *
  * After start(), call dhcp_poll() periodically until get_state()
  * returns BOUND or ERROR.
+ */
+
+/**
+ * @brief Begin a DHCP exchange by broadcasting a DISCOVER.
  */
 int8_t
 tiku_kits_net_dhcp_start(const uint8_t *client_hw)
@@ -546,23 +552,22 @@ tiku_kits_net_dhcp_start(const uint8_t *client_hw)
 /* POLLING                                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Check for pending DHCP events and drive the state machine.
- *
+/*
  * Consumes the pending_evt flag set by the UDP receive callback.
  * If no event is pending, increments the retry counter and
  * retransmits the current message (DISCOVER or REQUEST) -- but
  * only when the SLIP receive buffer is idle, to avoid corrupting
  * a partially-received response in the half-duplex net_buf.
- *
  * On OFFER: resets retries, sends DHCPREQUEST for the offered IP,
  * and transitions to REQUESTING.
- *
  * On ACK: unbinds the client port, updates the system IP address
  * via ipv4_set_addr(), and transitions to BOUND.
- *
  * On NAK or retry exhaustion: unbinds the port, restores the
  * saved IP, and transitions to ERROR.
+ */
+
+/**
+ * @brief Check for pending DHCP events and drive the state machine.
  */
 tiku_kits_net_dhcp_evt_t
 tiku_kits_net_dhcp_poll(void)
@@ -658,13 +663,15 @@ tiku_kits_net_dhcp_get_state(void)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Return a pointer to the lease information.
- *
+/*
  * Only valid when get_state() returns BOUND.  The lease struct
  * contains the assigned IP, subnet mask, gateway, server IP,
  * and lease duration in seconds.  Returns NULL if the client
  * is not in BOUND state.
+ */
+
+/**
+ * @brief Return a pointer to the lease information.
  */
 const tiku_kits_net_dhcp_lease_t *
 tiku_kits_net_dhcp_get_lease(void)
@@ -679,14 +686,16 @@ tiku_kits_net_dhcp_get_lease(void)
 /* RELEASE                                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Release the DHCP lease and return to IDLE.
- *
+/*
  * If currently BOUND, briefly re-binds the client port, sends a
  * DHCPRELEASE to the server (so it can reclaim the address), and
  * unbinds.  Resets the state to IDLE and clears pending events.
  * The system IP is NOT cleared -- the caller should set a new
  * address or call dhcp_start() for a fresh lease.
+ */
+
+/**
+ * @brief Release the DHCP lease and return to IDLE.
  */
 int8_t
 tiku_kits_net_dhcp_release(void)
@@ -712,10 +721,15 @@ TIKU_PROCESS(tiku_kits_net_dhcp_process, "dhcp");
 
 static struct tiku_timer dhcp_timer;
 
-/** Boot delay before starting DHCP (seconds).
- *  Must be > 2.5s so that the SLIP host's serial port setup
- *  (2.0s boot wait + 0.5s flush) completes before the first
- *  DISCOVER is sent. */
+/*
+ * Must be > 2.5s so that the SLIP host's serial port setup
+ * (2.0s boot wait + 0.5s flush) completes before the first
+ * *  DISCOVER is sent.
+ */
+
+/**
+ * Boot delay before starting DHCP (seconds).
+ */
 #define DHCP_BOOT_DELAY_SEC  4
 
 /** Poll interval while waiting for DHCP responses (ticks). */

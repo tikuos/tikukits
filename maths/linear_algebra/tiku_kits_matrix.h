@@ -26,37 +26,41 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum matrix dimension (rows or columns).
- *
+/*
  * This compile-time constant defines the upper bound on both the row
  * and column count.  Each matrix instance reserves a full
  * MAX_SIZE x MAX_SIZE element grid in its static storage, so choose
  * a value that balances memory usage against the largest matrix your
  * application needs.  Typical embedded use: 4 (for 4x4 transforms)
  * or 8 (for small feature vectors).
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum matrix dimension (rows or columns).
+ *
  * @code
- *   #define TIKU_KITS_MATRIX_MAX_SIZE 8
- *   #include "tiku_kits_matrix.h"
+ * #define TIKU_KITS_MATRIX_MAX_SIZE 8
+ * #include "tiku_kits_matrix.h"
  * @endcode
  */
 #ifndef TIKU_KITS_MATRIX_MAX_SIZE
 #define TIKU_KITS_MATRIX_MAX_SIZE 4
 #endif
 
-/**
- * @brief Matrix element type.
- *
+/*
  * Defaults to int32_t, which is safe for integer-only targets with
  * no FPU (e.g. MSP430).  Change to int16_t to halve memory on very
  * small matrices, or to float if your target has hardware FP support.
- *
  * Override before including this header to change the type:
+ */
+
+/**
+ * @brief Matrix element type.
+ *
  * @code
- *   #define TIKU_KITS_MATRIX_ELEM_TYPE int16_t
- *   #include "tiku_kits_matrix.h"
+ * #define TIKU_KITS_MATRIX_ELEM_TYPE int16_t
+ * #include "tiku_kits_matrix.h"
  * @endcode
  */
 #ifndef TIKU_KITS_MATRIX_ELEM_TYPE
@@ -72,38 +76,37 @@
  */
 typedef TIKU_KITS_MATRIX_ELEM_TYPE tiku_kits_matrix_elem_t;
 
-/**
- * @struct tiku_kits_matrix
- * @brief Fixed-capacity matrix with contiguous static storage
- *
+/*
  * A general-purpose, two-dimensional container that stores elements in
  * a row-major, statically allocated 2-D array.  Because all storage
  * lives inside the struct itself, no heap allocation is needed --
  * just declare the matrix as a static or local variable.
- *
  * Two dimension fields are tracked independently:
- *   - @c rows -- the number of active rows set by init (must be
- *     <= TIKU_KITS_MATRIX_MAX_SIZE).
- *   - @c cols -- the number of active columns set by init (must be
- *     <= TIKU_KITS_MATRIX_MAX_SIZE).
- *
+ * - @c rows -- the number of active rows set by init (must be
+ * <= TIKU_KITS_MATRIX_MAX_SIZE).
+ * - @c cols -- the number of active columns set by init (must be
+ * <= TIKU_KITS_MATRIX_MAX_SIZE).
  * Only elements within [0..rows) x [0..cols) are logically valid;
  * the remaining slots in the backing array are zeroed at init time
  * but should not be relied upon.
- *
- * @note Element type is controlled by tiku_kits_matrix_elem_t
- *       (default int32_t).  Override at compile time with
- *       @c -DTIKU_KITS_MATRIX_ELEM_TYPE=int16_t to change it
- *       globally for all matrix operations.
- *
  * Example:
+ */
+
+/**
+ * @brief Fixed-capacity matrix with contiguous static storage
+ *
+ * @struct tiku_kits_matrix
+ * @note Element type is controlled by tiku_kits_matrix_elem_t
+ * (default int32_t).  Override at compile time with
+ * @c -DTIKU_KITS_MATRIX_ELEM_TYPE=int16_t to change it
+ * globally for all matrix operations.
  * @code
- *   struct tiku_kits_matrix a, b, c;
- *   tiku_kits_matrix_init(&a, 3, 3);
- *   tiku_kits_matrix_init(&b, 3, 3);
- *   tiku_kits_matrix_set(&a, 0, 0, 42);
- *   tiku_kits_matrix_add(&c, &a, &b);
- *   // c[0][0] == 42, all other elements == 0
+ * struct tiku_kits_matrix a, b, c;
+ * tiku_kits_matrix_init(&a, 3, 3);
+ * tiku_kits_matrix_init(&b, 3, 3);
+ * tiku_kits_matrix_set(&a, 0, 0, 42);
+ * tiku_kits_matrix_add(&c, &a, &b);
+ * // c[0][0] == 42, all other elements == 0
  * @endcode
  */
 struct tiku_kits_matrix {
@@ -165,13 +168,15 @@ int tiku_kits_matrix_identity(struct tiku_kits_matrix *m, uint8_t n);
 /* ELEMENT ACCESS                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Set a single element at (row, col)
- *
+/*
  * Writes @p val into the matrix at the given position.  If @p m is
  * NULL or the indices are out of bounds the call is silently ignored
  * (void return -- no error code).  This keeps element-level access
  * lightweight; use init/add/mul for validated operations.
+ */
+
+/**
+ * @brief Set a single element at (row, col)
  *
  * @param m   Matrix (NULL-safe -- call is a no-op)
  * @param row Row index (0-based, must be < m->rows)
@@ -201,18 +206,20 @@ tiku_kits_matrix_elem_t tiku_kits_matrix_get(const struct tiku_kits_matrix *m,
 /* COPY AND COMPARISON                                                       */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Deep-copy a matrix from src to dst
- *
+/*
  * Copies the dimensions and the entire backing buffer from @p src
  * into @p dst.  After the call, dst is an independent clone --
  * modifying one does not affect the other.  Uses memcpy on the
  * full backing array for a single, fast bulk copy.
+ */
+
+/**
+ * @brief Deep-copy a matrix from src to dst
  *
  * @param dst Destination matrix (must not be NULL)
  * @param src Source matrix (must not be NULL)
  * @return TIKU_KITS_MATHS_OK on success,
- *         TIKU_KITS_MATHS_ERR_NULL if dst or src is NULL
+ * TIKU_KITS_MATHS_ERR_NULL if dst or src is NULL
  */
 int tiku_kits_matrix_copy(struct tiku_kits_matrix *dst,
                      const struct tiku_kits_matrix *src);
@@ -236,20 +243,22 @@ int tiku_kits_matrix_equal(const struct tiku_kits_matrix *a,
 /* ARITHMETIC OPERATIONS                                                     */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Element-wise matrix addition: result = a + b
- *
+/*
  * Adds corresponding elements of @p a and @p b and writes the sums
  * into @p result.  Both operands must have identical dimensions.
  * O(rows * cols).  @p result may safely alias @p a or @p b for
  * in-place addition.
+ */
+
+/**
+ * @brief Element-wise matrix addition: result = a + b
  *
  * @param result Output matrix (must not be NULL; may alias a or b)
  * @param a      Left operand (must not be NULL)
  * @param b      Right operand (must not be NULL)
  * @return TIKU_KITS_MATHS_OK on success,
- *         TIKU_KITS_MATHS_ERR_NULL if any pointer is NULL,
- *         TIKU_KITS_MATHS_ERR_DIM if a and b have different dimensions
+ * TIKU_KITS_MATHS_ERR_NULL if any pointer is NULL,
+ * TIKU_KITS_MATHS_ERR_DIM if a and b have different dimensions
  */
 int tiku_kits_matrix_add(struct tiku_kits_matrix *result,
                     const struct tiku_kits_matrix *a,
@@ -339,22 +348,23 @@ int tiku_kits_matrix_transpose(struct tiku_kits_matrix *result,
 /* SQUARE MATRIX OPERATIONS                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute the determinant of a square matrix
- *
+/*
  * Uses recursive cofactor expansion along the first row.  Complexity
  * is O(n!) in the general case, which is acceptable for the small
  * matrices targeted here (n <= TIKU_KITS_MATRIX_MAX_SIZE, typically
  * 4).  Stack depth is bounded by MAX_SIZE due to the recursion.
- *
  * Specialized base cases for 1x1 and 2x2 avoid unnecessary recursion.
+ */
+
+/**
+ * @brief Compute the determinant of a square matrix
  *
  * @param m   Square matrix (must not be NULL; rows must equal cols)
  * @param det Output pointer for the determinant value (must not be
- *            NULL)
+ * NULL)
  * @return TIKU_KITS_MATHS_OK on success,
- *         TIKU_KITS_MATHS_ERR_NULL if m or det is NULL,
- *         TIKU_KITS_MATHS_ERR_DIM if the matrix is not square
+ * TIKU_KITS_MATHS_ERR_NULL if m or det is NULL,
+ * TIKU_KITS_MATHS_ERR_DIM if the matrix is not square
  */
 int tiku_kits_matrix_det(const struct tiku_kits_matrix *m,
                     tiku_kits_matrix_elem_t *det);

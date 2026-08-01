@@ -6,6 +6,10 @@
  *
  * tiku_kits_sigfeatures_zscore.h - Z-score normalization (fixed-point)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Computes (x - mean) / stddev in fixed-point arithmetic. The
  * reciprocal 1/stddev is precomputed at setup time so each
  * normalization is a single multiply + shift -- no runtime division.
@@ -18,8 +22,6 @@
  * statistics library (Welford tracker, windowed statistics, etc.).
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_SIGFEATURES_ZSCORE_H_
@@ -35,44 +37,40 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_sigfeatures_zscore
- * @brief Fixed-point z-score normalizer with precomputed reciprocal
- *
+/*
  * Computes (x - mean) / stddev in fixed-point arithmetic by
  * replacing the runtime division with a precomputed multiply:
- *
- *     inv_stddev_q = (1 << shift) / stddev        (at init time)
- *     result       = (x - mean) * inv_stddev_q    (per sample)
- *
+ * inv_stddev_q = (1 << shift) / stddev        (at init time)
+ * result       = (x - mean) * inv_stddev_q    (per sample)
  * The output is a signed Q(shift) integer.  With shift=16, a
  * z-score of 1.5 is represented as 98304 (1.5 * 65536).  To
  * extract the integer part, right-shift by @c shift bits.
- *
  * Higher shift values give better fractional precision at the cost
  * of larger intermediate products (int64_t is used internally to
  * prevent overflow on 16-bit targets):
- *   - shift=16 -- about 0.002% resolution (default)
- *   - shift=8  -- about 0.4% resolution
- *
+ * - shift=16 -- about 0.002% resolution (default)
+ * - shift=8  -- about 0.4% resolution
  * The normalizer is designed to pair with running-statistics
  * trackers (e.g. Welford, windowed mean/variance) that provide
  * periodically updated mean and stddev values.
- *
- * @note If stddev changes at runtime (e.g. from a sliding
- *       statistics tracker), call update() to recompute the
- *       reciprocal without a full re-init.
- *
  * Example:
- * @code
- *   struct tiku_kits_sigfeatures_zscore z;
- *   int32_t z_score;
+ * // mean=100, stddev=20, shift=16
+ * tiku_kits_sigfeatures_zscore_init(&z, 100, 20, 16);
+ * tiku_kits_sigfeatures_zscore_normalize(&z, 130, &z_score);
+ * // z_score ~ 98304 (1.5 in Q16)
+ * // integer part: z_score >> 16 = 1
+ */
+
+/**
+ * @brief Fixed-point z-score normalizer with precomputed reciprocal
  *
- *   // mean=100, stddev=20, shift=16
- *   tiku_kits_sigfeatures_zscore_init(&z, 100, 20, 16);
- *   tiku_kits_sigfeatures_zscore_normalize(&z, 130, &z_score);
- *   // z_score ~ 98304 (1.5 in Q16)
- *   // integer part: z_score >> 16 = 1
+ * @struct tiku_kits_sigfeatures_zscore
+ * @note If stddev changes at runtime (e.g. from a sliding
+ * statistics tracker), call update() to recompute the
+ * reciprocal without a full re-init.
+ * @code
+ * struct tiku_kits_sigfeatures_zscore z;
+ * int32_t z_score;
  * @endcode
  */
 struct tiku_kits_sigfeatures_zscore {
@@ -112,21 +110,23 @@ int tiku_kits_sigfeatures_zscore_init(
     tiku_kits_sigfeatures_elem_t stddev,
     uint8_t shift);
 
-/**
- * @brief Update the mean and stddev, recomputing the reciprocal
- *
+/*
  * Replaces the stored mean and recomputes inv_stddev_q from the
  * new stddev using the shift value preserved from init().  Use
  * this when running statistics are updated periodically (e.g.
  * once per sliding window) to keep the normalizer current
  * without a full re-init.
+ */
+
+/**
+ * @brief Update the mean and stddev, recomputing the reciprocal
  *
  * @param z      Z-score normalizer (must not be NULL)
  * @param mean   New population mean
  * @param stddev New population standard deviation (must be > 0)
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if z is NULL,
- *         TIKU_KITS_SIGFEATURES_ERR_PARAM if stddev <= 0
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if z is NULL,
+ * TIKU_KITS_SIGFEATURES_ERR_PARAM if stddev <= 0
  */
 int tiku_kits_sigfeatures_zscore_update(
     struct tiku_kits_sigfeatures_zscore *z,
@@ -137,23 +137,25 @@ int tiku_kits_sigfeatures_zscore_update(
 /* Normalization                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Normalize a single value to its z-score
- *
+/*
  * Computes (value - mean) * inv_stddev_q, which equals
  * (value - mean) / stddev in Q(shift) fixed-point.  The
  * subtraction and multiply are performed in int64_t to prevent
  * overflow, then truncated to int32_t for the result.  O(1).
+ */
+
+/**
+ * @brief Normalize a single value to its z-score
  *
  * @param z      Z-score normalizer (must not be NULL)
  * @param value  Input sample
  * @param result Output pointer where the z-score is written in
- *               Q(shift) format (must not be NULL).  Positive
- *               values indicate above-mean samples; negative
- *               values indicate below-mean.  Integer part:
- *               result >> shift.
+ * Q(shift) format (must not be NULL).  Positive
+ * values indicate above-mean samples; negative
+ * values indicate below-mean.  Integer part:
+ * result >> shift.
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if z or result is NULL
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if z or result is NULL
  */
 int tiku_kits_sigfeatures_zscore_normalize(
     const struct tiku_kits_sigfeatures_zscore *z,

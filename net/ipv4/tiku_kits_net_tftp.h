@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_tftp.h - TFTP client (RFC 1350, RFC 2348 blksize)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Provides a lightweight TFTP client for reading (RRQ) and writing
  * (WRQ) files over UDP.  Designed for ultra-low-power microcontrollers
  * with severe memory constraints: the entire transfer state fits in
@@ -24,19 +28,17 @@
  *
  * Typical usage (read a file):
  * @code
- *   static uint16_t my_data_cb(uint16_t block, const uint8_t *data,
- *                               uint16_t len) {
- *       process_block(data, len);
- *       return len;
- *   }
- *   tiku_kits_net_tftp_init();
- *   tiku_kits_net_tftp_get(server_ip, "config.bin", my_data_cb);
- *   while (tiku_kits_net_tftp_get_state() < TFTP_STATE_COMPLETE) {
- *       tiku_kits_net_tftp_poll();
- *   }
+ * static uint16_t my_data_cb(uint16_t block, const uint8_t *data,
+ * uint16_t len) {
+ * process_block(data, len);
+ * return len;
+ * }
+ * tiku_kits_net_tftp_init();
+ * tiku_kits_net_tftp_get(server_ip, "config.bin", my_data_cb);
+ * while (tiku_kits_net_tftp_get_state() < TFTP_STATE_COMPLETE) {
+ * tiku_kits_net_tftp_poll();
+ * }
  * @endcode
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_TFTP_H_
@@ -70,15 +72,17 @@
 /* TFTP HEADER BYTE OFFSETS                                                  */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * For DATA and ACK packets the layout is:
+ * opcode(2) + block_num(2) [+ data(variable)]
+ * For RRQ/WRQ the layout is:
+ * opcode(2) + filename(NUL) + mode(NUL) [+ options(NUL-pairs)]
+ */
+
 /**
- * @defgroup TIKU_KITS_NET_TFTP_OFFSETS TFTP Header Byte Offsets
  * @brief Offsets within the TFTP payload (inside the UDP payload).
  *
- * For DATA and ACK packets the layout is:
- *   opcode(2) + block_num(2) [+ data(variable)]
- *
- * For RRQ/WRQ the layout is:
- *   opcode(2) + filename(NUL) + mode(NUL) [+ options(NUL-pairs)]
+ * @defgroup TIKU_KITS_NET_TFTP_OFFSETS TFTP Header Byte Offsets
  * @{
  */
 #define TIKU_KITS_NET_TFTP_OFF_OPCODE  0  /**< Opcode (16b) */
@@ -110,17 +114,18 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Maximum data bytes per TFTP block.
- *
+/*
  * Derived from the MTU minus all protocol overhead:
- *   MTU(128) - IPv4(20) - UDP(8) - TFTP_HDR(4) = 96 bytes.
- *
+ * MTU(128) - IPv4(20) - UDP(8) - TFTP_HDR(4) = 96 bytes.
  * The client sends a "blksize" option in every RRQ/WRQ to negotiate
  * this value with the server (RFC 2348).  If the server does not
  * support the option, it will respond with standard 512-byte blocks
  * which exceed our MTU and will be dropped -- the transfer will
  * time out.  Use a server that supports RFC 2348.
+ */
+
+/**
+ * @brief Maximum data bytes per TFTP block.
  */
 #ifndef TIKU_KITS_NET_TFTP_BLOCK_SIZE
 #define TIKU_KITS_NET_TFTP_BLOCK_SIZE  96
@@ -245,29 +250,29 @@ void tiku_kits_net_tftp_init(void);
 /* TRANSFER INITIATION                                                       */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Start a read transfer (download file from server).
- *
+/*
  * Constructs and sends a TFTP RRQ packet with mode "octet" and
  * the blksize option set to TIKU_KITS_NET_TFTP_BLOCK_SIZE.  Binds
  * the local TFTP port to receive the server's response.
- *
  * After calling get(), the application must call poll() repeatedly
  * to drive the transfer.  Each DATA block is delivered to @p data_cb
  * from within poll().  The transfer is complete when get_state()
  * returns COMPLETE or ERROR.
- *
  * Only one transfer can be active at a time.  Calling get() while
  * a transfer is in progress returns TIKU_KITS_NET_ERR_PARAM.
+ */
+
+/**
+ * @brief Start a read transfer (download file from server).
  *
  * @param server_addr  Server IPv4 address (4 bytes, network order)
  * @param filename     Null-terminated filename (max MAX_FILENAME chars)
  * @param data_cb      Callback to receive data blocks (must not be NULL)
  * @return TIKU_KITS_NET_OK on success,
- *         TIKU_KITS_NET_ERR_NULL if any pointer is NULL,
- *         TIKU_KITS_NET_ERR_PARAM if transfer already active or
- *         filename too long,
- *         TIKU_KITS_NET_ERR_OVERFLOW if RRQ packet exceeds max payload.
+ * TIKU_KITS_NET_ERR_NULL if any pointer is NULL,
+ * TIKU_KITS_NET_ERR_PARAM if transfer already active or
+ * filename too long,
+ * TIKU_KITS_NET_ERR_OVERFLOW if RRQ packet exceeds max payload.
  */
 int8_t tiku_kits_net_tftp_get(
     const uint8_t *server_addr,
@@ -295,16 +300,18 @@ int8_t tiku_kits_net_tftp_put(
 /* POLLING AND STATE                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Poll for TFTP events and drive the state machine.
- *
+/*
  * Checks for pending events set by the UDP receive callback,
  * handles state transitions, delivers data to the application
  * callback, and sends ACK/DATA responses.  Must be called from
  * application context (not from inside a UDP callback).
+ */
+
+/**
+ * @brief Poll for TFTP events and drive the state machine.
  *
  * @return The event that was processed, or EVT_NONE if nothing
- *         happened since the last poll.
+ * happened since the last poll.
  */
 tiku_kits_net_tftp_evt_t tiku_kits_net_tftp_poll(void);
 

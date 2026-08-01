@@ -81,13 +81,15 @@ int tiku_kits_sigfeatures_histogram_reset(
 /* SAMPLE INPUT                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Push a sample into the histogram
- *
+/*
  * Computes the target bin via integer division of the offset by
  * bin_width.  O(1) per call.  Underflow and overflow are handled
  * before and after the division respectively to avoid unnecessary
  * computation on out-of-range samples.
+ */
+
+/**
+ * @brief Push a sample into the histogram
  */
 int tiku_kits_sigfeatures_histogram_push(
     struct tiku_kits_sigfeatures_histogram *h,

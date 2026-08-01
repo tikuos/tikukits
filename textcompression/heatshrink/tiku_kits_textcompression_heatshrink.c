@@ -40,18 +40,20 @@
 /* BIT WRITER                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct hs_bit_writer
- * @brief Bit-level output stream packed MSB-first into a byte buffer
- *
+/*
  * Allows the LZSS encoder to emit individual bits (flags, offsets,
  * lengths) into a contiguous byte buffer.  Bits are packed from the
  * most-significant bit toward the least-significant bit within each
  * byte.  When bit_pos reaches 8 the writer advances to the next byte
  * and pre-clears it so that subsequent OR operations start from zero.
+ */
+
+/**
+ * @brief Bit-level output stream packed MSB-first into a byte buffer
  *
+ * @struct hs_bit_writer
  * @note The writer does not own its buffer; the caller is responsible
- *       for providing a sufficiently large buffer via bw_init().
+ * for providing a sufficiently large buffer via bw_init().
  */
 struct hs_bit_writer {
     uint8_t *buf;       /**< Destination byte buffer (not owned) */
@@ -77,14 +79,16 @@ static void bw_init(struct hs_bit_writer *bw, uint8_t *buf, uint16_t cap)
     }
 }
 
-/**
- * @brief Write @p nbits from @p val into the bit stream (MSB first)
- *
+/*
  * Iterates from the most-significant requested bit down to bit 0.
  * Each '1' bit is OR-ed into the current output byte at the correct
  * position; '0' bits are already zero thanks to the pre-clear in
  * bw_init / the rollover clear below.  When a byte is full the
  * writer advances and pre-clears the next byte.
+ */
+
+/**
+ * @brief Write @p nbits from @p val into the bit stream (MSB first)
  *
  * @param bw    Bit writer state
  * @param val   Value whose lower @p nbits bits are written
@@ -131,14 +135,17 @@ static uint16_t bw_size(const struct hs_bit_writer *bw)
 /* BIT READER                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct hs_bit_reader
- * @brief Bit-level input stream, MSB-first
- *
+/*
  * Mirror image of hs_bit_writer for the decoder side.  Reads
  * individual bits from a contiguous byte buffer, tracking the current
  * byte and bit position.  Returns an error when the stream is
  * exhausted before the requested number of bits have been read.
+ */
+
+/**
+ * @brief Bit-level input stream, MSB-first
+ *
+ * @struct hs_bit_reader
  */
 struct hs_bit_reader {
     const uint8_t *buf; /**< Source byte buffer (not owned) */
@@ -161,13 +168,15 @@ static void br_init(struct hs_bit_reader *br, const uint8_t *buf, uint16_t len)
     br->bit_pos = 0;
 }
 
-/**
- * @brief Read @p nbits from the bit stream into @p val (MSB first)
- *
+/*
  * Shifts bits into @p val one at a time, MSB first, advancing the
  * internal cursor.  Returns -1 if the stream is exhausted before all
  * requested bits have been read, leaving @p val in a partially-
  * populated state (callers should treat this as a corrupt-data error).
+ */
+
+/**
+ * @brief Read @p nbits from the bit stream into @p val (MSB first)
  *
  * @param br    Bit reader state
  * @param nbits Number of bits to read (1..16)
@@ -200,18 +209,19 @@ static int br_read_bits(struct hs_bit_reader *br, uint8_t nbits, uint16_t *val)
 /* ENCODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compress a byte buffer using LZSS (heatshrink-style)
- *
+/*
  * Writes a 2-byte little-endian original-size header, then encodes
  * the input as a bit-packed LZSS stream.  For each input position the
  * algorithm performs a brute-force search over the sliding window
  * (up to HS_WINDOW_SIZE bytes back) to find the longest matching
  * byte sequence.  If the best match meets the MIN_MATCH threshold, a
  * back-reference is emitted; otherwise a literal byte is written.
- *
  * Time complexity: O(N * W * M) where N = input length, W = window
  * size, M = max match length.  All state is stack-local.
+ */
+
+/**
+ * @brief Compress a byte buffer using LZSS (heatshrink-style)
  */
 int tiku_kits_textcompression_heatshrink_encode(
     const uint8_t *src, uint16_t src_len,
@@ -305,20 +315,21 @@ int tiku_kits_textcompression_heatshrink_encode(
 /* DECODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Decompress LZSS (heatshrink-style) compressed data
- *
+/*
  * Reads the 2-byte little-endian original-size header, then walks the
  * bit stream until @c orig_size output bytes have been produced.  Each
  * item is decoded by reading a 1-bit flag first:
- *   - Flag 1 (literal): read 8 bits and append to output.
- *   - Flag 0 (back-ref): read WINDOW_BITS offset and LOOKAHEAD_BITS
- *     length, then copy the referenced bytes from the already-decoded
- *     output.
- *
+ * - Flag 1 (literal): read 8 bits and append to output.
+ * - Flag 0 (back-ref): read WINDOW_BITS offset and LOOKAHEAD_BITS
+ * length, then copy the referenced bytes from the already-decoded
+ * output.
  * The back-reference copy is deliberately byte-by-byte (not memcpy)
  * so that overlapping matches, where the source and destination
  * regions overlap, produce the correct repeating pattern.
+ */
+
+/**
+ * @brief Decompress LZSS (heatshrink-style) compressed data
  */
 int tiku_kits_textcompression_heatshrink_decode(
     const uint8_t *src, uint16_t src_len,

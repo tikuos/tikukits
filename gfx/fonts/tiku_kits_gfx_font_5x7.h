@@ -6,6 +6,10 @@
  *
  * tiku_kits_gfx_font_5x7.h - Built-in 5x7 ASCII font
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Classic 5-pixel-wide / 7-pixel-tall monospaced bitmap font
  * covering the printable ASCII range (0x20 .. 0x7E). Ideal for
  * small-display labels and headlines at scale 2-4 on EPDs.
@@ -16,9 +20,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #ifndef TIKU_KITS_GFX_FONT_5X7_H_

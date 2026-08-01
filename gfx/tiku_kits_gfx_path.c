@@ -6,6 +6,10 @@
  *
  * tiku_kits_gfx_path.c - Polyline / polygon / dashed line impl
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Polyline / polygon outlines walk the input vertex array and
  * delegate to the existing line primitive. Filled polygons use
  * the standard scanline fill: for each y in the polygon's vertical
@@ -14,8 +18,6 @@
  *
  * Dashed lines reuse the Bresenham step loop, masking pixels by a
  * 16-bit step counter against the user-supplied pattern.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_gfx_path.h"

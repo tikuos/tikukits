@@ -24,18 +24,19 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Fixed-point log2 approximation
- *
+/*
  * Computes log2(x) in Q(shift) fixed-point using the identity
  * log2(x) = floor_log2(x) + frac, where frac is linearly
  * interpolated from the mantissa bits.  The integer part is the
  * position of the highest set bit; the fractional part is computed
  * as (x - 2^ilog) / 2^ilog in Q(shift).
- *
  * Accuracy: exact for powers of 2, ~0.09 max error for other
  * values.  This is sufficient for comparing log-likelihood scores
  * where only the relative ordering matters.
+ */
+
+/**
+ * @brief Fixed-point log2 approximation
  */
 static int32_t log2_q(uint32_t x, uint8_t shift)
 {
@@ -187,19 +188,20 @@ int tiku_kits_ml_nbayes_train(struct tiku_kits_ml_nbayes *nb,
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Get log-likelihood scores for all classes
- *
+/*
  * For each class c, computes the log-posterior score using Laplace
  * (add-1) smoothing in Q(shift) fixed-point.  The prior
  * log2(class_count+1) favours classes with more training data.
  * The likelihood sum adds log2(freq+1) for each feature.  The
  * normalization term subtracts n_features * log2(class_count+n_bins)
  * to account for the smoothed denominator.
- *
  * Out-of-range bin values in x are treated as unseen (freq = 0)
  * rather than triggering an error, so prediction is robust to
  * occasional quantization glitches.
+ */
+
+/**
+ * @brief Get log-likelihood scores for all classes
  */
 int tiku_kits_ml_nbayes_predict_log_proba(
     const struct tiku_kits_ml_nbayes *nb,

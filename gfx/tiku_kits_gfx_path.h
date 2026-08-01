@@ -6,6 +6,10 @@
  *
  * tiku_kits_gfx_path.h - Polylines, polygons, dashed lines
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Multi-segment line and polygon rendering for the gfx kit. All
  * primitives operate on caller-allocated arrays of points; no
  * dynamic memory.
@@ -14,9 +18,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #ifndef TIKU_KITS_GFX_PATH_H_
@@ -63,18 +65,19 @@ void tiku_kits_gfx_polygon(const tiku_kits_gfx_surface_t *s,
                             const tiku_kits_gfx_point_t *pts,
                             uint16_t n_pts, uint8_t color);
 
-/**
- * @brief Filled polygon (even-odd rule, scanline fill).
- *
+/*
  * Works for convex and concave polygons. Self-intersecting polygons
  * fill the parts hit an odd number of times (standard even-odd
  * rule).
- *
  * Uses a fixed-size scratch buffer of
  * `TIKU_KITS_GFX_POLYGON_MAX_INTERSECTIONS` x-coordinates per
  * scanline. If a scanline crosses more edges than that, only the
  * first N intersections are used (extra crossings silently
  * dropped).
+ */
+
+/**
+ * @brief Filled polygon (even-odd rule, scanline fill).
  */
 void tiku_kits_gfx_fill_polygon(const tiku_kits_gfx_surface_t *s,
                                  const tiku_kits_gfx_point_t *pts,
@@ -84,19 +87,20 @@ void tiku_kits_gfx_fill_polygon(const tiku_kits_gfx_surface_t *s,
 /* DASHED LINES                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Draw a Bresenham line modulated by a 16-bit pattern.
- *
+/*
  * The pattern is a bit mask that selects which pixels along the
  * line are drawn: bit 0 corresponds to the starting pixel, bit 1
  * to the next, etc., wrapping every 16 pixels.
- *
  * Common patterns:
- *   0xFFFF  solid (== tiku_kits_gfx_line)
- *   0x5555  dotted (every other pixel)
- *   0xCCCC  short dash (2 on, 2 off)
- *   0x0F0F  long dash (4 on, 4 off)
- *   0x33FF  dash-dot
+ * 0xFFFF  solid (== tiku_kits_gfx_line)
+ * 0x5555  dotted (every other pixel)
+ * 0xCCCC  short dash (2 on, 2 off)
+ * 0x0F0F  long dash (4 on, 4 off)
+ * 0x33FF  dash-dot
+ */
+
+/**
+ * @brief Draw a Bresenham line modulated by a 16-bit pattern.
  */
 void tiku_kits_gfx_line_dashed(const tiku_kits_gfx_surface_t *s,
                                 int16_t x0, int16_t y0,

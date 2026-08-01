@@ -6,10 +6,14 @@
  *
  * tiku_kits_gfx.c - 2D drawing primitives
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * All shapes are rendered by repeated calls to put_pixel(), which:
- *   1. clips against the surface's local (width, height);
- *   2. translates child-frame coordinates by (origin_x, origin_y);
- *   3. forwards the resulting pixel to the surface's set_pixel.
+ * 1. clips against the surface's local (width, height);
+ * 2. translates child-frame coordinates by (origin_x, origin_y);
+ * 3. forwards the resulting pixel to the surface's set_pixel.
  *
  * Subsurfaces work by inheriting the parent's set_pixel and ctx
  * but with their own width/height and a translation offset.
@@ -18,9 +22,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 
 #include "tiku_kits_gfx.h"

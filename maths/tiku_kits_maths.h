@@ -27,17 +27,17 @@
 /* RETURN CODES                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @defgroup TIKU_KITS_MATHS_STATUS Maths Status Codes
- *
+/*
  * Return codes shared by every maths sub-module (matrix, distance,
  * statistics, etc.).  All functions return one of these codes so that
  * the caller can distinguish success from each failure mode without
  * inspecting output data.
- *
  * Convention: zero is success, negative values are errors.  New
  * sub-modules must reuse these codes rather than defining their own.
- *
+ */
+
+/**
+ * @defgroup TIKU_KITS_MATHS_STATUS Maths Status Codes
  * @{
  */
 
@@ -52,23 +52,27 @@
  */
 #define TIKU_KITS_MATHS_ERR_NULL      (-1)
 
-/**
- * @brief Matrix or vector dimensions do not match the operation.
- *
+/*
  * For addition/subtraction both operands must have identical (rows, cols).
  * For multiplication, the inner dimensions must agree (a.cols == b.rows).
  * For square-matrix operations (determinant, trace) the matrix must be
  * square.  For distance functions this indicates mismatched vector lengths.
  */
-#define TIKU_KITS_MATHS_ERR_DIM       (-2)
 
 /**
- * @brief A dimension or count exceeds the compile-time capacity.
- *
+ * @brief Matrix or vector dimensions do not match the operation.
+ */
+#define TIKU_KITS_MATHS_ERR_DIM       (-2)
+
+/*
  * Returned when a requested size (rows, cols, window, etc.) is zero or
  * larger than the module's static maximum (e.g. TIKU_KITS_MATRIX_MAX_SIZE,
  * TIKU_KITS_STATISTICS_MAX_WINDOW).  Also returned by query functions
  * when no samples have been pushed yet.
+ */
+
+/**
+ * @brief A dimension or count exceeds the compile-time capacity.
  */
 #define TIKU_KITS_MATHS_ERR_SIZE      (-3)
 

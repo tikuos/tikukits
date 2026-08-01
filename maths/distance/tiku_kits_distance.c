@@ -97,13 +97,15 @@ int tiku_kits_distance_manhattan(
 /*                                                                           */
 /*===========================================================================*/
 
-/**
- * @brief Compute the squared Euclidean distance between two vectors
- *
+/*
  * O(n) single pass.  Each difference is widened to int64_t before
  * squaring, so the product fits in 64 bits even for full-range
  * int32_t inputs.  The square root is intentionally omitted because
  * comparing squared distances preserves ordering.
+ */
+
+/**
+ * @brief Compute the squared Euclidean distance between two vectors
  */
 int tiku_kits_distance_euclidean_sq(
     const tiku_kits_distance_elem_t *a,
@@ -139,13 +141,15 @@ int tiku_kits_distance_euclidean_sq(
 /*                                                                           */
 /*===========================================================================*/
 
-/**
- * @brief Compute the dot product of two vectors
- *
+/*
  * Simple multiply-accumulate (MAC) loop.  Each product is widened
  * to int64_t before accumulation to prevent overflow on 16-bit
  * targets.  When both vectors are pre-normalized to unit length
  * the result equals cosine similarity.
+ */
+
+/**
+ * @brief Compute the dot product of two vectors
  */
 int tiku_kits_distance_dot(
     const tiku_kits_distance_elem_t *a,
@@ -175,14 +179,16 @@ int tiku_kits_distance_dot(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute cosine similarity components for raw vectors
- *
+/*
  * Single-pass computation of dot(a,b), dot(a,a), and dot(b,b).
  * Performing all three MACs in one loop avoids three separate
  * traversals of the input arrays -- important for cache-less
  * embedded targets.  The caller can derive cosine similarity or
  * cos^2(theta) from the outputs without sqrt or division.
+ */
+
+/**
+ * @brief Compute cosine similarity components for raw vectors
  */
 int tiku_kits_distance_cosine_sq(
     const tiku_kits_distance_elem_t *a,

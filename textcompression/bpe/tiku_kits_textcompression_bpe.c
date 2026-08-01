@@ -24,17 +24,18 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Find the most frequent adjacent byte pair in data
- *
+/*
  * Scans all adjacent pairs in [data, data+len) and returns the pair
  * (a, b) that occurs the most times.  A visited[] array prevents
  * double-counting: once a pair starting at position i has been tallied
  * as part of an earlier identical pair's scan, position i is skipped
  * in the outer loop.
- *
  * O(n^2) worst case, bounded by BPE_MAX_INPUT.  The visited buffer is
  * stack-allocated at BPE_MAX_INPUT bytes.
+ */
+
+/**
+ * @brief Find the most frequent adjacent byte pair in data
  *
  * @param data    Working buffer (not modified)
  * @param len     Length of data in bytes
@@ -89,20 +90,22 @@ static uint16_t find_best_pair(const uint8_t *data, uint16_t len,
     return best_count;
 }
 
-/**
- * @brief Find an unused byte value not present in data
- *
+/*
  * Builds a 256-byte presence bitmap from the working buffer, then
  * scans for the first byte value (0..255) that does not appear.  The
  * encoder uses this free value as the merge symbol for the current
  * round.  Returns -1 when all 256 values are already in use, which
  * terminates the merge loop.
+ */
+
+/**
+ * @brief Find an unused byte value not present in data
  *
  * @param data Working buffer (not modified)
  * @param len  Length of data in bytes
  * @param sym  Output: the first byte value not present in data
  * @return 0 if an unused symbol was found, -1 if all 256 values are
- *         in use
+ * in use
  */
 static int find_unused_symbol(const uint8_t *data, uint16_t len, uint8_t *sym)
 {
@@ -126,15 +129,17 @@ static int find_unused_symbol(const uint8_t *data, uint16_t len, uint8_t *sym)
     return -1;
 }
 
-/**
- * @brief Replace all occurrences of pair (a, b) with sym, in place
- *
+/*
  * Uses a read-index / write-index approach so that the buffer shrinks
  * in place without a second temporary array.  When the pair (a, b) is
  * found at the read position, a single @p sym byte is written and the
  * read index advances by two.  Otherwise the byte is copied as-is.
  * Because wi <= ri at every step, earlier writes never clobber unread
  * data.
+ */
+
+/**
+ * @brief Replace all occurrences of pair (a, b) with sym, in place
  *
  * @param data Working buffer (modified in place; buffer shrinks)
  * @param len  Current length of valid data in @p data
@@ -169,18 +174,19 @@ static uint16_t replace_pair(uint8_t *data, uint16_t len,
 /* ENCODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compress a byte buffer using Byte Pair Encoding
- *
+/*
  * Copies the input into a stack-allocated working buffer, then runs
  * up to MAX_MERGES rounds.  Each round: (1) find the most frequent
  * adjacent pair, (2) pick an unused byte value as the merge symbol,
  * (3) replace every occurrence of the pair in-place.  The merge table
  * is recorded for later serialisation.
- *
  * Once no pair has frequency >= 2, or all symbols are exhausted, the
  * loop terminates and the output is assembled as:
- *   [num_merges (1 byte)] [merge_table (3 * N)] [compressed payload]
+ * [num_merges (1 byte)] [merge_table (3 * N)] [compressed payload]
+ */
+
+/**
+ * @brief Compress a byte buffer using Byte Pair Encoding
  */
 int tiku_kits_textcompression_bpe_encode(const uint8_t *src, uint16_t src_len,
                                          uint8_t *dst, uint16_t dst_cap,
@@ -259,18 +265,19 @@ int tiku_kits_textcompression_bpe_encode(const uint8_t *src, uint16_t src_len,
 /* DECODING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Decompress Byte Pair Encoded data
- *
+/*
  * Parses the header (merge count + merge table), copies the compressed
  * payload into a working buffer, then iterates the merge table in
  * reverse order.  Each pass expands one merge symbol back to its
  * original two-byte pair, using @p dst as scratch for the expanded
  * output and copying the result back to @p work for the next pass.
- *
  * Reverse-order iteration is required because later merges may have
  * consumed symbols created by earlier merges; undoing the newest merge
  * first peels away each layer correctly.
+ */
+
+/**
+ * @brief Decompress Byte Pair Encoded data
  */
 int tiku_kits_textcompression_bpe_decode(const uint8_t *src, uint16_t src_len,
                                          uint8_t *dst, uint16_t dst_cap,

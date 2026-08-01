@@ -6,13 +6,15 @@
  *
  * tiku_kits_ui_checkbox.c - Checkbox widget impl
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Visual:
- *   [#]  Label text
+ * [#]  Label text
  * The box is a (font_height + 2)-pixel square at the left, with a
  * 1-px border (focus colour when focused). When checked, a thick
  * tick is drawn inside.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_ui_checkbox.h"

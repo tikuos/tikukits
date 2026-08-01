@@ -6,18 +6,20 @@
  *
  * tiku_kits_codec_protobuf.c - Protocol Buffers (nanopb-style) codec
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements the protobuf binary wire format for ultra-low-power MCUs.
  * Zero heap allocation, incremental encode/decode, ~800 bytes code.
  *
  * Protobuf wire format:
- *   Each field is: tag (varint) + payload
- *   Tag = (field_number << 3) | wire_type
+ * Each field is: tag (varint) + payload
+ * Tag = (field_number << 3) | wire_type
  *
- *   Varint (wire type 0): LEB128, 7 bits per byte, MSB = continuation
- *   Length-delimited (wire type 2): length varint + raw bytes
- *   32-bit (wire type 5): 4 bytes little-endian
- *
- * SPDX-License-Identifier: Apache-2.0
+ * Varint (wire type 0): LEB128, 7 bits per byte, MSB = continuation
+ * Length-delimited (wire type 2): length varint + raw bytes
+ * 32-bit (wire type 5): 4 bytes little-endian
  */
 
 /*---------------------------------------------------------------------------*/

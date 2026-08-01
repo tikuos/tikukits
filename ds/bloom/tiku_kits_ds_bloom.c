@@ -25,17 +25,18 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief FNV-1a hash with a seed parameter
- *
+/*
  * Computes a 32-bit FNV-1a hash of the given key bytes, using
  * the seed to vary the initial hash state. Each hash function
  * index uses a different seed so the Bloom filter gets
  * independent bit positions from the same key.
- *
  * FNV-1a constants:
- *   offset basis: 2166136261 (0x811C9DC5)
- *   prime:        16777619   (0x01000193)
+ * offset basis: 2166136261 (0x811C9DC5)
+ * prime:        16777619   (0x01000193)
+ */
+
+/**
+ * @brief FNV-1a hash with a seed parameter
  *
  * @param key     Pointer to key data
  * @param key_len Length of key in bytes
@@ -122,13 +123,15 @@ int tiku_kits_ds_bloom_init(struct tiku_kits_ds_bloom *bloom,
 /* INSERT                                                                    */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Add a key to the Bloom filter
- *
+/*
  * Computes num_hashes bit positions from the key using seed-varied
  * FNV-1a, then sets each corresponding bit via byte-level OR.
  * The item counter is incremented unconditionally (even for
  * duplicate keys) because the filter cannot detect duplicates.
+ */
+
+/**
+ * @brief Add a key to the Bloom filter
  */
 int tiku_kits_ds_bloom_add(struct tiku_kits_ds_bloom *bloom,
                            const void *key,
@@ -167,14 +170,16 @@ int tiku_kits_ds_bloom_add(struct tiku_kits_ds_bloom *bloom,
 /* QUERY                                                                     */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Check whether a key may be in the Bloom filter
- *
+/*
  * Recomputes the same bit positions that add() would set, then
  * tests each one.  Returns 0 (definitely absent) on the first
  * clear bit encountered -- early exit makes the common "not found"
  * case fast.  Returns 1 (possibly present) only if all hash-
  * derived bits are set.
+ */
+
+/**
+ * @brief Check whether a key may be in the Bloom filter
  */
 int tiku_kits_ds_bloom_check(
     const struct tiku_kits_ds_bloom *bloom,
@@ -216,13 +221,15 @@ int tiku_kits_ds_bloom_check(
 /* UTILITY                                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Clear all bits and reset the item count
- *
+/*
  * Zeros only the bytes that cover [0, num_bits) using memset for
  * efficiency, rather than clearing the full MAX_BYTES buffer.
  * Resets the item counter to 0 so that count() reflects the
  * empty state.  num_bits and num_hashes are preserved.
+ */
+
+/**
+ * @brief Clear all bits and reset the item count
  */
 int tiku_kits_ds_bloom_clear(struct tiku_kits_ds_bloom *bloom)
 {
@@ -242,13 +249,15 @@ int tiku_kits_ds_bloom_clear(struct tiku_kits_ds_bloom *bloom)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Return the number of items added to the filter
- *
+/*
  * Safe to call with a NULL pointer -- returns 0 rather than
  * dereferencing.  Returns the cumulative insert count, not the
  * number of distinct items (the filter cannot distinguish
  * duplicates).
+ */
+
+/**
+ * @brief Return the number of items added to the filter
  */
 uint16_t tiku_kits_ds_bloom_count(
     const struct tiku_kits_ds_bloom *bloom)

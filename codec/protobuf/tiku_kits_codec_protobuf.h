@@ -6,33 +6,35 @@
  *
  * tiku_kits_codec_protobuf.h - Protocol Buffers (nanopb-style) codec
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements a subset of the Protocol Buffers binary wire format
  * suitable for ultra-low-power microcontrollers.  Provides the same
  * primitives as nanopb but with the TikuKits API conventions: zero
  * heap allocation, cursor-based streaming, shared codec return codes.
  *
  * Supported wire types:
- *   0 - Varint   (uint32, int32, sint32, bool, enum)
- *   2 - Length-delimited (bytes, string, submessage)
- *   5 - 32-bit   (fixed32, sfixed32)
+ * 0 - Varint   (uint32, int32, sint32, bool, enum)
+ * 2 - Length-delimited (bytes, string, submessage)
+ * 5 - 32-bit   (fixed32, sfixed32)
  *
  * Not supported:
- *   1 - 64-bit   (fixed64, sfixed64, double) -- too wide for 16-bit MCU
- *   Groups (deprecated wire types 3 and 4)
+ * 1 - 64-bit   (fixed64, sfixed64, double) -- too wide for 16-bit MCU
+ * Groups (deprecated wire types 3 and 4)
  *
  * Varint encoding uses the standard LEB128 format (7 bits per byte,
  * MSB continuation flag).  Signed integers use ZigZag encoding for
  * efficient representation of small negative values.
  *
  * Design:
- *   - Zero heap allocation.  The encoder writes into a caller-provided
- *     buffer via an ostream struct.  The decoder reads from a const
- *     buffer via an istream struct.
- *   - Incremental API: fields are encoded/decoded one at a time.
- *   - Field tags are explicit (field_number << 3 | wire_type), matching
- *     the protobuf wire format exactly.
- *
- * SPDX-License-Identifier: Apache-2.0
+ * - Zero heap allocation.  The encoder writes into a caller-provided
+ * buffer via an ostream struct.  The decoder reads from a const
+ * buffer via an istream struct.
+ * - Incremental API: fields are encoded/decoded one at a time.
+ * - Field tags are explicit (field_number << 3 | wire_type), matching
+ * the protobuf wire format exactly.
  */
 
 #ifndef TIKU_KITS_CODEC_PROTOBUF_H_
@@ -89,25 +91,25 @@
 /* ENCODER (OUTPUT STREAM)                                                   */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Example:
+ * // Encode field 1 (uint32): temperature = 23
+ * tiku_kits_codec_pb_encode_tag(&os, 1, TIKU_KITS_CODEC_PB_WIRE_VARINT);
+ * tiku_kits_codec_pb_encode_varint(&os, 23);
+ * // Encode field 2 (string): name = "sensor"
+ * tiku_kits_codec_pb_encode_tag(&os, 2, TIKU_KITS_CODEC_PB_WIRE_BYTES);
+ * tiku_kits_codec_pb_encode_string(&os, "sensor", 6);
+ * uint16_t len = tiku_kits_codec_pb_ostream_len(&os);
+ */
+
 /**
- * @struct tiku_kits_codec_pb_ostream
  * @brief Protobuf encoder cursor over a caller-provided buffer.
  *
- * Example:
+ * @struct tiku_kits_codec_pb_ostream
  * @code
- *   uint8_t buf[64];
- *   tiku_kits_codec_pb_ostream_t os;
- *   tiku_kits_codec_pb_ostream_init(&os, buf, sizeof(buf));
- *
- *   // Encode field 1 (uint32): temperature = 23
- *   tiku_kits_codec_pb_encode_tag(&os, 1, TIKU_KITS_CODEC_PB_WIRE_VARINT);
- *   tiku_kits_codec_pb_encode_varint(&os, 23);
- *
- *   // Encode field 2 (string): name = "sensor"
- *   tiku_kits_codec_pb_encode_tag(&os, 2, TIKU_KITS_CODEC_PB_WIRE_BYTES);
- *   tiku_kits_codec_pb_encode_string(&os, "sensor", 6);
- *
- *   uint16_t len = tiku_kits_codec_pb_ostream_len(&os);
+ * uint8_t buf[64];
+ * tiku_kits_codec_pb_ostream_t os;
+ * tiku_kits_codec_pb_ostream_init(&os, buf, sizeof(buf));
  * @endcode
  */
 typedef struct {
@@ -299,26 +301,28 @@ int tiku_kits_codec_pb_encode_submessage(
 /* DECODER (INPUT STREAM)                                                    */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * Example:
+ * uint32_t field_number;
+ * uint8_t  wire_type;
+ * while (tiku_kits_codec_pb_istream_remaining(&is) > 0) {
+ * tiku_kits_codec_pb_decode_tag(&is, &field_number, &wire_type);
+ * if (field_number == 1 && wire_type == 0) {
+ * uint32_t val;
+ * tiku_kits_codec_pb_decode_varint(&is, &val);
+ * } else {
+ * tiku_kits_codec_pb_skip_field(&is, wire_type);
+ * }
+ * }
+ */
+
 /**
- * @struct tiku_kits_codec_pb_istream
  * @brief Protobuf decoder cursor over a const buffer.
  *
- * Example:
+ * @struct tiku_kits_codec_pb_istream
  * @code
- *   tiku_kits_codec_pb_istream_t is;
- *   tiku_kits_codec_pb_istream_init(&is, buf, len);
- *
- *   uint32_t field_number;
- *   uint8_t  wire_type;
- *   while (tiku_kits_codec_pb_istream_remaining(&is) > 0) {
- *       tiku_kits_codec_pb_decode_tag(&is, &field_number, &wire_type);
- *       if (field_number == 1 && wire_type == 0) {
- *           uint32_t val;
- *           tiku_kits_codec_pb_decode_varint(&is, &val);
- *       } else {
- *           tiku_kits_codec_pb_skip_field(&is, wire_type);
- *       }
- *   }
+ * tiku_kits_codec_pb_istream_t is;
+ * tiku_kits_codec_pb_istream_init(&is, buf, len);
  * @endcode
  */
 typedef struct {

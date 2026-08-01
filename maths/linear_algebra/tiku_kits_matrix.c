@@ -22,14 +22,16 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute determinant of a submatrix via cofactor expansion
- *
+/*
  * Recursive helper that expands along the first row of the logical
  * submatrix defined by @p row_idx and @p col_idx.  Base cases for
  * n==1 and n==2 avoid further recursion.  The maximum recursion
  * depth is TIKU_KITS_MATRIX_MAX_SIZE, so stack usage is bounded
  * and predictable for embedded targets.
+ */
+
+/**
+ * @brief Compute determinant of a submatrix via cofactor expansion
  *
  * @param m       Source matrix (full backing storage)
  * @param row_idx Array of row indices defining the submatrix (size n)
@@ -89,13 +91,15 @@ static tiku_kits_matrix_elem_t det_recursive(
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a matrix with given dimensions, all elements zero
- *
+/*
  * Zeros the entire backing 2-D buffer so that any subsequent reads
  * of in-bounds elements return a deterministic value.  The runtime
  * dimensions are clamped to TIKU_KITS_MATRIX_MAX_SIZE at compile time
  * so that the static buffer is never overrun.
+ */
+
+/**
+ * @brief Initialize a matrix with given dimensions, all elements zero
  */
 int tiku_kits_matrix_init(struct tiku_kits_matrix *m, uint8_t rows, uint8_t cols)
 {

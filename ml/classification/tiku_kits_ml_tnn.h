@@ -6,6 +6,10 @@
  *
  * tiku_kits_ml_tnn.h - Tiny Neural Network classifier
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Platform-independent single-hidden-layer feedforward neural network
  * for embedded classification. Uses ReLU activation in the hidden
  * layer, linear output, and trains via backpropagation with SGD.
@@ -13,26 +17,24 @@
  *
  * Architecture:
  *
- *     input (n_input) -> hidden (n_hidden, ReLU) -> output (n_output)
+ * input (n_input) -> hidden (n_hidden, ReLU) -> output (n_output)
  *
  * The network classifies by argmax of the output layer:
  *
- *     h_j = ReLU( w_hidden[j][0] + sum_i w_hidden[j][i+1] * x[i] )
- *     o_k = w_output[k][0] + sum_j w_output[k][j+1] * h_j
- *     class = argmax_k( o_k )
+ * h_j = ReLU( w_hidden[j][0] + sum_i w_hidden[j][i+1] * x[i] )
+ * o_k = w_output[k][0] + sum_j w_output[k][j+1] * h_j
+ * class = argmax_k( o_k )
  *
  * Hidden weights are initialized with small alternating values to
  * break symmetry. Output weights are zero-initialized.
  *
  * Training uses one-hot target encoding and SGD backpropagation:
  *
- *     delta_o[k] = o[k] - target[k]
- *     delta_h[j] = relu'(h[j]) * sum_k( w_output[k][j+1] * delta_o[k] )
- *     w -= lr * gradient
+ * delta_o[k] = o[k] - target[k]
+ * delta_h[j] = relu'(h[j]) * sum_k( w_output[k][j+1] * delta_o[k] )
+ * w -= lr * gradient
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_ML_TNN_H_
@@ -48,53 +50,59 @@
 /* CONFIGURATION                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Element type for feature values.
- *
+/*
  * Defaults to int32_t for integer-only targets (no FPU required).
  * All ML sub-modules share this type so that feature vectors can be
  * passed between classifiers without casting.
- *
  * Override before including this header to change the type:
+ */
+
+/**
+ * @brief Element type for feature values.
+ *
  * @code
- *   #define TIKU_KITS_ML_ELEM_TYPE int16_t
- *   #include "tiku_kits_ml_tnn.h"
+ * #define TIKU_KITS_ML_ELEM_TYPE int16_t
+ * #include "tiku_kits_ml_tnn.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_ELEM_TYPE
 #define TIKU_KITS_ML_ELEM_TYPE int32_t
 #endif
 
-/**
- * @brief Maximum number of input features.
- *
+/*
  * Determines the width of the hidden-layer weight matrix.  Each
  * hidden neuron stores (MAX_INPUT + 1) weights (bias + features).
  * Total hidden-layer memory is MAX_HIDDEN * (MAX_INPUT + 1) *
  * sizeof(int32_t) bytes.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of input features.
+ *
  * @code
- *   #define TIKU_KITS_ML_TNN_MAX_INPUT 16
- *   #include "tiku_kits_ml_tnn.h"
+ * #define TIKU_KITS_ML_TNN_MAX_INPUT 16
+ * #include "tiku_kits_ml_tnn.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_TNN_MAX_INPUT
 #define TIKU_KITS_ML_TNN_MAX_INPUT 8
 #endif
 
-/**
- * @brief Maximum number of hidden neurons.
- *
+/*
  * Determines the height of the hidden-layer weight matrix and the
  * width of the output-layer weight matrix.  Larger values allow
  * the network to learn more complex decision boundaries at the
  * cost of more memory and computation.
- *
  * Override before including this header to change the limit:
+ */
+
+/**
+ * @brief Maximum number of hidden neurons.
+ *
  * @code
- *   #define TIKU_KITS_ML_TNN_MAX_HIDDEN 16
- *   #include "tiku_kits_ml_tnn.h"
+ * #define TIKU_KITS_ML_TNN_MAX_HIDDEN 16
+ * #include "tiku_kits_ml_tnn.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_TNN_MAX_HIDDEN
@@ -117,18 +125,20 @@
 #define TIKU_KITS_ML_TNN_MAX_OUTPUT 4
 #endif
 
-/**
- * @brief Default number of fractional bits for fixed-point weights.
- *
+/*
  * With shift=8 the resolution is ~0.004 (1/256).  Weights,
  * activations, learning rate, and output scores all use this Q
  * format.  Larger shift gives finer weight precision but reduces
  * the representable integer range.
- *
  * Override before including this header to change the default:
+ */
+
+/**
+ * @brief Default number of fractional bits for fixed-point weights.
+ *
  * @code
- *   #define TIKU_KITS_ML_TNN_SHIFT 10
- *   #include "tiku_kits_ml_tnn.h"
+ * #define TIKU_KITS_ML_TNN_SHIFT 10
+ * #include "tiku_kits_ml_tnn.h"
  * @endcode
  */
 #ifndef TIKU_KITS_ML_TNN_SHIFT
@@ -144,54 +154,47 @@
  */
 typedef TIKU_KITS_ML_ELEM_TYPE tiku_kits_ml_elem_t;
 
-/**
- * @struct tiku_kits_ml_tnn
- * @brief Single-hidden-layer feedforward neural network
- *
+/*
  * Architecture:
- *
- *     input (n_input) --> hidden (n_hidden, ReLU) --> output (n_output)
- *                                                     argmax --> class
- *
+ * input (n_input) --> hidden (n_hidden, ReLU) --> output (n_output)
+ * argmax --> class
  * Two weight matrices are stored:
- *   - @c w_hidden[j][0] is the bias for hidden neuron j.
- *     @c w_hidden[j][1..n_input] are the input-to-hidden weights.
- *   - @c w_output[k][0] is the bias for output neuron k.
- *     @c w_output[k][1..n_hidden] are the hidden-to-output weights.
- *
+ * - @c w_hidden[j][0] is the bias for hidden neuron j.
  * All weights are Q(shift) fixed-point.  Hidden activations use
  * ReLU (max(0, z)); output activations are linear.  Classification
  * is by argmax of the output layer.
- *
  * Two scratch buffers (@c h and @c o) hold intermediate activations
  * during forward and backward passes.  They are overwritten on each
  * call to train(), forward(), or predict().
- *
- * @note Hidden weights are initialized with small alternating values
- *       (~1/n_input in Q(shift)) to break symmetry.  Output weights
- *       and biases are zero-initialized.
- *
- * @note Because all storage lives inside the struct, no heap
- *       allocation is needed -- just declare the network as a static
- *       or local variable.
- *
  * Example:
+ * tiku_kits_ml_tnn_init(&net, 2, 4, 2, 8);
+ * tiku_kits_ml_tnn_set_lr(&net, 13);  // ~0.05 in Q8
+ * // Train: class 0 when both positive, class 1 when both negative
+ * tiku_kits_ml_elem_t x0[] = {5, 5};
+ * tiku_kits_ml_tnn_train(&net, x0, 0);
+ * tiku_kits_ml_elem_t x1[] = {-5, -5};
+ * tiku_kits_ml_tnn_train(&net, x1, 1);
+ * // Predict
+ * uint8_t cls;
+ * tiku_kits_ml_elem_t xt[] = {4, 3};
+ * tiku_kits_ml_tnn_predict(&net, xt, &cls);  // cls = 0
+ */
+
+/**
+ * @brief Single-hidden-layer feedforward neural network
+ *
+ * @struct tiku_kits_ml_tnn
+ * @c w_hidden[j][1..n_input] are the input-to-hidden weights.
+ * - @c w_output[k][0] is the bias for output neuron k.
+ * @c w_output[k][1..n_hidden] are the hidden-to-output weights.
+ * @note Hidden weights are initialized with small alternating values
+ * (~1/n_input in Q(shift)) to break symmetry.  Output weights
+ * and biases are zero-initialized.
+ * @note Because all storage lives inside the struct, no heap
+ * allocation is needed -- just declare the network as a static
+ * or local variable.
  * @code
- *   struct tiku_kits_ml_tnn net;
- *
- *   tiku_kits_ml_tnn_init(&net, 2, 4, 2, 8);
- *   tiku_kits_ml_tnn_set_lr(&net, 13);  // ~0.05 in Q8
- *
- *   // Train: class 0 when both positive, class 1 when both negative
- *   tiku_kits_ml_elem_t x0[] = {5, 5};
- *   tiku_kits_ml_tnn_train(&net, x0, 0);
- *   tiku_kits_ml_elem_t x1[] = {-5, -5};
- *   tiku_kits_ml_tnn_train(&net, x1, 1);
- *
- *   // Predict
- *   uint8_t cls;
- *   tiku_kits_ml_elem_t xt[] = {4, 3};
- *   tiku_kits_ml_tnn_predict(&net, xt, &cls);  // cls = 0
+ * struct tiku_kits_ml_tnn net;
  * @endcode
  */
 struct tiku_kits_ml_tnn {
@@ -225,25 +228,27 @@ struct tiku_kits_ml_tnn {
 /* INITIALIZATION                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize a tiny neural network
- *
+/*
  * Validates all architecture parameters, sets default learning rate
  * (~0.05 in Q(shift)), and initializes weights via the symmetry-
  * breaking alternating pattern.  Output weights and biases are
  * zeroed.
+ */
+
+/**
+ * @brief Initialize a tiny neural network
  *
  * @param tnn      Network to initialize (must not be NULL)
  * @param n_input  Number of input features
- *                 (1..TIKU_KITS_ML_TNN_MAX_INPUT)
+ * (1..TIKU_KITS_ML_TNN_MAX_INPUT)
  * @param n_hidden Number of hidden neurons
- *                 (1..TIKU_KITS_ML_TNN_MAX_HIDDEN)
+ * (1..TIKU_KITS_ML_TNN_MAX_HIDDEN)
  * @param n_output Number of output classes
- *                 (2..TIKU_KITS_ML_TNN_MAX_OUTPUT)
+ * (2..TIKU_KITS_ML_TNN_MAX_OUTPUT)
  * @param shift    Number of fixed-point fractional bits (1..30)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if tnn is NULL,
- *         TIKU_KITS_ML_ERR_PARAM if any dimension is out of range
+ * TIKU_KITS_ML_ERR_NULL if tnn is NULL,
+ * TIKU_KITS_ML_ERR_PARAM if any dimension is out of range
  */
 int tiku_kits_ml_tnn_init(struct tiku_kits_ml_tnn *tnn,
                             uint8_t n_input,
@@ -251,17 +256,19 @@ int tiku_kits_ml_tnn_init(struct tiku_kits_ml_tnn *tnn,
                             uint8_t n_output,
                             uint8_t shift);
 
-/**
- * @brief Reset all weights and training count
- *
+/*
  * Re-initializes hidden weights with the alternating symmetry-
  * breaking pattern and zeros output weights.  Preserves n_input,
  * n_hidden, n_output, shift, and learning_rate so the network can
  * be retrained from scratch with the same architecture.
+ */
+
+/**
+ * @brief Reset all weights and training count
  *
  * @param tnn Network to reset (must not be NULL)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if tnn is NULL
+ * TIKU_KITS_ML_ERR_NULL if tnn is NULL
  */
 int tiku_kits_ml_tnn_reset(struct tiku_kits_ml_tnn *tnn);
 
@@ -291,23 +298,24 @@ int tiku_kits_ml_tnn_set_lr(struct tiku_kits_ml_tnn *tnn,
 /* TRAINING                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Train the network with one sample using backpropagation
- *
+/*
  * Performs one forward pass (computing hidden and output activations)
  * followed by one backward pass (SGD weight update).  The target is
  * one-hot encoded: target[k] = (1 << shift) if k == y, else 0.
  * The ReLU derivative (0 or 1) gates gradient flow through the
  * hidden layer.
- *
  * O(n_input * n_hidden + n_hidden * n_output) per call.
+ */
+
+/**
+ * @brief Train the network with one sample using backpropagation
  *
  * @param tnn Network (must not be NULL)
  * @param x   Feature vector of length n_input (must not be NULL)
  * @param y   Class label (0..n_output - 1)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if tnn or x is NULL,
- *         TIKU_KITS_ML_ERR_PARAM if y >= n_output
+ * TIKU_KITS_ML_ERR_NULL if tnn or x is NULL,
+ * TIKU_KITS_ML_ERR_PARAM if y >= n_output
  */
 int tiku_kits_ml_tnn_train(struct tiku_kits_ml_tnn *tnn,
                              const tiku_kits_ml_elem_t *x,
@@ -317,20 +325,22 @@ int tiku_kits_ml_tnn_train(struct tiku_kits_ml_tnn *tnn,
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute raw output scores (forward pass only)
- *
+/*
  * Runs the forward pass and copies the output activations into the
  * caller's buffer.  The network's internal h[] and o[] scratch
  * buffers are overwritten.  Higher score indicates stronger class
  * membership.  O(n_input * n_hidden + n_hidden * n_output).
+ */
+
+/**
+ * @brief Compute raw output scores (forward pass only)
  *
  * @param tnn    Network (must not be NULL)
  * @param x      Feature vector of length n_input (must not be NULL)
  * @param scores Output array; caller must provide space for at least
- *               n_output int32_t entries (must not be NULL)
+ * n_output int32_t entries (must not be NULL)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if tnn, x, or scores is NULL
+ * TIKU_KITS_ML_ERR_NULL if tnn, x, or scores is NULL
  */
 int tiku_kits_ml_tnn_forward(
     struct tiku_kits_ml_tnn *tnn,
@@ -360,42 +370,46 @@ int tiku_kits_ml_tnn_predict(
 /* WEIGHT ACCESS                                                             */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Get weights for a layer
- *
+/*
  * Copies the weight matrix row-by-row into a flat caller-supplied
  * array.  For layer 0 (hidden): n_hidden * (n_input + 1) elements.
  * For layer 1 (output): n_output * (n_hidden + 1) elements.
  * Each row starts with the bias, followed by the connection weights.
+ */
+
+/**
+ * @brief Get weights for a layer
  *
  * @param tnn     Network (must not be NULL)
  * @param layer   0 = hidden layer, 1 = output layer
  * @param weights Output array; caller must provide sufficient space
- *                (must not be NULL)
+ * (must not be NULL)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if tnn or weights is NULL,
- *         TIKU_KITS_ML_ERR_PARAM if layer > 1
+ * TIKU_KITS_ML_ERR_NULL if tnn or weights is NULL,
+ * TIKU_KITS_ML_ERR_PARAM if layer > 1
  */
 int tiku_kits_ml_tnn_get_weights(
     const struct tiku_kits_ml_tnn *tnn,
     uint8_t layer,
     int32_t *weights);
 
-/**
- * @brief Set weights for a layer (for pre-trained deployment)
- *
+/*
  * Loads externally computed weights so the network can be used for
  * inference without on-device training.  The input array layout
  * must match get_weights: row-major, bias first in each row, all
  * values in Q(shift).
+ */
+
+/**
+ * @brief Set weights for a layer (for pre-trained deployment)
  *
  * @param tnn     Network (must be initialized; must not be NULL)
  * @param layer   0 = hidden layer, 1 = output layer
  * @param weights Input array with the same layout as get_weights
- *                (must not be NULL)
+ * (must not be NULL)
  * @return TIKU_KITS_ML_OK on success,
- *         TIKU_KITS_ML_ERR_NULL if tnn or weights is NULL,
- *         TIKU_KITS_ML_ERR_PARAM if layer > 1
+ * TIKU_KITS_ML_ERR_NULL if tnn or weights is NULL,
+ * TIKU_KITS_ML_ERR_PARAM if layer > 1
  */
 int tiku_kits_ml_tnn_set_weights(
     struct tiku_kits_ml_tnn *tnn,

@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_syslog_process.c - Syslog protothread process
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * A self-contained protothread that sends test syslog messages to
  * the SLIP host (172.16.7.1) after the network stack is initialised.
  * Designed to run alongside tiku_kits_net_process in APP=net.
@@ -16,16 +20,14 @@
  * hostname/tag truncation).
  *
  * Messages sent:
- *   1. <134>tikuOS os: boot ok            (happy path)
- *   2. <135>tikuOS os: sev-clamp          (severity 255 -> clamped to 7)
- *   3. <134>tikuOS os: AAAAAA...          (message truncated to fit MTU)
- *   4. <134>ABCDEFGH os: host-trunc       (hostname 16 chars -> truncated to 8)
- *   5. <134>ABCDEFGH ZYXWVUTS: tag-trunc  (tag 10 chars -> truncated to 8)
+ * 1. <134>tikuOS os: boot ok            (happy path)
+ * 2. <135>tikuOS os: sev-clamp          (severity 255 -> clamped to 7)
+ * 3. <134>tikuOS os: AAAAAA...          (message truncated to fit MTU)
+ * 4. <134>ABCDEFGH os: host-trunc       (hostname 16 chars -> truncated to 8)
+ * 5. <134>ABCDEFGH ZYXWVUTS: tag-trunc  (tag 10 chars -> truncated to 8)
  *
  * TikuBench test_syslog_send.py validates message 1.
  * TikuBench test_syslog_boundary.py validates messages 2-5.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <kernel/process/tiku_process.h>

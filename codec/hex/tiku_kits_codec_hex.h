@@ -6,6 +6,10 @@
  *
  * tiku_kits_codec_hex.h - Hex encoder/decoder (binary <-> hex string)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Converts between raw byte arrays and lowercase hexadecimal ASCII
  * strings.  Designed for embedded systems with zero heap allocation:
  * the caller supplies all buffers.
@@ -14,8 +18,6 @@
  * ASCII characters per input byte).  The decoder accepts both upper-
  * and lowercase hex digits and writes the resulting raw bytes into a
  * caller-provided buffer.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_CODEC_HEX_H_
@@ -57,24 +59,25 @@
 /* ENCODER                                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Encode a byte array to a lowercase hex string.
- *
+/*
  * Writes two lowercase hex characters per input byte into @p dst,
  * followed by a null terminator.  The total number of characters
  * written (excluding the null) is stored in @p out_len if it is
  * not NULL.
+ */
+
+/**
+ * @brief Encode a byte array to a lowercase hex string.
  *
  * @param src      Source bytes to encode (must not be NULL when
- *                 src_len > 0)
+ * src_len > 0)
  * @param src_len  Number of source bytes
  * @param dst      Destination buffer for hex string (must not be
- *                 NULL)
+ * NULL)
  * @param dst_size Size of destination buffer in bytes; must be at
- *                 least TIKU_KITS_CODEC_HEX_ENCODE_LEN(src_len)
+ * least TIKU_KITS_CODEC_HEX_ENCODE_LEN(src_len)
  * @param out_len  Output: number of hex characters written
- *                 (excluding null); may be NULL
- *
+ * (excluding null); may be NULL
  * @return TIKU_KITS_CODEC_OK on success
  * @return TIKU_KITS_CODEC_ERR_NULL if a required pointer is NULL
  * @return TIKU_KITS_CODEC_ERR_OVERFLOW if dst_size is too small

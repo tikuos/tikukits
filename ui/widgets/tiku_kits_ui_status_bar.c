@@ -6,13 +6,15 @@
  *
  * tiku_kits_ui_status_bar.c - Status bar impl
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Each slot widget is rendered into its own subsurface so it sees
  * (0, 0) as the anchor of its slot. Slot widths are: left = 1/3,
  * centre = 1/3, right = 1/3 of the bar. This is a deliberately
  * simple split -- if you need finer control, render the slots
  * yourself.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_ui_status_bar.h"

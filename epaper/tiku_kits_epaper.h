@@ -6,6 +6,10 @@
  *
  * tiku_kits_epaper.h - Generic e-paper display library, common API
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * This kit provides a manufacturer-agnostic API for SPI-attached
  * monochrome and colour e-paper displays. The application picks a
  * panel descriptor (e.g. tiku_kits_epaper_panel_e2370js0c1, which
@@ -16,40 +20,40 @@
  * Architecture
  * ------------
  *
- *     application
- *         |
- *         v
- *     +---------------------+
- *     | tiku_kits_epaper.h  |    <- this header (generic API)
- *     | tiku_kits_epaper.c  |       set_pixel / clear / dispatch
- *     +---------------------+
- *         |
- *         v   (vtable in panel descriptor)
- *     +---------------------+
- *     | family driver       |    <- e.g. pervasive_itc/, waveshare_ssd16xx/
- *     | (per-panel logic)   |       implements ops + panel descriptors
- *     +---------------------+
- *         |
- *         v
- *     interfaces/bus/spi  +  arch/.../gpio
+ * application
+ * |
+ * v
+ * +---------------------+
+ * | tiku_kits_epaper.h  |    <- this header (generic API)
+ * | tiku_kits_epaper.c  |       set_pixel / clear / dispatch
+ * +---------------------+
+ * |
+ * v   (vtable in panel descriptor)
+ * +---------------------+
+ * | family driver       |    <- e.g. pervasive_itc/, waveshare_ssd16xx/
+ * | (per-panel logic)   |       implements ops + panel descriptors
+ * +---------------------+
+ * |
+ * v
+ * interfaces/bus/spi  +  arch/.../gpio
  *
  * Each panel descriptor carries:
- *   - common geometry  (width, height, colour-plane count)
- *   - a family-specific ops vtable  (init/refresh/sleep dispatch)
- *   - opaque family-specific data    (PSRs, LUTs, OTP, etc. -- cast
- *                                     to the driver's own struct)
+ * - common geometry  (width, height, colour-plane count)
+ * - a family-specific ops vtable  (init/refresh/sleep dispatch)
+ * - opaque family-specific data    (PSRs, LUTs, OTP, etc. -- cast
+ * to the driver's own struct)
  *
  * The application code is therefore the same regardless of which
  * panel is wired:
  *
- *     epd.panel = &tiku_kits_epaper_panel_<model>;
- *     epd.pins  = ...;
- *     epd.framebuffer     = ...;
- *     epd.framebuffer_red = ...;   // colour panels only
- *     tiku_kits_epaper_init(&epd);
- *     tiku_kits_epaper_set_pixel(&epd, x, y, TIKU_KITS_EPAPER_BLACK);
- *     tiku_kits_epaper_refresh(&epd);
- *     tiku_kits_epaper_sleep(&epd);
+ * epd.panel = &tiku_kits_epaper_panel_<model>;
+ * epd.pins  = ...;
+ * epd.framebuffer     = ...;
+ * epd.framebuffer_red = ...;   // colour panels only
+ * tiku_kits_epaper_init(&epd);
+ * tiku_kits_epaper_set_pixel(&epd, x, y, TIKU_KITS_EPAPER_BLACK);
+ * tiku_kits_epaper_refresh(&epd);
+ * tiku_kits_epaper_sleep(&epd);
  *
  * Memory model
  * ------------
@@ -62,20 +66,18 @@
  *
  * Adding new panels
  * -----------------
- *  1. If the controller family already has a driver under
- *     tikukits/epaper/<family>/, add a new
- *     extern const tiku_kits_epaper_panel_t tiku_kits_epaper_panel_<model>;
- *     to its header and the corresponding constant definition (with
- *     family-specific calibration data) to its .c file.
- *  2. If the controller family is new, create a new subdirectory
- *     under tikukits/epaper/, define a tiku_kits_epaper_ops_t
- *     vtable backed by that family's protocol, and emit one panel
- *     descriptor per supported model pointing to the vtable.
+ * 1. If the controller family already has a driver under
+ * tikukits/epaper/<family>/, add a new
+ * extern const tiku_kits_epaper_panel_t tiku_kits_epaper_panel_<model>;
+ * to its header and the corresponding constant definition (with
+ * family-specific calibration data) to its .c file.
+ * 2. If the controller family is new, create a new subdirectory
+ * under tikukits/epaper/, define a tiku_kits_epaper_ops_t
+ * vtable backed by that family's protocol, and emit one panel
+ * descriptor per supported model pointing to the vtable.
  *
  * No changes to the common header / .c file are required for
  * either case -- the dispatch is fully data-driven.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_EPAPER_H_
@@ -112,21 +114,23 @@
 /* COLOURS                                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @defgroup TIKU_KITS_EPAPER_COLOUR E-paper Colours
- * @brief Logical colour codes accepted by set_pixel / clear.
- *
+/*
  * Encoded internally as a 2-plane bit pattern (black plane, red
  * plane). Monochrome panels (colour_planes == 1) accept only WHITE
  * and BLACK; passing RED or YELLOW falls back to BLACK so calls
  * are forgiving across panel types. BWR panels accept WHITE / BLACK
  * / RED. BWRY panels accept all four.
- *
  * Plane encoding:
- *   WHITE  : black=0, red=0
- *   BLACK  : black=1, red=0
- *   RED    : black=0, red=1
- *   YELLOW : black=1, red=1   (BWRY only)
+ * WHITE  : black=0, red=0
+ * BLACK  : black=1, red=0
+ * RED    : black=0, red=1
+ * YELLOW : black=1, red=1   (BWRY only)
+ */
+
+/**
+ * @brief Logical colour codes accepted by set_pixel / clear.
+ *
+ * @defgroup TIKU_KITS_EPAPER_COLOUR E-paper Colours
  * @{
  */
 #define TIKU_KITS_EPAPER_WHITE     0u
@@ -146,35 +150,41 @@ typedef struct tiku_kits_epaper tiku_kits_epaper_t;
 /* DRIVER OPS (VTABLE)                                                       */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Family-driver operations table.
- *
+/*
  * Each driver family implements this struct once and exports it
  * via its header. Panel descriptors point to the appropriate ops
  * via their `ops` field, and the generic API in this kit dispatches
  * through it.
- *
  * Conventions:
- *   - All ops take a pointer to the application's tiku_kits_epaper_t.
- *   - All ops return one of TIKU_KITS_EPAPER_OK / ERR_*.
- *   - `init` is called once before any other op. It configures the
- *     control GPIOs and brings the panel out of reset; it does NOT
- *     init the SPI bus (that is the application's responsibility).
- *   - `refresh` blocks until the panel has finished latching the
- *     new frame.
- *   - `sleep` places the panel in low-power state. Calling refresh
- *     again should wake it.
+ * - All ops take a pointer to the application's tiku_kits_epaper_t.
+ * - All ops return one of TIKU_KITS_EPAPER_OK / ERR_*.
+ * - `init` is called once before any other op. It configures the
+ * control GPIOs and brings the panel out of reset; it does NOT
+ * init the SPI bus (that is the application's responsibility).
+ * - `refresh` blocks until the panel has finished latching the
+ * new frame.
+ * - `sleep` places the panel in low-power state. Calling refresh
+ * again should wake it.
+ */
+
+/**
+ * @brief Family-driver operations table.
  */
 typedef struct {
     int (*init)(tiku_kits_epaper_t *epd);
     int (*refresh)(tiku_kits_epaper_t *epd);
     int (*sleep)(tiku_kits_epaper_t *epd);
-    /** Optional partial-refresh path. NULL = panel doesn't support
-     *  partial; the generic dispatcher will fall back to a full
-     *  refresh in that case. The (x, y, w, h) rectangle is in
-     *  panel-pixel coordinates and may be silently expanded by
-     *  the driver to controller-window granularity (e.g. byte
-     *  alignment on the X axis). */
+        /*
+     * partial; the generic dispatcher will fall back to a full
+     * refresh in that case. The (x, y, w, h) rectangle is in
+     * panel-pixel coordinates and may be silently expanded by
+     * the driver to controller-window granularity (e.g. byte
+     * *  alignment on the X axis).
+     */
+
+    /**
+     * Optional partial-refresh path. NULL = panel doesn't support
+     */
     int (*refresh_rect)(tiku_kits_epaper_t *epd,
                          uint16_t x, uint16_t y,
                          uint16_t w, uint16_t h);
@@ -184,20 +194,22 @@ typedef struct {
 /* PANEL DESCRIPTOR                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Static description of an e-paper panel.
- *
+/*
  * One descriptor per supported panel model, declared as
  * `extern const` by the appropriate driver module. Carries the
  * common geometry, the family-driver vtable, and an opaque pointer
  * to family-specific calibration data (PSR bytes for Pervasive iTC,
  * LUT data for SSD16xx, etc.) that the driver casts internally.
+ */
+
+/**
+ * @brief Static description of an e-paper panel.
  *
  * @note Geometry convention: `width` is the panel's SHORT axis,
- *       `height` is the LONG axis. This matches the controller's
- *       native scan-line stride; getting it backwards shears the
- *       image into apparent dots. For example the 3.7" panel
- *       advertised as "416x240" has width=240, height=416.
+ * `height` is the LONG axis. This matches the controller's
+ * native scan-line stride; getting it backwards shears the
+ * image into apparent dots. For example the 3.7" panel
+ * advertised as "416x240" has width=240, height=416.
  */
 typedef struct {
     /** Pixels along the panel's short axis. */
@@ -221,23 +233,24 @@ typedef struct {
 /* PIN CONFIGURATION                                                         */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Discrete control GPIOs the driver toggles.
- *
+/*
  * SPI clock / data lines are configured separately by the
  * application's tiku_spi_init() call before invoking the driver.
  * Only the per-panel discrete signals are described here.
- *
  * Panel power gate (`power_port`/`power_pin`):
- *   EXT4-02 routes panel Vcc through a MOSFET driven by EXT4
- *   pin 11 (White).  EXT3-1 has no such gate -- the panel is
- *   always powered.  Set `power_port = 0` for EXT3-1 (or any
- *   board without a panel-power gate); the kit treats port 0 as
- *   "not connected" and skips all power-gate operations.  Set
- *   it to the real port/pin (e.g. 3, 4 on FR5994 LaunchPad)
- *   for EXT4-02 -- the kit will drive HIGH at init and use
- *   power-cycle hygiene around reset on family drivers that
- *   need it.
+ * EXT4-02 routes panel Vcc through a MOSFET driven by EXT4
+ * pin 11 (White).  EXT3-1 has no such gate -- the panel is
+ * always powered.  Set `power_port = 0` for EXT3-1 (or any
+ * board without a panel-power gate); the kit treats port 0 as
+ * "not connected" and skips all power-gate operations.  Set
+ * it to the real port/pin (e.g. 3, 4 on FR5994 LaunchPad)
+ * for EXT4-02 -- the kit will drive HIGH at init and use
+ * power-cycle hygiene around reset on family drivers that
+ * need it.
+ */
+
+/**
+ * @brief Discrete control GPIOs the driver toggles.
  */
 typedef struct tiku_kits_epaper_pins {
     uint8_t cs_port,    cs_pin;     /**< Chip select (active low) */
@@ -253,13 +266,15 @@ typedef struct tiku_kits_epaper_pins {
 /* DEVICE CONTEXT                                                            */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Per-instance e-paper state.
- *
+/*
  * Caller allocates this structure (typically static) and fills its
  * fields before calling tiku_kits_epaper_init(). The struct is
  * fully transparent today; future kit versions may add an opaque
  * private slot for driver state at the bottom.
+ */
+
+/**
+ * @brief Per-instance e-paper state.
  */
 struct tiku_kits_epaper {
     /** Panel descriptor (compile-time constant). */
@@ -269,10 +284,15 @@ struct tiku_kits_epaper {
     /** Black plane (DTM1 / black pixel data). Always required;
      *  size = tiku_kits_epaper_framebuffer_size(panel). */
     uint8_t *framebuffer;
-    /** Red plane (DTM2 / second-colour pixel data). Required for
-     *  colour panels (panel->colour_planes == 2); may be NULL for
-     *  monochrome panels (some drivers may still send a fixed fill
-     *  to DTM2 internally for protocol compliance). */
+        /*
+     * colour panels (panel->colour_planes == 2); may be NULL for
+     * monochrome panels (some drivers may still send a fixed fill
+     * *  to DTM2 internally for protocol compliance).
+     */
+
+    /**
+     * Red plane (DTM2 / second-colour pixel data). Required for
+     */
     uint8_t *framebuffer_red;
     /** Ambient temperature in panel units, used by drivers that
      *  vary their waveform with temperature. For Pervasive iTC:
@@ -284,18 +304,20 @@ struct tiku_kits_epaper {
 /* GENERIC API (dispatches through panel->ops)                               */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize the panel and bring it out of reset.
- *
+/*
  * Configures GPIOs, validates that the framebuffer pointers are
  * appropriate for the panel's colour-plane count, and dispatches
  * to the family driver. The SPI bus must already be initialized
  * by the application.
+ */
+
+/**
+ * @brief Initialize the panel and bring it out of reset.
  *
  * @param epd  Driver context with panel, pins, and framebuffers
- *             assigned.
+ * assigned.
  * @return TIKU_KITS_EPAPER_OK on success, ERR_PARAM on missing
- *         fields, or any error code returned by the family driver.
+ * fields, or any error code returned by the family driver.
  */
 int tiku_kits_epaper_init(tiku_kits_epaper_t *epd);
 
@@ -312,21 +334,22 @@ int tiku_kits_epaper_init(tiku_kits_epaper_t *epd);
  */
 int tiku_kits_epaper_refresh(tiku_kits_epaper_t *epd);
 
-/**
- * @brief Push only the pixels inside (x, y, w, h) to the panel.
- *
+/*
  * Generic dispatcher. When the active panel's family driver
  * exposes a refresh_rect op, the call routes through it and
  * benefits from the controller's partial-update mode (typically
  * <1 s vs ~10-25 s for a full refresh on BWR panels). When the
  * driver does NOT expose refresh_rect, this falls back to a full
  * tiku_kits_epaper_refresh() and the rectangle is ignored.
- *
  * Pair with tiku_kits_ui_window_render_dirty() and / or
  * tiku_kits_gfx_offscreen_diff() to compute the rectangle.
+ */
+
+/**
+ * @brief Push only the pixels inside (x, y, w, h) to the panel.
  *
  * @return TIKU_KITS_EPAPER_OK on success, ERR_PARAM on missing
- *         fields, or any error code returned by the family driver.
+ * fields, or any error code returned by the family driver.
  */
 int tiku_kits_epaper_refresh_rect(tiku_kits_epaper_t *epd,
                                    uint16_t x, uint16_t y,
@@ -390,27 +413,30 @@ void tiku_kits_epaper_set_pixel(tiku_kits_epaper_t *epd,
 /* PANEL POWER GATE (EXT4 / custom boards)                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Drive the panel-power gate HIGH (panel powered).
- *
+/*
  * No-op on boards without a power gate (`power_port == 0`).
  * EXT3-1 leaves the panel always-on; EXT4 wires it through a
  * MOSFET on connector pin 11.
- *
  * Family drivers that need a Vcc cycle for OTP / waveform reset
  * can call _off / settle / _on around their reset sequence.
+ */
+
+/**
+ * @brief Drive the panel-power gate HIGH (panel powered).
  *
  * @param epd  Driver context (only the pins struct is consulted)
  */
 void tiku_kits_epaper_panel_power_on(tiku_kits_epaper_t *epd);
 
-/**
- * @brief Drive the panel-power gate LOW (panel unpowered).
- *
+/*
  * Must release SPI and discrete-control pins to high-Z BEFORE
  * calling this -- driving signal lines into an unpowered IC can
  * latch up its protection diodes.  No-op on boards without a
  * power gate.
+ */
+
+/**
+ * @brief Drive the panel-power gate LOW (panel unpowered).
  *
  * @param epd  Driver context
  */

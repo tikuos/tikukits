@@ -6,6 +6,10 @@
  *
  * tiku_kits_crypto_tls12.h - minimal TLS 1.2 client (ECDHE + AES-128-GCM)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * A second handshake for the TLS-1.2-only tail of the web that the TLS 1.3
  * client (tiku_kits_crypto_tls13) cannot reach.  Supports the two ECDHE +
  * AES-128-GCM-SHA256 suites -- ECDHE-RSA (0xC02F) and ECDHE-ECDSA (0xC02B) --
@@ -13,8 +17,6 @@
  * client) and ServerKeyExchange signature authentication.  Single connection,
  * no session resumption, static allocation.  Reuses the tls13 I/O + RNG
  * callback types so a caller can drive either client over the same transport.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_CRYPTO_TLS12_H_

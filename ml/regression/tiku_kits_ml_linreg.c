@@ -23,17 +23,18 @@
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Compute slope numerator and denominator from accumulators
- *
+/*
  * Extracts the two components of the OLS slope formula:
- *   numerator   = n * Sxy - Sx * Sy
- *   denominator = n * Sxx - Sx * Sx
- *
+ * numerator   = n * Sxy - Sx * Sy
+ * denominator = n * Sxx - Sx * Sx
  * Returns ERR_SIZE if fewer than 2 points have been pushed, or
  * ERR_SINGULAR if the denominator is zero (all x values identical).
  * This helper is reused by slope(), intercept(), predict(), and r2()
  * to avoid duplicating the accumulator arithmetic.
+ */
+
+/**
+ * @brief Compute slope numerator and denominator from accumulators
  */
 static int slope_parts(const struct tiku_kits_ml_linreg *lr,
                        int64_t *num, int64_t *den)
@@ -170,13 +171,15 @@ int tiku_kits_ml_linreg_slope(
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Get the fitted intercept as a fixed-point value
- *
+/*
  * intercept = (Sy - slope * Sx) / n.  To avoid computing slope
  * explicitly, the formula is rearranged using the slope numerator
  * and denominator: inter_num = Sy * den - num * Sx, then
  * result = (inter_num << shift) / (n * den).
+ */
+
+/**
+ * @brief Get the fitted intercept as a fixed-point value
  */
 int tiku_kits_ml_linreg_intercept(
     const struct tiku_kits_ml_linreg *lr,
@@ -211,15 +214,17 @@ int tiku_kits_ml_linreg_intercept(
 /* PREDICTION                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Predict y for a given x value
- *
+/*
  * Computes y = slope * x + intercept directly from accumulators
  * without extracting slope or intercept separately.  The algebra
  * simplifies to:
- *   y = (num * (n*x - Sx) + Sy * den) / (n * den)
+ * y = (num * (n*x - Sx) + Sy * den) / (n * den)
  * which avoids any Q-format scaling -- the result is in the
  * original integer domain.
+ */
+
+/**
+ * @brief Predict y for a given x value
  */
 int tiku_kits_ml_linreg_predict(
     const struct tiku_kits_ml_linreg *lr,
@@ -257,15 +262,17 @@ int tiku_kits_ml_linreg_predict(
 /* GOODNESS OF FIT                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Get the R-squared (coefficient of determination)
- *
+/*
  * R2 = num^2 / (den * SSyy) where SSyy = n*Syy - Sy^2.
  * To produce a Q(shift) result, the numerator is shifted left.
  * To mitigate overflow when num^2 is very large, the division is
  * split: (num/den) * num, then the shift and final division by
  * SSyy.  The result is clamped to [0, 1 << shift] to guard
  * against rounding overshoot.
+ */
+
+/**
+ * @brief Get the R-squared (coefficient of determination)
  */
 int tiku_kits_ml_linreg_r2(
     const struct tiku_kits_ml_linreg *lr,

@@ -6,6 +6,10 @@
  *
  * tiku_kits_sigfeatures_median.h - Sliding window median filter
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Maintains a circular buffer of the most recent samples and
  * computes the median on demand via an insertion sort into a
  * scratch array.  Effective at removing impulse noise while
@@ -16,8 +20,6 @@
  * at most TIKU_KITS_SIGFEATURES_MEDIAN_MAX_SIZE.
  *
  * All storage is statically allocated; no heap required.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_SIGFEATURES_MEDIAN_H_
@@ -48,29 +50,29 @@
 /* TYPE DEFINITIONS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @struct tiku_kits_sigfeatures_median
- * @brief Sliding window median filter
- *
+/*
  * Stores the most recent @c size samples in a circular buffer and
  * computes the median by copying into a scratch array and running
  * an insertion sort.  The window size must be odd and in the range
  * [1, TIKU_KITS_SIGFEATURES_MEDIAN_MAX_SIZE].
- *
  * Before the window is full (count < size), the median is computed
  * over the samples received so far.
- *
  * Example:
- * @code
- *   struct tiku_kits_sigfeatures_median m;
- *   tiku_kits_sigfeatures_elem_t result;
+ * tiku_kits_sigfeatures_median_init(&m, 3);
+ * tiku_kits_sigfeatures_median_push(&m, 10);
+ * tiku_kits_sigfeatures_median_push(&m, 50);
+ * tiku_kits_sigfeatures_median_push(&m, 20);
+ * tiku_kits_sigfeatures_median_value(&m, &result);
+ * // result = 20 (median of {10, 50, 20})
+ */
+
+/**
+ * @brief Sliding window median filter
  *
- *   tiku_kits_sigfeatures_median_init(&m, 3);
- *   tiku_kits_sigfeatures_median_push(&m, 10);
- *   tiku_kits_sigfeatures_median_push(&m, 50);
- *   tiku_kits_sigfeatures_median_push(&m, 20);
- *   tiku_kits_sigfeatures_median_value(&m, &result);
- *   // result = 20 (median of {10, 50, 20})
+ * @struct tiku_kits_sigfeatures_median
+ * @code
+ * struct tiku_kits_sigfeatures_median m;
+ * tiku_kits_sigfeatures_elem_t result;
  * @endcode
  */
 struct tiku_kits_sigfeatures_median {
@@ -144,20 +146,22 @@ int tiku_kits_sigfeatures_median_push(
 /* Queries                                                                   */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Retrieve the current median value
- *
+/*
  * Copies the active portion of the circular buffer into the sorted
  * scratch array, runs an insertion sort, and returns the middle
  * element.  O(count^2) due to insertion sort, but count is bounded
  * by MAX_SIZE (default 7) so this is fast in practice.
+ */
+
+/**
+ * @brief Retrieve the current median value
  *
  * @param m      Median filter (must not be NULL)
  * @param result Output pointer where the median is written
- *               (must not be NULL)
+ * (must not be NULL)
  * @return TIKU_KITS_SIGFEATURES_OK on success,
- *         TIKU_KITS_SIGFEATURES_ERR_NULL if m or result is NULL,
- *         TIKU_KITS_SIGFEATURES_ERR_NODATA if count == 0
+ * TIKU_KITS_SIGFEATURES_ERR_NULL if m or result is NULL,
+ * TIKU_KITS_SIGFEATURES_ERR_NODATA if count == 0
  */
 int tiku_kits_sigfeatures_median_value(
     struct tiku_kits_sigfeatures_median *m,

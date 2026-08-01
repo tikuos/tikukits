@@ -6,13 +6,15 @@
  *
  * tiku_kits_crypto_p256.c - NIST P-256 ECDSA signature verification
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * 256-bit bignum over uint32_t[8] limbs (little-endian) with generic
  * Montgomery multiplication; the per-modulus Montgomery constants (n0, R^2,
  * modulus-2) are derived at runtime to avoid hardcoded-constant transcription
  * errors.  Point arithmetic in Jacobian coordinates with the a=-3 doubling.
  * Verify-only: all inputs are public, so nothing here is constant-time.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_crypto_p256.h"

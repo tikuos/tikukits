@@ -6,17 +6,19 @@
  *
  * tiku_kits_net_tftp.c - TFTP client implementation (RFC 1350)
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Poll-based TFTP client that runs on top of the UDP layer.  The
  * UDP receive callback stores incoming packets into static state
  * variables; the application calls tftp_poll() from its own context
  * to drive state transitions and send ACK/DATA responses.
  *
  * RAM budget:
- *   - Transfer state variables:  ~20 bytes
- *   - Block buffer (blk_buf):   100 bytes (4 hdr + 96 data)
- *   - Total:                    ~120 bytes
- *
- * SPDX-License-Identifier: Apache-2.0
+ * - Transfer state variables:  ~20 bytes
+ * - Block buffer (blk_buf):   100 bytes (4 hdr + 96 data)
+ * - Total:                    ~120 bytes
  */
 
 /*---------------------------------------------------------------------------*/
@@ -60,19 +62,18 @@ static uint8_t  last_was_full;
 static tiku_kits_net_tftp_data_cb_t   rx_data_cb;
 static tiku_kits_net_tftp_supply_cb_t tx_supply_cb;
 
-/**
- * Combined buffer for TFTP packet assembly and received data.
- *
+/*
  * Layout: [opcode(2)][block(2)][data(BLOCK_SIZE)]
- *
  * For RX (RRQ path): the receive callback copies incoming DATA
  * payload here.  data_cb reads from blk_buf + 4.
- *
  * For TX (WRQ path): send_data() writes the opcode and block
  * number into [0..3], supply_cb fills [4..] with application data,
  * and the whole buffer is passed to udp_send().
- *
  * For ACK packets: only [0..3] are used (4 bytes).
+ */
+
+/**
+ * Combined buffer for TFTP packet assembly and received data.
  */
 static uint8_t blk_buf[TIKU_KITS_NET_TFTP_HDR_LEN
                         + TIKU_KITS_NET_TFTP_BLOCK_SIZE];
@@ -186,18 +187,19 @@ send_request(uint8_t opcode, const char *filename)
 /* UDP RECEIVE CALLBACK                                                      */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief UDP receive callback for TFTP responses.
- *
+/*
  * Registered via udp_bind() when a transfer starts.  Stores
  * incoming packet data into static state variables and sets
  * pending_evt for poll() to process.  Does NOT call udp_send()
  * (re-entrancy guard would reject it).
- *
  * Validates:
- *   - State is not IDLE (transfer must be active)
- *   - Payload is at least 2 bytes (opcode)
- *   - Server TID matches (after first response establishes it)
+ * - State is not IDLE (transfer must be active)
+ * - Payload is at least 2 bytes (opcode)
+ * - Server TID matches (after first response establishes it)
+ */
+
+/**
+ * @brief UDP receive callback for TFTP responses.
  */
 static void
 tftp_recv_cb(const uint8_t *src_addr, uint16_t src_port,
@@ -401,14 +403,16 @@ start_transfer(const uint8_t *server_addr, const char *filename,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Start a read transfer (download file from server).
- *
+/*
  * Stores the data callback, calls start_transfer() to send an
  * RRQ with blksize option, and enters the RRQ_SENT state.
  * After this, the application must call tftp_poll() repeatedly
  * to receive DATA blocks via the callback and drive the ACK
  * exchange to completion.
+ */
+
+/**
+ * @brief Start a read transfer (download file from server).
  */
 int8_t
 tiku_kits_net_tftp_get(const uint8_t *server_addr,
@@ -435,14 +439,16 @@ tiku_kits_net_tftp_get(const uint8_t *server_addr,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Start a write transfer (upload file to server).
- *
+/*
  * Stores the supply callback, calls start_transfer() to send a
  * WRQ with blksize option, and enters the WRQ_SENT state.
  * After this, the application must call tftp_poll() repeatedly.
  * Each ACK from the server triggers the supply_cb to provide
  * the next data block for transmission.
+ */
+
+/**
+ * @brief Start a write transfer (upload file to server).
  */
 int8_t
 tiku_kits_net_tftp_put(const uint8_t *server_addr,
@@ -471,19 +477,19 @@ tiku_kits_net_tftp_put(const uint8_t *server_addr,
 /* POLLING                                                                   */
 /*---------------------------------------------------------------------------*/
 
+/*
+ * RRQ path (direction==0):
+ * DATA_READY -> deliver to data_cb, send ACK, check last block
+ * OACK_RECV  -> send ACK(0) to confirm option acceptance
+ * WRQ path (direction==1):
+ * ACK_RECV   -> supply next block from tx_supply_cb, send DATA
+ * OACK_RECV  -> supply first block, send DATA(1)
+ * Both paths:
+ * ERROR_RECV -> unbind port, state already set to ERROR
+ */
+
 /**
  * @brief Process pending events and drive the TFTP state machine.
- *
- * RRQ path (direction==0):
- *   DATA_READY -> deliver to data_cb, send ACK, check last block
- *   OACK_RECV  -> send ACK(0) to confirm option acceptance
- *
- * WRQ path (direction==1):
- *   ACK_RECV   -> supply next block from tx_supply_cb, send DATA
- *   OACK_RECV  -> supply first block, send DATA(1)
- *
- * Both paths:
- *   ERROR_RECV -> unbind port, state already set to ERROR
  */
 tiku_kits_net_tftp_evt_t
 tiku_kits_net_tftp_poll(void)

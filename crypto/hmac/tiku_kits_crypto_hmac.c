@@ -6,19 +6,21 @@
  *
  * tiku_kits_crypto_hmac.c - HMAC-SHA256 for embedded systems
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Implements RFC 2104 HMAC-SHA256.  Zero heap allocation -- all
  * scratch buffers are static locals, keeping the stack footprint
  * predictable on MSP430.
  *
  * Algorithm (RFC 2104):
- *   1. If key > block size (64), replace key with SHA-256(key)
- *   2. Pad key to block size with zeros
- *   3. ipad = key_pad XOR 0x36 (repeated)
- *   4. opad = key_pad XOR 0x5C (repeated)
- *   5. inner = SHA-256(ipad || message)
- *   6. MAC   = SHA-256(opad || inner)
- *
- * SPDX-License-Identifier: Apache-2.0
+ * 1. If key > block size (64), replace key with SHA-256(key)
+ * 2. Pad key to block size with zeros
+ * 3. ipad = key_pad XOR 0x36 (repeated)
+ * 4. opad = key_pad XOR 0x5C (repeated)
+ * 5. inner = SHA-256(ipad || message)
+ * 6. MAC   = SHA-256(opad || inner)
  */
 
 /*---------------------------------------------------------------------------*/

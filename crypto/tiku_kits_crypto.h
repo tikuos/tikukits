@@ -26,15 +26,17 @@
 /* RETURN CODES                                                              */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @defgroup TIKU_KITS_CRYPTO_STATUS Crypto Status Codes
- * @brief Return codes shared by all TikuKits crypto sub-modules.
- *
+/*
  * Every public crypto function returns one of these codes.  Zero
  * indicates success; negative values indicate distinct error classes.
  * Sub-modules must never define their own return codes -- all codes
  * live here so that application code can handle errors uniformly.
+ */
+
+/**
+ * @brief Return codes shared by all TikuKits crypto sub-modules.
  *
+ * @defgroup TIKU_KITS_CRYPTO_STATUS Crypto Status Codes
  * @{
  */
 #define TIKU_KITS_CRYPTO_OK            0   /**< Operation succeeded */

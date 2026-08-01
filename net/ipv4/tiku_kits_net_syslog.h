@@ -6,6 +6,10 @@
  *
  * tiku_kits_net_syslog.h - Syslog client (RFC 3164) over UDP
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Lightweight BSD Syslog client that sends log messages to a remote
  * syslog collector via UDP port 514.  Designed for ultra-low-power
  * embedded targets with severe memory constraints: all state is
@@ -18,7 +22,7 @@
  * without the complexity of a connection-oriented protocol.
  *
  * Message format (RFC 3164 Section 4):
- *   <PRI>HOSTNAME TAG: MSG
+ * <PRI>HOSTNAME TAG: MSG
  *
  * Where PRI = facility * 8 + severity.  The timestamp is omitted
  * (the collector will add a receive timestamp) to save payload
@@ -31,16 +35,14 @@
  *
  * Typical usage:
  * @code
- *   static const uint8_t log_server[] = {172, 16, 7, 1};
- *   tiku_kits_net_syslog_init();
- *   tiku_kits_net_syslog_set_server(log_server);
- *   tiku_kits_net_syslog_send(TIKU_KITS_NET_SYSLOG_SEV_INFO,
- *                              "system booted");
- *   tiku_kits_net_syslog_send(TIKU_KITS_NET_SYSLOG_SEV_ERR,
- *                              "sensor read failed");
+ * static const uint8_t log_server[] = {172, 16, 7, 1};
+ * tiku_kits_net_syslog_init();
+ * tiku_kits_net_syslog_set_server(log_server);
+ * tiku_kits_net_syslog_send(TIKU_KITS_NET_SYSLOG_SEV_INFO,
+ * "system booted");
+ * tiku_kits_net_syslog_send(TIKU_KITS_NET_SYSLOG_SEV_ERR,
+ * "sensor read failed");
  * @endcode
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_NET_SYSLOG_H_
@@ -141,25 +143,29 @@
 #define TIKU_KITS_NET_SYSLOG_MAX_HOSTNAME   8
 #endif
 
-/**
- * @brief Maximum tag length (excluding NUL terminator).
- *
+/*
  * The tag identifies the application or subsystem generating the
  * log message (e.g. "kern", "app", "sensor").  RFC 3164
  * recommends tags be 32 characters or fewer; we use a tighter
  * limit to conserve payload space.
  */
+
+/**
+ * @brief Maximum tag length (excluding NUL terminator).
+ */
 #ifndef TIKU_KITS_NET_SYSLOG_MAX_TAG
 #define TIKU_KITS_NET_SYSLOG_MAX_TAG        8
 #endif
 
-/**
- * @brief Compute the PRI value from facility and severity.
- *
+/*
  * PRI = facility * 8 + severity (RFC 3164 Section 4.1.1).
  * The result is encoded as a decimal number inside angle brackets
  * at the start of the syslog message (e.g. "<134>" for
  * LOCAL0.INFO = 16*8+6 = 134).
+ */
+
+/**
+ * @brief Compute the PRI value from facility and severity.
  *
  * @param fac  Facility code (0-23)
  * @param sev  Severity code (0-7)
@@ -223,17 +229,19 @@ int8_t tiku_kits_net_syslog_set_facility(uint8_t facility);
  */
 int8_t tiku_kits_net_syslog_set_hostname(const char *hostname);
 
-/**
- * @brief Set the tag (application name) in syslog messages.
- *
+/*
  * The tag identifies the subsystem or process generating the
  * log message.  Appears before the colon in the MSG part
  * (e.g. "kern: watchdog reset").  Truncated to
  * TIKU_KITS_NET_SYSLOG_MAX_TAG characters if longer.
+ */
+
+/**
+ * @brief Set the tag (application name) in syslog messages.
  *
  * @param tag  Null-terminated tag string
  * @return TIKU_KITS_NET_OK on success,
- *         TIKU_KITS_NET_ERR_NULL if tag is NULL.
+ * TIKU_KITS_NET_ERR_NULL if tag is NULL.
  */
 int8_t tiku_kits_net_syslog_set_tag(const char *tag);
 
@@ -241,36 +249,34 @@ int8_t tiku_kits_net_syslog_set_tag(const char *tag);
 /* SEND API                                                                  */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Send a syslog message.
- *
+/*
  * Assembles a BSD syslog message (RFC 3164) in the format:
- *   <PRI>HOSTNAME TAG: MSG
- *
+ * <PRI>HOSTNAME TAG: MSG
  * and sends it as a single UDP datagram to the configured server
  * on port 514.  The message is fire-and-forget -- no ACK is
  * expected and no retransmission is attempted.
- *
  * The PRI field is computed from the configured facility and the
  * provided severity.  The timestamp is omitted to save payload
  * space; the syslog collector will add its own receive timestamp.
- *
  * The total formatted message must fit within the UDP max payload
  * (100 bytes with default MTU).  If the message is too long, it
  * is truncated to fit.
+ */
+
+/**
+ * @brief Send a syslog message.
  *
  * @warning Must NOT be called from inside a UDP receive callback
  * (same constraint as udp_send).
- *
  * @param severity  Severity level (use TIKU_KITS_NET_SYSLOG_SEV_* constants,
- *                  0-7; values > 7 are clamped to 7)
+ * 0-7; values > 7 are clamped to 7)
  * @param msg       Null-terminated message string (may be NULL for
- *                  a header-only message)
+ * a header-only message)
  * @return TIKU_KITS_NET_OK on success,
- *         TIKU_KITS_NET_ERR_PARAM if no server is configured,
- *         TIKU_KITS_NET_ERR_NULL if msg is NULL,
- *         TIKU_KITS_NET_ERR_NOLINK if no link backend is set,
- *         or any error returned by udp_send().
+ * TIKU_KITS_NET_ERR_PARAM if no server is configured,
+ * TIKU_KITS_NET_ERR_NULL if msg is NULL,
+ * TIKU_KITS_NET_ERR_NOLINK if no link backend is set,
+ * or any error returned by udp_send().
  */
 int8_t tiku_kits_net_syslog_send(uint8_t severity, const char *msg);
 

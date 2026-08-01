@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_text.h - Multi-line wrapped text widget
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Like tiku_kits_ui_label_t but renders multi-line content with
  * word-wrap. The widget's (w, h) bounds the text area; lines that
  * fall outside are not drawn. Honours embedded `\n` for forced
@@ -13,8 +17,6 @@
  *
  * Use this for paragraphs, descriptions, multi-line status. For
  * single-line labels use tiku_kits_ui_label_t (lighter).
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_TEXT_H_

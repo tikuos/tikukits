@@ -6,6 +6,10 @@
  *
  * tiku_kits_ui_grid.c - 2D grid layout impl
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Tracks are equal-sized; each cell (r, c) of an N_rows x N_cols
  * grid gets the same width and height. Children specify their
  * top-left cell and optional spans; the layout computes pixel
@@ -15,8 +19,6 @@
  * computing centroids, we walk children by their (row, col)
  * indices. This keeps navigation predictable in regular grids
  * and avoids floating-point distance math.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "tiku_kits_ui_grid.h"

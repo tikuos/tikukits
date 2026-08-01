@@ -6,13 +6,15 @@
  *
  * tiku_kits_ui_toast.h - Transient banner with auto-dismiss
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Renders a banner with a single-line message. Auto-hides itself
  * (sets `base.visible = 0`) after `lifetime_renders` frames have
  * been drawn. Display duration is therefore tied to how often the
  * UI tree is rendered -- on EPDs that's often only on user
  * interactions, so tune lifetime to your refresh cadence.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TIKU_KITS_UI_TOAST_H_

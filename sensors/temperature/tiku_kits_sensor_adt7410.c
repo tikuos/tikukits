@@ -6,13 +6,15 @@
  *
  * tiku_kits_sensor_adt7410.c - ADT7410 I2C temperature sensor driver
  *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Analog Devices ADT7410 high-accuracy digital temperature sensor
  * driver using the TikuOS I2C bus abstraction.  Reads the 16-bit
  * temperature register (13-bit mode by default) and converts the
  * raw two's-complement value to a tiku_kits_sensor_temp_t.
  * Typical accuracy is +/-0.5 C from -40 to +105 C.
- *
- * SPDX-License-Identifier: Apache-2.0
  */
 
 /*---------------------------------------------------------------------------*/
@@ -27,13 +29,15 @@
 /* REGISTER DEFINITIONS                                                      */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Temperature register address.
- *
+/*
  * 16-bit read-only register containing the latest conversion
  * result.  In 13-bit mode (default), bits [15:3] hold the
  * temperature in two's complement with 0.0625 C/LSB and
  * bits [2:0] are status flags.
+ */
+
+/**
+ * @brief Temperature register address.
  */
 #define ADT7410_REG_TEMP        0x00
 
@@ -63,13 +67,15 @@ static uint8_t sensor_addr;
 /* INTERNAL HELPERS                                                          */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Read a 16-bit big-endian register from the ADT7410
- *
+/*
  * Issues a combined I2C write-read transaction: writes the 1-byte
  * register address, then reads 2 bytes back.  The ADT7410 stores
  * multi-byte registers in big-endian (MSB-first) order, so the
  * first received byte is shifted up to form the high byte.
+ */
+
+/**
+ * @brief Read a 16-bit big-endian register from the ADT7410
  */
 static int read_reg16(uint8_t reg, uint16_t *value)
 {
@@ -109,13 +115,15 @@ static int read_reg8(uint8_t reg, uint8_t *value)
 /* PUBLIC API                                                                */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize and verify the ADT7410 sensor
- *
+/*
  * Latches the I2C address for subsequent reads, then reads the
  * 8-bit ID register and checks the upper 5 bits against the
  * Analog Devices manufacturer code.  The lower 3 bits (silicon
  * revision) are masked off and ignored.
+ */
+
+/**
+ * @brief Initialize and verify the ADT7410 sensor
  */
 int tiku_kits_sensor_adt7410_init(uint8_t addr)
 {
@@ -140,15 +148,17 @@ int tiku_kits_sensor_adt7410_init(uint8_t addr)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Read the ambient temperature from the ADT7410
- *
+/*
  * Fetches the 16-bit temperature register and extracts the 13-bit
  * value (bits [15:3]) in default resolution mode.  The ADT7410
  * uses standard two's complement encoding.  For negative values
  * the raw register is complemented and the absolute magnitude is
  * right-shifted by 3 to discard the status flags before splitting
  * into integer and fractional parts.
+ */
+
+/**
+ * @brief Read the ambient temperature from the ADT7410
  */
 int tiku_kits_sensor_adt7410_read(tiku_kits_sensor_temp_t *temp)
 {

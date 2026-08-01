@@ -58,18 +58,19 @@ static uint8_t alloc_node(struct tiku_kits_ds_btree *bt)
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Split a full child node, promoting the median key into the parent
- *
+/*
  * The child at position @p child_pos of the parent must be full
  * (n_keys == MAX_KEYS).  A new node is allocated for the upper half
  * of the child's keys, the median key is promoted into the parent,
  * and the parent's children array is shifted right to accommodate
  * the new sibling.  After the split both the original child and the
  * new node hold exactly (t - 1) keys.
- *
  * The shift loops run backwards from the parent's current key/child
  * count to avoid overwriting data before it has been moved.
+ */
+
+/**
+ * @brief Split a full child node, promoting the median key into the parent
  */
 static int split_child(struct tiku_kits_ds_btree *bt,
                         uint8_t parent_idx,
@@ -135,14 +136,16 @@ static int split_child(struct tiku_kits_ds_btree *bt,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Insert a key into a non-full node (recursive descent)
- *
+/*
  * Pre-condition: the node at @p node_idx is guaranteed to be non-full
  * because the caller splits full nodes before descending.  In a leaf
  * the key is inserted at its sorted position by shifting existing keys
  * right.  In an internal node the correct child is located, split if
  * full, and then the function recurses into that child.
+ */
+
+/**
+ * @brief Insert a key into a non-full node (recursive descent)
  */
 static int insert_nonfull(struct tiku_kits_ds_btree *bt,
                            uint8_t node_idx,
@@ -200,14 +203,16 @@ static int insert_nonfull(struct tiku_kits_ds_btree *bt,
 
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Recursive search within a subtree
- *
+/*
  * At each node, keys are scanned linearly to find either a match or
  * the correct child to descend into.  The recursion terminates when
  * the key is found, a leaf is reached without finding it, or a NONE
  * child index is encountered (which should not happen in a valid
  * tree but is handled defensively).
+ */
+
+/**
+ * @brief Recursive search within a subtree
  */
 static int search_node(const struct tiku_kits_ds_btree *bt,
                         uint8_t node_idx,
@@ -331,13 +336,15 @@ int tiku_kits_ds_btree_init(struct tiku_kits_ds_btree *bt)
 /* INSERT / SEARCH                                                           */
 /*---------------------------------------------------------------------------*/
 
-/**
- * @brief Insert a key into the B-Tree
- *
+/*
  * Handles the special cases of an empty tree and a full root before
  * delegating to insert_nonfull() for the recursive descent.  Root
  * splitting creates a new root node whose sole child is the old root,
  * increasing tree height by one.
+ */
+
+/**
+ * @brief Insert a key into the B-Tree
  */
 int tiku_kits_ds_btree_insert(struct tiku_kits_ds_btree *bt,
                                tiku_kits_ds_elem_t key)
