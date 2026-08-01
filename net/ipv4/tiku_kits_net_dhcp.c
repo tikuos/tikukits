@@ -332,7 +332,7 @@ dhcp_send(uint8_t msg_type)
     dhcp[TIKU_KITS_NET_DHCP_OFF_FLAGS + 1] =
         (uint8_t)(TIKU_KITS_NET_DHCP_FLAG_BROADCAST & 0xFF);
 
-    /* For REQUEST, ciaddr stays 0 (we don't own the IP yet) */
+    /* For REQUEST, ciaddr stays 0 (the IP is not owned yet) */
 
     /* Client hardware address (6 bytes, rest zeroed by memset) */
     memcpy(&dhcp[TIKU_KITS_NET_DHCP_OFF_CHADDR], hw_addr, 6);
@@ -470,7 +470,7 @@ tiku_kits_net_dhcp_init(void)
 /*---------------------------------------------------------------------------*/
 
 /*
- * Saves the current IP address, sets our IP to 0.0.0.0 (as required
+ * Saves the current IP address, sets the local IP to 0.0.0.0 (as required
  * by RFC 2131), stores the client hardware address (or the default
  * "TIKU\x01\x00" if NULL), generates a transaction ID by XOR-ing
  * the first 4 hardware bytes with "DHCP", binds UDP port 68 for
@@ -580,7 +580,7 @@ tiku_kits_net_dhcp_poll(void)
     if (evt == TIKU_KITS_NET_DHCP_EVT_NONE) {
         /* No event -- retransmit or timeout.
          * RFC 2131 Section 4.1: client retransmits DISCOVER if no
-         * OFFER is received.  We retransmit on each poll until
+         * OFFER is received.  Retransmission happens on each poll until
          * MAX_RETRIES is exhausted. */
         retries++;
         if (retries >= TIKU_KITS_NET_DHCP_MAX_RETRIES) {
@@ -631,7 +631,7 @@ tiku_kits_net_dhcp_poll(void)
         break;
 
     case TIKU_KITS_NET_DHCP_EVT_NAK:
-        /* NAK -- server rejected our request */
+        /* NAK -- server rejected the request */
         tiku_kits_net_udp_unbind(TIKU_KITS_NET_DHCP_CLIENT_PORT);
         tiku_kits_net_ipv4_set_addr(saved_ip);
         dhcp_state = TIKU_KITS_NET_DHCP_STATE_ERROR;
@@ -743,11 +743,11 @@ TIKU_PROCESS_THREAD(tiku_kits_net_dhcp_process, ev, data)
 
     /* If nobody has already kicked off an exchange, self-start one: this is
      * the SLIP autostart path, where the net process brings the link up at
-     * boot and we then DISCOVER on our own with the default MAC.
+     * boot, DISCOVER would then go out with the default MAC.
      *
      * The WiFi `wifi up` path, by contrast, calls dhcp_init() + dhcp_start()
-     * with the real station MAC BEFORE starting this process, so on our first
-     * run the exchange is already in flight (DISCOVER_SENT) and we must skip
+     * with the real station MAC BEFORE starting this process, so on the first
+     * run the exchange is already in flight (DISCOVER_SENT) and this skips
      * straight to polling.  Re-initing here would unbind the UDP socket and
      * re-DISCOVER with the default MAC -- racing the real exchange and, on its
      * eventual timeout, reverting the IP to the saved default.  That double

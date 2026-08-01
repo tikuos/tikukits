@@ -237,7 +237,7 @@
  * no mirror-flush amplification, no fake durability tag.  This encodes
  * the apollo510 law "no large/high-churn buffer in `.persistent`" at the
  * header level instead of relying on per-build -D flags (which only the
- * HAS_TLS=1 path used to set, leaving non-TLS net builds on the
+ * HAS_TLS=1 path sets, leaving non-TLS net builds on the
  * amplification path).
  *
  * Note: persistence does not preserve a *live* TCP connection across a
@@ -269,7 +269,7 @@
 
 /*
  * Resource sizing -- keyed on the platform, not the placement knob.  Cortex-M
- * parts (Ambiq, RP2350, Nordic) have ample SRAM, so we default to roomier
+ * parts (Ambiq, RP2350, Nordic) have ample SRAM, so the default is roomier
  * limits and a multi-KB shell response (e.g. telnet `help`) fits the TX pool
  * without churn.  MSP430 keeps the lean defaults below.  All sizes stay
  * #ifndef so a build can still override either way.
@@ -412,7 +412,7 @@
 #endif
 
 /**
- * @brief Our MSS: maximum TCP payload we can receive in one segment.
+ * @brief Local MSS: maximum TCP payload receivable in one segment.
  *
  * Derived from MTU minus IPv4 header (20) minus TCP header (20).
  * Advertised to the peer in the MSS option during SYN exchange.
@@ -521,7 +521,7 @@ typedef struct tiku_kits_net_tcp_conn {
 
     /* --- Receive sequence variables --- */
     uint32_t rcv_nxt;    /**< Next expected sequence number from peer */
-    uint16_t rcv_wnd;    /**< Our advertised receive window */
+    uint16_t rcv_wnd;    /**< Advertised receive window */
 
     /* --- RX ring buffer (FRAM-backed) --- */
     uint8_t  *rx_buf;    /**< Pointer to FRAM ring buffer storage */

@@ -59,7 +59,7 @@
  * @brief Seconds between NTP epoch (1900-01-01) and Unix epoch (1970-01-01).
  *
  * 70 years * 365.25 days * 86400 seconds = 2208988800.
- * Used to convert NTP timestamps to Unix timestamps.
+ * Converts NTP timestamps to Unix timestamps.
  */
 #define TIKU_KITS_TIME_NTP_UNIX_OFFSET   2208988800UL
 

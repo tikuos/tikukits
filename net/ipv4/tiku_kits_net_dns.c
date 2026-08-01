@@ -108,7 +108,7 @@ static struct dns_cache_entry dns_cache[TIKU_KITS_NET_DNS_CACHE_SIZE];
  * one A record: 12 (header) + ~20 (question echo) + ~30 (answer
  * with compressed name) = ~62 bytes typical.  The extra headroom
  * accommodates longer hostnames or additional answer records that
- * we skip past.
+ * are skipped past.
  */
 
 /**
@@ -226,7 +226,7 @@ static uint16_t dns_encode_hostname(const char *hostname,
  * @brief Read a 32-bit big-endian value from a byte buffer.
  *
  * DNS TTL fields are in network (big-endian) byte order.
- * MSP430 is little-endian, so we manually reassemble.
+ * MSP430 is little-endian, so the fields are reassembled by hand.
  *
  * @param p  Pointer to 4 bytes in big-endian order
  * @return 32-bit value in host byte order
@@ -244,7 +244,7 @@ static uint32_t dns_read_be32(const uint8_t *p)
 /*---------------------------------------------------------------------------*/
 
 /*
- * Called by the UDP layer when a packet arrives on our bound port.
+ * Called by the UDP layer when a packet arrives on the bound port.
  * Performs minimal validation (length, transaction ID, QR bit)
  * and copies the payload into the FRAM-backed dns_rx_buf.
  * Full parsing is deferred to dns_poll() in application context.
@@ -271,7 +271,7 @@ static void dns_udp_recv(const uint8_t *src_addr,
         return;
     }
 
-    /* Check transaction ID matches our query */
+    /* Check transaction ID matches the outstanding query */
     rx_id = (uint16_t)((uint16_t)payload[TIKU_KITS_NET_DNS_OFF_ID]
                        << 8 |
                        payload[TIKU_KITS_NET_DNS_OFF_ID + 1]);
@@ -477,7 +477,7 @@ static int8_t dns_parse_response(void)
         return TIKU_KITS_NET_ERR_PARAM;
     }
 
-    /* Check TC (truncation) -- we cannot handle truncated replies */
+    /* Check TC (truncation) -- truncated replies are not handled */
     if (flags & TIKU_KITS_NET_DNS_FLAG_TC) {
         return TIKU_KITS_NET_ERR_PARAM;
     }

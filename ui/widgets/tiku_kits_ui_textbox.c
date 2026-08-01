@@ -13,7 +13,7 @@
  * Cursor is rendered as a 1-px underline at the column where the
  * next character would be inserted. The text area scrolls
  * horizontally only when length exceeds the visible width -- in
- * that case we shift the displayed substring so the cursor stays
+ * that case the displayed substring shifts so the cursor stays
  * inside the rect.
  */
 

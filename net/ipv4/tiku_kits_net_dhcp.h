@@ -185,7 +185,7 @@
 /**
  * @brief Default client hardware address for SLIP links.
  *
- * SLIP has no MAC address, so we use a fabricated 6-byte identifier.
+ * SLIP has no MAC address, so a fabricated 6-byte identifier is used.
  * "TIKU" + 0x01 + 0x00.  Override at compile time if needed.
  */
 #ifndef TIKU_KITS_NET_DHCP_DEFAULT_HWADDR
@@ -261,7 +261,7 @@ void tiku_kits_net_dhcp_init(void);
 /*---------------------------------------------------------------------------*/
 
 /*
- * Binds UDP port 68, sets our IP to 0.0.0.0, and broadcasts a
+ * Binds UDP port 68, sets the local IP to 0.0.0.0, and broadcasts a
  * DHCPDISCOVER message.  After calling start(), poll dhcp_poll()
  * until get_state() returns BOUND or ERROR.
  * Only one exchange can be active at a time.

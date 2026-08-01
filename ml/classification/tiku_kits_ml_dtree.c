@@ -333,7 +333,7 @@ uint8_t tiku_kits_ml_dtree_node_count(
  * frame stores a node index and its depth.  The right child is
  * pushed before the left so that left is visited first (matches
  * natural DFS order), though for depth measurement the visit
- * order is irrelevant -- we just need the maximum.
+ * order is irrelevant -- only the maximum matters.
  * O(n_nodes) time, O(n_nodes) stack space (two uint8_t arrays).
  */
 

@@ -54,7 +54,7 @@ static uint32_t ntp_rx_seconds;
  * @brief Read a 32-bit big-endian value from a byte buffer.
  *
  * NTP timestamps are in network (big-endian) byte order.
- * MSP430 is little-endian, so we manually reassemble.
+ * MSP430 is little-endian, so the fields are reassembled by hand.
  */
 static uint32_t read_be32(const uint8_t *p)
 {
@@ -71,7 +71,7 @@ static uint32_t read_be32(const uint8_t *p)
 /**
  * @brief UDP callback for NTP responses.
  *
- * Called by the UDP layer when a packet arrives on our bound port.
+ * Called by the UDP layer when a packet arrives on the bound port.
  * Validates the response and extracts the transmit timestamp.
  * Does NOT call udp_send() -- just sets flags for poll().
  */

@@ -217,10 +217,10 @@ static int chain_links_ok(const tiku_kits_crypto_x509_t *chain, int n,
 
 /* Anchor by trying each chain cert (leaf-up) against the trust set: the first
  * chain[k] whose issuer is a trusted root that verifies it terminates the path.
- * Servers routinely send surplus certs above a root we already trust -- e.g. a
+ * Servers routinely send surplus certs above an already-trusted root -- e.g. a
  * cross-signed root (GTS Root R1 signed by GlobalSign) sitting above an
- * intermediate that our own self-signed root could anchor directly.  Walking
- * every level lets us stop at our trusted root and ignore the extras, instead
+ * intermediate that the local self-signed root could anchor directly.  Walking
+ * every level allows stopping at the trusted root and ignoring the extras, instead
  * of only checking whether the single topmost sent cert anchors. */
 int tiku_kits_crypto_x509_verify_chain(const tiku_kits_crypto_x509_t *chain, int n,
                                        const tiku_kits_crypto_x509_t *roots, int nroots,

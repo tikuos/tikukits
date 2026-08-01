@@ -114,7 +114,7 @@ static const uint8_t rcon[10] = {
 /**
  * @brief Multiply by 2 in GF(2^8) with reduction polynomial 0x11b.
  *
- * This is the "xtime" operation from FIPS 197.  Used to build the
+ * This is the "xtime" operation from FIPS 197, which builds the
  * MixColumns and InvMixColumns multiplications without lookup tables.
  *
  * @param x Input byte.

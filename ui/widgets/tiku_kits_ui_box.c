@@ -190,7 +190,7 @@ box_handle_event(tiku_kits_ui_widget_t *base, tiku_kits_ui_event_t evt)
 
     if (box->n_children == 0u) return 0;
 
-    /* Decide whether the requested event maps to our main axis. */
+    /* Decide whether the requested event maps to the main axis. */
     if (is_vertical(box)) {
         if (evt == TIKU_KITS_UI_EVT_FOCUS_DOWN) { axis_match = 1; step = 1; }
         else if (evt == TIKU_KITS_UI_EVT_FOCUS_UP) { axis_match = 1; step = -1; }

@@ -473,7 +473,7 @@ int tiku_kits_crypto_tls13_connect(const tiku_kits_crypto_tls13_io_t *io,
     HS_DIAG(2);
 
     /* 3. ECDHE + key schedule (handshake secrets) -- the server's chosen group
-     * selects which ephemeral we agree with (x25519 or secp256r1). */
+     * selects which ephemeral is agreed on (x25519 or secp256r1). */
     if (sgroup == 0x001d) {
         struct hs_cs_x25519 cs = { ecdhe, priv, server_pub };
         (void)hs_offload(io, hs_cs_x25519, &cs);

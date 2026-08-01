@@ -247,7 +247,7 @@ tftp_recv_cb(const uint8_t *src_addr, uint16_t src_port,
 
         /* Copy data to block buffer.  Clamp to BLOCK_SIZE to
          * guard against oversized responses from servers that
-         * ignored our blksize option. */
+         * ignored the blksize option. */
         data_len = payload_len - TIKU_KITS_NET_TFTP_HDR_LEN;
         if (data_len > TIKU_KITS_NET_TFTP_BLOCK_SIZE) {
             data_len = TIKU_KITS_NET_TFTP_BLOCK_SIZE;
@@ -287,7 +287,7 @@ tftp_recv_cb(const uint8_t *src_addr, uint16_t src_port,
         break;
 
     case TIKU_KITS_NET_TFTP_OP_OACK:
-        /* Option Acknowledgement: server accepted our blksize.
+        /* Option Acknowledgement: server accepted the blksize.
          * Track the server TID and signal the event. */
         server_tid = src_port;
         pending_evt = TIKU_KITS_NET_TFTP_EVT_OACK_RECV;
@@ -533,7 +533,7 @@ tiku_kits_net_tftp_poll(void)
     case TIKU_KITS_NET_TFTP_EVT_ACK_RECV:
         /* WRQ path: server acknowledged a DATA block. */
         if (direction == 1) {
-            /* If we already sent the final short block (last_was_full==0)
+            /* If the final short block already went out (last_was_full==0)
              * and now received the ACK for it, the transfer is complete.
              * Check BEFORE supplying the next block. */
             if (!last_was_full &&
@@ -560,9 +560,9 @@ tiku_kits_net_tftp_poll(void)
             state = TIKU_KITS_NET_TFTP_STATE_SENDING;
 
             /* If the application supplied fewer than BLOCK_SIZE
-             * bytes, this is the last DATA block.  We must still
+             * bytes, this is the last DATA block.  It must still
              * wait for the server's final ACK before completing,
-             * but we mark that the transfer is finishing. */
+             * but the transfer is marked as finishing. */
             if (supply_len < TIKU_KITS_NET_TFTP_BLOCK_SIZE) {
                 last_was_full = 0;
             }
@@ -570,7 +570,7 @@ tiku_kits_net_tftp_poll(void)
         break;
 
     case TIKU_KITS_NET_TFTP_EVT_OACK_RECV:
-        /* Server accepted our blksize option.
+        /* Server accepted the blksize option.
          * RRQ: send ACK(0) to confirm, server will send DATA(1)
          * WRQ: supply first data block and send DATA(1) */
         if (direction == 0) {

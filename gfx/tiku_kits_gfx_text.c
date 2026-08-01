@@ -283,10 +283,10 @@ find_break(const char *str, const tiku_kits_gfx_font_t *font,
 
     while (str[i] != '\0' && str[i] != '\n') {
         uint16_t adv = glyph_advance_px(font, str[i], scale);
-        /* Check fit BEFORE adding (so we don't exceed). */
+        /* Check fit BEFORE adding, so the bound is never exceeded. */
         uint16_t new_w = (uint16_t)(cur_w + adv);
         /* The trailing inter-glyph gap doesn't really need to fit,
-         * but we keep the math simple and require it. */
+         * but the math stays simple by requiring it. */
         if (new_w > max_w) {
             if (last_ws > 0) {
                 *out_w = (uint16_t)(last_ws_w >= scale

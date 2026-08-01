@@ -315,7 +315,7 @@ int tiku_kits_crypto_tls_parse_server_hello(
 /**
  * @brief Parse EncryptedExtensions (minimal validation).
  *
- * For PSK-only mode we do not require any extensions from EE.
+ * PSK-only mode requires no extensions from EE.
  * Just validate the 2-byte extension list length field and
  * confirm it does not exceed the message body.
  */

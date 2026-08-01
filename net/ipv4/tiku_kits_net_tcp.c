@@ -566,7 +566,7 @@ tcp_send_rst_reply(uint8_t *pkt, uint16_t pkt_len, uint16_t ihl_len)
     buf[8] = TIKU_KITS_NET_TTL;
     buf[9] = 6;
     buf[10] = 0; buf[11] = 0;
-    memcpy(buf + 12, in_dst, 4);   /* our IP as source */
+    memcpy(buf + 12, in_dst, 4);   /* local IP as source */
     memcpy(buf + 16, in_src, 4);   /* their IP as dest */
 
     /* TCP header */
@@ -784,7 +784,7 @@ tcp_process(tiku_kits_net_tcp_conn_t *c,
             tcp_send_segment(c,
                              TIKU_KITS_NET_TCP_FLAG_SYN |
                              TIKU_KITS_NET_TCP_FLAG_ACK,
-                             c->snd_una,  /* resend our ISS */
+                             c->snd_una,  /* resend the ISS */
                              (void *)0, 0);
         }
         return;
@@ -793,7 +793,7 @@ tcp_process(tiku_kits_net_tcp_conn_t *c,
     /* ---------------------------------------------------------------
      * 3. Sequence number check (for all states except SYN_SENT)
      *
-     * Simplified: we only accept in-order segments where
+     * Simplified: only in-order segments are accepted, where
      * seg_seq == rcv_nxt.  Out-of-order segments are dropped
      * and a duplicate ACK is sent.
      * --------------------------------------------------------------- */
@@ -827,7 +827,7 @@ tcp_process(tiku_kits_net_tcp_conn_t *c,
     if (flags & TIKU_KITS_NET_TCP_FLAG_ACK) {
         switch (c->state) {
         case TIKU_KITS_NET_TCP_STATE_SYN_RCVD:
-            /* ACK of our SYN+ACK -> ESTABLISHED */
+            /* ACK of the SYN+ACK -> ESTABLISHED */
             if (TIKU_KITS_NET_TCP_SEQ_LEQ(c->snd_una, seg_ack) &&
                 TIKU_KITS_NET_TCP_SEQ_LEQ(seg_ack, c->snd_nxt)) {
                 c->snd_una = seg_ack;
@@ -860,7 +860,7 @@ tcp_process(tiku_kits_net_tcp_conn_t *c,
             break;
 
         case TIKU_KITS_NET_TCP_STATE_FIN_WAIT_1:
-            /* ACK processing + check if our FIN is ACK'd */
+            /* ACK processing + check whether the FIN is ACK'd */
             if (TIKU_KITS_NET_TCP_SEQ_GT(seg_ack, c->snd_una) &&
                 TIKU_KITS_NET_TCP_SEQ_LEQ(seg_ack, c->snd_nxt)) {
                 c->snd_una = seg_ack;
@@ -888,7 +888,7 @@ tcp_process(tiku_kits_net_tcp_conn_t *c,
             break;
 
         case TIKU_KITS_NET_TCP_STATE_LAST_ACK:
-            /* ACK of our FIN -> CLOSED */
+            /* ACK of the FIN -> CLOSED */
             if (TIKU_KITS_NET_TCP_SEQ_LEQ(seg_ack, c->snd_nxt)) {
                 if (c->event_cb) {
                     c->event_cb(c, TIKU_KITS_NET_TCP_EVT_CLOSED);
@@ -959,7 +959,7 @@ tcp_process(tiku_kits_net_tcp_conn_t *c,
         case TIKU_KITS_NET_TCP_STATE_FIN_WAIT_1:
             /* Simultaneous close */
             if (c->snd_una == c->snd_nxt) {
-                /* Our FIN was ACK'd too */
+                /* The local FIN was ACK'd too */
                 c->state = TIKU_KITS_NET_TCP_STATE_TIME_WAIT;
                 c->tw_counter =
                     TIKU_KITS_NET_TCP_TIME_WAIT_TICKS;
@@ -1395,7 +1395,7 @@ tiku_kits_net_tcp_close(tiku_kits_net_tcp_conn_t *conn)
         return TIKU_KITS_NET_OK;
 
     case TIKU_KITS_NET_TCP_STATE_CLOSE_WAIT:
-        /* Peer already closed, we close our end */
+        /* Peer already closed; close this end too */
         tcp_tx_enqueue(conn, conn->snd_nxt,
                              TIKU_KITS_NET_TCP_FLAG_FIN,
                              (void *)0, 0);

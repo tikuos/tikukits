@@ -97,7 +97,7 @@ void tiku_kits_net_icmp_input(uint8_t *buf, uint16_t len,
 
 /*
  * Fills a complete IPv4 + ICMP echo-request packet: the IPv4 header
- * (protocol ICMP, source = our address, destination = @p dst_ip; the IPv4
+ * (protocol ICMP, source = the local address, destination = @p dst_ip; the IPv4
  * header checksum is left zero for tiku_kits_net_ipv4_output() to compute),
  * then the ICMP echo-request header (type 8, the given @p id / @p seq)
  * followed by @p payload_len filler bytes, with the ICMP checksum computed.
@@ -120,7 +120,7 @@ uint16_t tiku_kits_net_icmp_build_echo_request(uint8_t *buf,
                                                uint16_t payload_len);
 
 /**
- * @brief Test whether a received IPv4 packet is an ICMP echo reply for us.
+ * @brief Test whether a received IPv4 packet is an ICMP echo reply for this host.
  *
  * @param buf      Received IPv4 packet.
  * @param len      Packet length.

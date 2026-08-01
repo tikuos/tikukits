@@ -99,7 +99,7 @@ TIKU_PROCESS_THREAD(tiku_kits_net_syslog_process, ev, data)
     /* ----- Message 3: message truncation -----
      * A message longer than the available payload budget (~83 bytes
      * with default header) is truncated by syslog_send().
-     * We use 120 'A' characters; the message will be cut to fit
+     * 120 'A' characters go in; the message will be cut to fit
      * within the 100-byte UDP max payload.
      * Expected: "<134>tikuOS os: AAAAAA..." (truncated) */
     tiku_timer_set_event(&syslog_timer, SYSLOG_MSG_GAP_TICKS);

@@ -401,7 +401,7 @@ http_tls_recv_cb(struct tiku_kits_crypto_tls_conn *conn,
 {
     (void)conn;
     (void)available;
-    /* Data is buffered by TLS; we drain via tls_read(). */
+    /* Data is buffered by TLS; drained via tls_read(). */
 }
 
 static void
@@ -763,7 +763,7 @@ http_cert_recv(void *ctx, uint8_t *buf, size_t len)
  */
 
 /* Sink: feed decrypted bytes to the parser (which caps at body_max itself, so
- * we always keep reading).  Unlock the MPU around the feed -- response_buf may
+ * reading always continues).  Unlock the MPU around the feed -- response_buf may
  * be in FRAM (.persistent). */
 static uint8_t
 http_parser_sink(void *ctx, const uint8_t *data, uint16_t len)

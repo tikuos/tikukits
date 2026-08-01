@@ -185,8 +185,8 @@ tiku_kits_gfx_offscreen_clear(tiku_kits_gfx_offscreen_t *fb,
                                                 fb->format);
     if (size == 0u) return;
 
-    /* For 1bpp formats we can splat a byte; for the multi-bit
-     * formats we need to replicate the value into a byte first. */
+    /* For 1bpp formats a byte can be splatted; the multi-bit
+     * formats need the value replicated into a byte first. */
     {
         uint8_t  fill_byte;
         uint32_t i;

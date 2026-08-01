@@ -127,8 +127,8 @@ uint16_t tiku_kits_crypto_tls_record_encrypt(
     /* Total encrypted fragment: inner_len + 16-byte tag */
     enc_len = inner_len + TIKU_KITS_CRYPTO_TLS_TAG_SIZE;
 
-    /* Build inner plaintext directly at out[5..] so we can
-     * encrypt in place.  We write to a temporary area offset
+    /* Build inner plaintext directly at out[5..] so encryption can
+     * happen in place.  The write goes to a temporary area offset
      * by the record header. */
     inner_pt = out + TIKU_KITS_CRYPTO_TLS_RECORD_HDR_SIZE;
     memcpy(inner_pt, content, content_len);

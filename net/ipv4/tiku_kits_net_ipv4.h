@@ -170,7 +170,7 @@ uint16_t tiku_kits_net_ipv4_chksum(const uint8_t *data, uint16_t len);
  * 5. Header checksum == 0
  * 6. total_len is plausible (>= IHL bytes, <= frame length)
  * 7. Packet is not fragmented (MF=0, offset=0)
- * 8. Destination IP matches our address
+ * 8. Destination IP matches the local address
  * Packets that fail any check are silently dropped (no ICMP error).
  * Valid packets are dispatched by protocol field using total_len
  * (trimming any link-layer padding):
@@ -248,7 +248,7 @@ const tiku_kits_net_link_t *tiku_kits_net_ipv4_get_link(void);
 uint8_t *tiku_kits_net_ipv4_get_buf(uint16_t *size);
 
 /**
- * @brief Get a pointer to our IPv4 address.
+ * @brief Get a pointer to the local IPv4 address.
  *
  * Returns a pointer to 4 bytes in network order, matching the
  * TIKU_KITS_NET_IP_ADDR configuration macro.  Used by upper-layer
@@ -259,7 +259,7 @@ uint8_t *tiku_kits_net_ipv4_get_buf(uint16_t *size);
 const uint8_t *tiku_kits_net_ipv4_get_addr(void);
 
 /**
- * @brief Update our IPv4 address at runtime.
+ * @brief Update the local IPv4 address at runtime.
  *
  * Used by DHCP (or other runtime configuration) to set the IP
  * address after obtaining a lease.  Passing NULL is a no-op.

@@ -180,7 +180,7 @@ static size_t build_client_hello(uint8_t *out, const uint8_t random[32],
     wr16(p,0x000a); p+=2; wr16(p,4); p+=2; wr16(p,2); p+=2; wr16(p,0x0017); p+=2;
     /* ec_point_formats: uncompressed */
     wr16(p,0x000b); p+=2; wr16(p,2); p+=2; *p++=0x01; *p++=0x00;
-    /* signature_algorithms (what we can verify) */
+    /* signature_algorithms (what this client can verify) */
     wr16(p,0x000d); p+=2; wr16(p,12); p+=2; wr16(p,10); p+=2;
     wr16(p,0x0403); p+=2; wr16(p,0x0503); p+=2;     /* ecdsa sha256/384  */
     wr16(p,0x0401); p+=2; wr16(p,0x0501); p+=2;     /* rsa_pkcs1 sha256/384 */
@@ -220,7 +220,7 @@ static int ske_verify(const tiku_kits_crypto_x509_t *leaf,
 {
     uint8_t h[48]; size_t hl;
     /* RSA-PSS SignatureScheme (the hash byte is 0x08, not a HashAlgorithm):
-     * 0x0804 = rsa_pss_rsae_sha256 -- the one we offer + can verify. */
+     * 0x0804 = rsa_pss_rsae_sha256 -- the one offered and verifiable. */
     if (hashalg == 8) {
         if (sigalg != 4 || leaf->pk_alg != TIKU_X509_PK_RSA) return BAD;
         sha256_of(signed_data, sdlen, h);
@@ -466,7 +466,7 @@ int tiku_kits_crypto_tls12_connect(const tiku_kits_crypto_tls13_io_t *io,
     else        { tiku_kits_crypto_gcm_init(&cg, conn->c_key);
                   tiku_kits_crypto_gcm_init(&sg, conn->s_key); }
 
-    /* 5. ClientKeyExchange (our point) */
+    /* 5. ClientKeyExchange (the client's point) */
     {
         uint8_t cke[4 + 1 + 65];
         cke[0] = HS_CKE; wr24(cke + 1, 66);

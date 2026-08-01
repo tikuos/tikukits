@@ -324,8 +324,8 @@ int tiku_kits_codec_json_write_key(tiku_kits_codec_json_writer_t *w,
     if (rc != TIKU_KITS_CODEC_OK) return rc;
 
     /*
-     * After write_key, the next call is the value. We must NOT emit
-     * a comma before it. But after the value, we need a comma before
+     * After write_key, the next call is the value, which must NOT be
+     * preceded by a comma. After the value, a comma is needed before
      * the next key. So set need_comma = 0 now; the value emitter
      * will set it to 1 when it finishes.
      */

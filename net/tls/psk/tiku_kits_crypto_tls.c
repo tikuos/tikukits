@@ -378,7 +378,7 @@ tls_tcp_recv_cb(struct tiku_kits_net_tcp_conn *tcp,
         tiku_mpu_lock_nvm(saved);
         rx_buf_pos += n;
 
-        /* Check if we have a complete record */
+        /* Check for a complete record */
         if (rx_buf_pos >= TIKU_KITS_CRYPTO_TLS_RECORD_HDR_SIZE) {
             if (rx_record_expected == 0) {
                 /* Parse record length from header */
@@ -674,17 +674,12 @@ tls_handle_server_hello(const uint8_t *msg, uint16_t msg_len)
     memcpy(c->rx_iv, server_iv, 12);
     c->rx_seq = 0;
 
-    /* Save client handshake secret for client Finished.
-     * We reuse hs_secret storage (union-like). */
-    /* Actually, we need both hs_secret (for master secret)
-     * and client_hs_secret.  Store client_hs in the tx_iv
-     * temporarily (it's not used until app data phase). */
+    /* Both hs_secret (for the master secret) and client_hs_secret are
+     * live at once, so client_hs_secret is parked in tx_iv, which is
+     * unused until the application-data phase. */
     memcpy(c->tx_iv, client_hs_secret, 12);
-    /* Store remaining 20 bytes of client_hs_secret in
-     * a scratch area.  Actually, let's just keep it on
-     * the stack and compute finished immediately when needed.
-     * For now, store the full 32-byte client_hs_secret
-     * in FRAM scratch. */
+    /* tx_iv holds only 12 of the 32 bytes, so the full 32-byte
+     * client_hs_secret goes to FRAM scratch for the client Finished. */
     {
         uint16_t saved = tiku_mpu_unlock_nvm();
         memcpy(tls_tx_buf, client_hs_secret, 32);
@@ -715,17 +710,11 @@ tls_handle_finished(const uint8_t *msg, uint16_t msg_len)
     uint8_t expected_verify[32];
     uint8_t th[32];
 
-    /* Recompute server_hs_secret from hs_secret and
-     * CH..SH transcript.  We need the transcript hash
-     * BEFORE the server Finished was appended.
-     *
-     * Problem: we already appended SF to the transcript.
-     * We need the hash at CH..SH..EE (before SF).
-     *
-     * Solution: We stored the handshake message bytes
-     * in tls_transcript_buf.  Recompute the hash up to
-     * but not including the last message (the Finished).
-     * The Finished message is 4+32=36 bytes. */
+    /* Verifying server Finished needs the transcript hash at CH..SH..EE,
+     * that is, BEFORE the Finished itself was appended -- and it has
+     * already been appended by this point.  The raw handshake bytes are
+     * kept in tls_transcript_buf, so the hash is recomputed over
+     * everything except the trailing Finished (4 + 32 bytes). */
     {
         tiku_kits_crypto_sha256_ctx_t tmp_ctx;
         uint16_t pre_fin_len = c->transcript_len - (4 + msg_len);
@@ -735,37 +724,18 @@ tls_handle_finished(const uint8_t *msg, uint16_t msg_len)
         tiku_kits_crypto_sha256_final(&tmp_ctx, th);
     }
 
-    /* Reconstruct server_hs_traffic_secret.
-     * We have hs_secret in c->hs_secret and the CH..SH
-     * hash is needed.  But we don't have it saved separately.
+    /* server_hs_traffic_secret is not retained -- only the GCM key
+     * derived from it is -- so it is rederived here from hs_secret and
+     * the CH..SH transcript hash, exactly as handle_server_hello did:
      *
-     * Simpler approach: just recompute from the first
-     * two messages (CH + SH) in the transcript buffer.
-     * We need to know where SH ends.  For now, use the
-     * server finished key that we can derive from the
-     * server_hs_traffic_secret.
+     *   finished_key = HKDF-Expand-Label(server_hs_secret,
+     *                                    "finished", "", 32)
+     *   verify_data  = HMAC(finished_key, hash(CH..SH..EE))
      *
-     * Actually, the Finished verify_data is computed as:
-     * finished_key = HKDF-Expand-Label(server_hs_secret,
-     *                                   "finished", "", 32)
-     * verify = HMAC(finished_key, hash(CH..SH..EE))
-     *
-     * We need server_hs_secret.  We derive it the same way
-     * we did in handle_server_hello, from hs_secret and
-     * the CH..SH transcript hash.
-     *
-     * Shortcut: the server GCM key was derived from server_hs_secret.
-     * But we don't store the secret itself.  We need to rederive.
-     *
-     * For simplicity, store the transcript hash at CH..SH
-     * when we compute it in handle_server_hello, and reuse here.
-     * Let's refactor: save the CH..SH hash in FRAM. */
-
-    /* WORKAROUND: Recompute CH..SH hash from transcript buffer.
-     * The first two messages are ClientHello and ServerHello.
-     * We find the boundary by scanning handshake headers.
-     * CH starts at offset 0, its length is in bytes 1-3.
-     * SH starts after CH. */
+     * The CH..SH hash comes back out of the transcript buffer.  The
+     * first two messages are ClientHello and ServerHello, and the
+     * boundary follows from the handshake headers: CH at offset 0 with
+     * its length in bytes 1-3, SH immediately after. */
     {
         tiku_kits_crypto_sha256_ctx_t ch_sh_ctx;
         uint16_t ch_msg_len, sh_msg_len, ch_sh_total;
@@ -794,7 +764,7 @@ tls_handle_finished(const uint8_t *msg, uint16_t msg_len)
             server_hs_secret);
 
         /* Actually, hs_traffic_secrets writes to both
-         * output pointers.  We need a dummy for client. */
+         * output pointers, so the client side passes a dummy. */
         uint8_t dummy[32];
         tiku_kits_crypto_tls_hs_traffic_secrets(
             c->hs_secret, ch_sh_hash,

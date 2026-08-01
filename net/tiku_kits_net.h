@@ -178,7 +178,7 @@
 #endif
 
 /**
- * @brief Our IPv4 address (default: 172.16.7.2).
+ * @brief The local IPv4 address (default: 172.16.7.2).
  *
  * Stored as four initialiser bytes in network order.  The default
  * avoids 192.x addresses because 192 == 0xC0 == SLIP END, which
@@ -236,7 +236,7 @@ typedef struct tiku_kits_net_ip4_addr {
 /**
  * @brief Convert a 16-bit value from host to network byte order.
  *
- * MSP430 is little-endian; network order is big-endian, so we swap.
+ * MSP430 is little-endian; network order is big-endian, hence the swap.
  * Implemented as an inline function rather than a macro to ensure
  * the argument is evaluated exactly once.
  *

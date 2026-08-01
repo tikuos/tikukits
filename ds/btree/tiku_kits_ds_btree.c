@@ -180,7 +180,7 @@ static int insert_nonfull(struct tiku_kits_ds_btree *bt,
     i++;
 
     /* If the target child is full, split it before descending
-     * so we never recurse into a full node. */
+     * so recursion never enters a full node. */
     if (bt->nodes[node->children[i]].n_keys
             == TIKU_KITS_DS_BTREE_MAX_KEYS) {
         rc = split_child(bt, node_idx, (uint8_t)i);
@@ -189,7 +189,7 @@ static int insert_nonfull(struct tiku_kits_ds_btree *bt,
         }
         /* After split the median key was promoted into this node,
          * so n_keys changed.  Re-read the pointer (pool addresses
-         * are stable, but we need the updated key array) and
+         * are stable, but the updated key array is needed) and
          * decide which of the two post-split children to descend
          * into based on the promoted key. */
         node = &bt->nodes[node_idx];

@@ -90,12 +90,12 @@ int tiku_kits_crypto_hkdf_expand(const uint8_t *prk,
      * T(0) = empty
      * T(i) = HMAC(PRK, T(i-1) || info || i)   for i = 1..N
      *
-     * We feed the HMAC inputs via a concatenated buffer built on
+     * The HMAC inputs arrive via a concatenated buffer built on
      * the stack.  The maximum single-HMAC input is:
      *   32 (T prev) + info_len + 1 (counter)
      *
      * For embedded use info_len is small, so a static scratch
-     * buffer works well.  We assemble each iteration's input
+     * buffer works well.  Each iteration's input is assembled
      * into hmac_input[].
      */
     static uint8_t t_prev[HKDF_HASH_LEN];

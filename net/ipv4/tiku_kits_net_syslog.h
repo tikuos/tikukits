@@ -146,7 +146,7 @@
 /*
  * The tag identifies the application or subsystem generating the
  * log message (e.g. "kern", "app", "sensor").  RFC 3164
- * recommends tags be 32 characters or fewer; we use a tighter
+ * recommends tags be 32 characters or fewer; this uses a tighter
  * limit to conserve payload space.
  */
 

@@ -59,7 +59,7 @@ static uint8_t net_buf[TIKU_KITS_NET_MTU];
 /** Current frame length in net_buf (reset to 0 after processing) */
 static uint16_t net_buf_len;
 
-/** Our IPv4 address, initialised from the TIKU_KITS_NET_IP_ADDR macro.
+/** The local IPv4 address, initialised from the TIKU_KITS_NET_IP_ADDR macro.
  *  Mutable so that DHCP (or other runtime config) can update it. */
 static tiku_kits_net_ip4_addr_t our_addr = {TIKU_KITS_NET_IP_ADDR};
 
@@ -293,7 +293,7 @@ tiku_kits_net_ipv4_get_buf(uint16_t *size)
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Return a pointer to our 4-byte IPv4 address
+ * @brief Return a pointer to the local 4-byte IPv4 address
  *
  * Points into the static our_addr structure, which is initialised
  * at compile time from TIKU_KITS_NET_IP_ADDR.  The bytes are in
@@ -308,7 +308,7 @@ tiku_kits_net_ipv4_get_addr(void)
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Update our IPv4 address at runtime.
+ * @brief Update the local IPv4 address at runtime.
  *
  * Used by DHCP (or other runtime configuration) to set the IP
  * address after obtaining a lease.  The 4-byte address is in

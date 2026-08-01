@@ -35,13 +35,14 @@
 #define ARP_OP_REPLY     0x0002U
 
 /* ARP request/reply frame size: 14 EthII + 28 ARP body = 42 bytes.
- * The chip pads to the 64-byte 802.3 minimum on the air; we don't
- * need to pre-pad here (whd_tx_eth ships exactly what we hand it).  */
+ * The chip pads to the 64-byte 802.3 minimum on the air, so no
+ * pre-padding is needed here (whd_tx_eth ships exactly what it is
+ * given).  */
 #define ARP_FRAME_BYTES  42U
 
 /* Single staging frame between the driver RX callback (runner ctx)
  * and the kit's poll_rx (net-proc ctx). Sized to hold any v4 frame
- * the kit will produce. WHD delivers up to 1514 B; we cap at the
+ * the kit will produce. WHD delivers up to 1514 B; this caps at the
  * kit's MTU so the kit's buf_size on poll_rx is enough. */
 #define RX_STAGE_BYTES       TIKU_KITS_NET_MTU
 
@@ -66,9 +67,9 @@ static uint32_t rx_delivered;       /* slots successfully drained     */
 /*
  * Every IPv4 frame carries (sender_ip, sender_mac). Cache that pair
  * implicitly so unicast TX can resolve dst_ip -> dst_mac without
- * sending our own ARP request. Replies to incoming traffic always
+ * sending an ARP request first. Replies to incoming traffic always
  * find a hit because the destination IS the previous sender. Full
- * outbound-first ARP discovery (gateway we've never heard from)
+ * outbound-first ARP discovery (a gateway never heard from)
  * stays on the 5.A.1 list.
  */
 #define ARP_CACHE_SIZE 4
@@ -168,7 +169,7 @@ eth_hdr_build(uint8_t *out, const uint8_t dst[6], const uint8_t src[6],
  *
  * Returns true for 255.255.255.255 (limited broadcast) and for
  * 224.0.0.0/4 (multicast). v1 also forces broadcast for any dst
- * whose host bits are all-1 since we don't know the subnet mask.
+ * whose host bits are all-1, the subnet mask being unknown.
  *
  * @param ipv4_pkt  4-byte IPv4 destination address
  * @return 1 if a broadcast/multicast MAC should be used, 0 otherwise
@@ -193,8 +194,8 @@ ipv4_dst_is_broadcast(const uint8_t ipv4_pkt[4])
  * @brief Build a complete ARP reply frame
  *
  * @param out            Destination buffer (>= ARP_FRAME_BYTES)
- * @param our_mac        Our MAC address (sender in the reply)
- * @param our_ip         Our IPv4 address (sender in the reply)
+ * @param our_mac        MAC address to send as the reply's sender
+ * @param our_ip         IPv4 address to send as the reply's sender
  * @param requester_mac  MAC of the host that issued the ARP request
  * @param requester_ip   IPv4 of the host that issued the ARP request
  * @return Number of bytes written (always 42)
@@ -231,7 +232,7 @@ arp_reply_build(uint8_t *out,
  */
 
 /**
- * @brief Parse an incoming ARP frame and answer if it targets us
+ * @brief Parse an incoming ARP frame and answer if it targets this host
  *
  * @param frame  Pointer to the start of the EthII frame
  * @param len    Total length of the frame in bytes
@@ -280,8 +281,8 @@ arp_handle_in(const uint8_t *frame, uint16_t len)
 /*
  * Outbound-first discovery (the 5.A.1 piece): when a unicast send misses the
  * passive cache, ask the LAN for the peer's MAC. The reply is learned by
- * wifi_rx_cb's arp_cache_learn, so the caller's retry resolves. Sender = our
- * MAC + our (DHCP-assigned) IP, so the peer also learns us and can reply to us.
+ * wifi_rx_cb's arp_cache_learn, so the caller's retry resolves. Sender = the
+ * local MAC + DHCP-assigned IP, so the peer learns this host and can reply.
  */
 
 /**
@@ -349,13 +350,13 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
     etype = (uint16_t)((frame[12] << 8) | frame[13]);
 
     if (etype == ETHERTYPE_ARP) {
-        /* Learn from any ARP traffic we see (request OR reply) — the
+        /* Learn from any ARP traffic seen (request OR reply) — the
          * ARP body carries sender_mac + sender_ip at body[8..17]. */
         if (len >= ETH_HDR_LEN + 28U) {
             const uint8_t *body = frame + ETH_HDR_LEN;
             arp_cache_learn(&body[14], &body[8]);
         }
-        /* Reply if it's "who has <our IP>". Otherwise just leave the
+        /* Reply if it is "who has <local IP>". Otherwise just leave the
          * cached MAC in place. */
         (void)arp_handle_in(frame, len);
         return;
@@ -406,7 +407,7 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
  * Prepends an EthII header (broadcast MAC for limited-broadcast /
  * multicast destinations, otherwise the cached MAC from the passive
  * ARP cache) and ships the result via whd_tx_eth. For v1, unicast
- * peers we have never heard from fail with NOLINK until outbound-
+ * peers never heard from fail with NOLINK until outbound-
  * first ARP discovery lands in 5.A.1.
  */
 
@@ -448,7 +449,7 @@ wifi_send(const uint8_t *pkt, uint16_t len)
         /* Next-hop selection: an on-subnet dst is reached directly; an off-subnet
          * dst (e.g. the internet) is reached via the default gateway. Resolve the
          * NEXT HOP's MAC, not the final dst's. Subnet + gateway come from the DHCP
-         * lease; with no lease we assume on-subnet (the old behaviour). */
+         * lease; with no lease, on-subnet is assumed. */
         const uint8_t *nexthop = &pkt[16];
         const tiku_kits_net_dhcp_lease_t *lease = tiku_kits_net_dhcp_get_lease();
         if (lease != (const tiku_kits_net_dhcp_lease_t *)0) {
@@ -490,7 +491,7 @@ wifi_send(const uint8_t *pkt, uint16_t len)
 
 /*
  * Copies any staged IP packet into the caller's buffer. The kit calls
- * this in a loop until we return 0, so single-slot staging is fine —
+ * this in a loop until it returns 0, so single-slot staging is fine —
  * backlog is just deferred to the next poll (with the cost of a drop
  * counter for slot-full events). A caller buffer that's too small is
  * also reported as zero-frame so corrupt delivery is avoided.
@@ -538,7 +539,7 @@ const tiku_kits_net_link_t tiku_kits_net_wifi_link = {
 };
 
 /*
- * Clears the RX staging slot and drop counters, registers our RX
+ * Clears the RX staging slot and drop counters, registers the RX
  * callback with the WHD driver, and installs this link with the IPv4
  * kit via tiku_kits_net_ipv4_set_link so outbound packets flow
  * through wifi_send.

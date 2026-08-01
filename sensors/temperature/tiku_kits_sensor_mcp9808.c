@@ -179,7 +179,7 @@ int tiku_kits_sensor_mcp9808_read(tiku_kits_sensor_temp_t *temp)
 
     if (upper & 0x10) {
         /* Negative temperature: sign bit (bit 4 of upper) is set.
-         * MCP9808 uses sign+magnitude, so we subtract from the
+         * MCP9808 uses sign+magnitude, so subtract from the
          * full-scale range (256 for integer, 16 for fraction). */
         temp->negative = 1;
         upper &= 0x0F;

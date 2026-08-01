@@ -309,7 +309,7 @@ static void compute_tag(
     /*
      * If AAD did not end on a 16-byte boundary, the ghash()
      * function already zero-padded the last partial block.
-     * However we need to continue hashing CT into the same
+     * CT must still be hashed into the same
      * running state.  Re-enter GHASH manually so the running
      * hash value (ghash_out) is preserved.
      */

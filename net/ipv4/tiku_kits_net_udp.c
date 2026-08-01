@@ -139,7 +139,7 @@ tiku_kits_net_udp_init(void)
 
     /* Idempotent (same contract as tiku_tier_init): several shell
      * commands call this as an "ensure UDP dispatch is up" step with
-     * only file-local guards, so a second call used to WIPE the bind
+     * only file-local guards, so a second call would WIPE the bind
      * table -- silently unbinding long-lived servers (CoAP went deaf
      * after the first `ntp`/`syslog` command; TikuBench net suite).
      * First call initializes; later calls are no-ops. */
@@ -423,7 +423,7 @@ tiku_kits_net_udp_send(const uint8_t *dst_addr,
         return TIKU_KITS_NET_ERR_NULL;
     }
 
-    /* Acquire the shared buffer and our IP address */
+    /* Acquire the shared buffer and the local IP address */
     buf = tiku_kits_net_ipv4_get_buf(&buf_size);
     if (buf == NULL) {
         return TIKU_KITS_NET_ERR_NOLINK;
@@ -447,7 +447,7 @@ tiku_kits_net_udp_send(const uint8_t *dst_addr,
     buf[9]  = TIKU_KITS_NET_IPV4_PROTO_UDP;  /* protocol = 17 (UDP) */
     buf[10] = 0x00; buf[11] = 0x00;          /* checksum placeholder */
 
-    /* Source IP = our configured address */
+    /* Source IP = the configured local address */
     buf[12] = our_ip[0]; buf[13] = our_ip[1];
     buf[14] = our_ip[2]; buf[15] = our_ip[3];
 

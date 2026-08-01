@@ -122,7 +122,7 @@ int tiku_kits_ds_htable_put(struct tiku_kits_ds_htable *ht,
 
         if (e->state == TIKU_KITS_DS_HTABLE_EMPTY) {
             /* EMPTY proves the key is not in the table.  Insert at
-             * the first tombstone we passed (if any) to reclaim it,
+             * the first tombstone passed (if any) to reclaim it,
              * otherwise insert right here. */
             if (found_deleted) {
                 idx = first_deleted;

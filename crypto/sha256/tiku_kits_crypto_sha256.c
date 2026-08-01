@@ -236,7 +236,7 @@ int tiku_kits_crypto_sha256_update(
     }
 
     /* Update the 64-bit bit counter (split across two uint32_t
-     * fields so that we avoid 64-bit types on MSP430). */
+     * fields, avoiding 64-bit types on MSP430). */
     bits = (uint32_t)len << 3;
     ctx->count_lo += bits;
     if (ctx->count_lo < bits) {

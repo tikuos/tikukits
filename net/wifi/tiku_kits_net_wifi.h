@@ -30,8 +30,8 @@
  * IP payload into a staging buffer that the kit's polling RX
  * path consumes.
  * - Optional ARP reply: when an incoming ARP request asks for the
- * IP the kit considers "ours", we send back an ARP reply so
- * other devices on the LAN can reach us.
+ * IP the kit considers local, an ARP reply goes back so
+ * other devices on the LAN can reach this host.
  *
  * BUILD GATE
  * Compiled only when both submodules are present:

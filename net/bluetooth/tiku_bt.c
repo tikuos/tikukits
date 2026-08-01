@@ -63,8 +63,8 @@ extern const char *cyw43_bt_fw_version(void);
 /*---------------------------------------------------------------------------*/
 /* BT runner process (forward declaration)                                   */
 /*---------------------------------------------------------------------------*/
-/* The BT stack runs on its own protothread now -- it used to ride on
- * the WHD WiFi runner, which coupled the two driver layers. The new
+/* The BT stack runs on its own protothread, separate from the WHD WiFi
+ * runner, so the two driver layers stay decoupled. The
  * runner ticks at ~128 Hz while BT is active (scanning, advertising,
  * or has an open connection) and YIELDs to idle otherwise. Wake
  * events posted via bt_wake_runner() re-dispatch it after state
@@ -113,7 +113,7 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define HCI_OP_LE_CREATE_CONNECTION     0x200DU
 /* Phase 14: SMP crypto offload + encryption key management. The chip
  * has a dedicated AES-128 + P-256 ECDH engine reachable via these LE
- * controller HCI commands; we use it to avoid a software AES/ECDH
+ * controller HCI commands, which avoid a software AES/ECDH
  * port (which would dwarf the rest of the stack on Cortex-M33). */
 #define HCI_OP_LE_ENCRYPT                       0x2017U
 #define HCI_OP_LE_LTK_REQUEST_REPLY             0x201AU
@@ -175,7 +175,7 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
  * Pairing Request → Response → Public Key swap → Confirm + Random
  * exchange → DHKey Check pair, then encryption start via LE LTK
  * Request. Security Request (peripheral→central) is still ignored
- * because we are typically the peripheral. */
+ * because this stack is typically the peripheral. */
 #define SMP_OP_PAIRING_REQUEST          0x01U
 #define SMP_OP_PAIRING_RESPONSE         0x02U
 #define SMP_OP_PAIRING_CONFIRM          0x03U
@@ -195,11 +195,11 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define SMP_AUTHREQ_SC                  0x08U
 
 /* SMP session lifecycle (Phase 14 Just-Works LE-SC, peripheral side).
- * Each peripheral session walks: WAITING_PUBKEY (after we send Pairing
- * Response) → WAITING_CONFIRM (after we receive peer pubkey -- but in
- * Just-Works the peer waits for OUR confirm so this state is brief on
- * peripheral) → WAITING_RANDOM (after we send our confirm) →
- * WAITING_DHCHECK (after we exchange randoms) → ENCRYPTING (LTK
+ * Each peripheral session walks: WAITING_PUBKEY (after sending Pairing
+ * Response) → WAITING_CONFIRM (after receiving the peer pubkey -- but in
+ * Just-Works the peer waits for the local confirm, so this state is brief
+ * on peripheral) → WAITING_RANDOM (after sending that confirm) →
+ * WAITING_DHCHECK (after exchanging randoms) → ENCRYPTING (LTK
  * Request reply sent) → ENCRYPTED (encryption-change OK). The IDLE
  * state is the "no pairing in flight" terminal state and lets the
  * bond_save -> link-encryption restart cleanly. */
@@ -213,7 +213,7 @@ typedef enum {
     SMP_ENCRYPTED,
 } smp_state_t;
 
-/* Bluetooth SIG-assigned 16-bit UUIDs used in our minimal table. */
+/* Bluetooth SIG-assigned 16-bit UUIDs used in the minimal table. */
 #define UUID_PRIMARY_SERVICE            0x2800U
 #define UUID_CHARACTERISTIC             0x2803U
 #define UUID_CCCD                       0x2902U
@@ -233,7 +233,7 @@ typedef enum {
 #define ATT_PROP_READ                   0x02U
 
 /* Default ATT MTU per spec (Core Spec Vol 3 Part F 3.4.2). The chip's
- * BT firmware may permit larger via Exchange MTU; we cap at 23 for
+ * BT firmware may permit larger via Exchange MTU; this caps at 23 for
  * the demo because that's all the GAP service replies need to fit. */
 #define ATT_MTU_DEFAULT                 23U
 
@@ -242,7 +242,7 @@ typedef enum {
 #define AD_TYPE_INCOMPLETE_LOCAL_NAME   0x08U
 #define AD_TYPE_COMPLETE_LOCAL_NAME     0x09U
 
-/* AD Flags value sent in our advertising data:
+/* AD Flags value sent in the advertising data:
  *  bit 1 = LE General Discoverable Mode
  *  bit 2 = BR/EDR Not Supported (LE-only device) */
 #define AD_FLAGS_LE_GENERAL_DISC        0x06U
@@ -320,7 +320,7 @@ static struct {
      * bit 0 = notify, bit 1 = indicate) is conceptually per
      * {char, connection} but the legacy GATT model keeps it as
      * per-char because most clients only subscribe on one link.
-     * cccd_char_uuid[i] tells us which char each slot belongs to;
+     * cccd_char_uuid[i] identifies which char each slot belongs to;
      * cccd_value[i] holds the current bits. */
     uint8_t   cccd_count;
     uint16_t  cccd_char_uuid[TIKU_BT_CHAR_MAX];
@@ -339,21 +339,21 @@ static struct {
      * visible. */
     struct {
         uint8_t  state;             /* smp_state_t */
-        uint8_t  have_pubkey;       /* 1 once chip handed back our P-256 pubkey */
+        uint8_t  have_pubkey;       /* 1 once chip returned the P-256 pubkey  */
         uint8_t  have_dhkey;        /* 1 once chip handed back DHKey */
-        uint8_t  have_peer_pubkey;  /* 1 once we received SMP Public Key */
-        uint8_t  have_peer_random;  /* 1 once we received SMP Random  */
+        uint8_t  have_peer_pubkey;  /* 1 once the SMP Public Key arrived */
+        uint8_t  have_peer_random;  /* 1 once the SMP Random arrived  */
         uint8_t  pending_pubkey_tx; /* 1 if local pubkey is queued to send */
         uint8_t  pending_f5;        /* 1 if f5/LTK derivation is pending DHKey */
         uint8_t  peer_pubkey[64];   /* LE byte order, X(32) || Y(32)        */
         uint8_t  local_pubkey[64];
         uint8_t  dhkey[32];         /* LE byte order from chip              */
         uint8_t  peer_nonce[16];    /* Na (central)                          */
-        uint8_t  local_nonce[16];   /* Nb (we, peripheral)                   */
+        uint8_t  local_nonce[16];   /* Nb (local, peripheral)                */
         uint8_t  ltk[16];
         uint8_t  mackey[16];
         uint8_t  peer_iocap[3];     /* AuthReq, OOB, IOcap from Pairing Req  */
-        uint8_t  own_iocap[3];      /* what we sent in Pairing Response      */
+        uint8_t  own_iocap[3];      /* what went out in Pairing Response     */
         uint8_t  peer_addr_le[6];   /* LE-order copy of peer addr            */
         uint8_t  peer_addr_type;    /* 0 public, 1 random                    */
     } smp[TIKU_BT_CONN_MAX];
@@ -629,8 +629,8 @@ static uint8_t bt_att_snapshot(bt_att_entry_t *out)
         const tiku_bt_service_t *s = bt_state.user_svc[svc];
         uint8_t  ch;
         /* Primary Service Decl: value = service UUID (2 bytes LE).
-         * We store the UUID bytes inline in a slot in char_decl_buf
-         * (any spare 2 bytes will do; we use the high 2 of the next
+         * The UUID bytes are stored inline in a slot in char_decl_buf
+         * (any spare 2 bytes will do; this takes the high 2 of the next
          * available slot since char_decl values are 5 bytes wide and
          * a service decl only needs 2). */
         if (char_buf_slot >= TIKU_BT_CHAR_MAX) break;
@@ -722,8 +722,8 @@ static void bt_att_send_error(uint8_t conn_idx, uint8_t req_op,
 /**
  * @brief Handle ATT Exchange MTU Request (opcode 0x02)
  *
- * Request layout: opcode(1) + client_rx_mtu(2 LE). We respond with
- * our server_rx_mtu (also 23 for now) so both sides know to keep PDUs
+ * Request layout: opcode(1) + client_rx_mtu(2 LE). The reply carries
+ * server_rx_mtu (also 23 for now) so both sides know to keep PDUs
  * <= ATT_MTU_DEFAULT. Larger MTUs are a Phase 11+ feature.
  *
  * @param conn_idx  Connection table index
@@ -755,8 +755,8 @@ static void bt_att_handle_mtu(uint8_t conn_idx, const uint8_t *pdu,
 
 /*
  * Used by clients to enumerate Primary Service declarations. The
- * request gives a handle range + group UUID (usually 0x2800); we
- * reply with a list of {start_handle, end_handle, service_uuid}
+ * request gives a handle range + group UUID (usually 0x2800); the
+ * reply is a list of {start_handle, end_handle, service_uuid}
  * tuples for matching attributes in range.
  */
 
@@ -803,7 +803,7 @@ static void bt_att_handle_read_by_group(uint8_t conn_idx,
         if (table[i].handle < start_h || table[i].handle > end_h) continue;
         if (off + 6U > sizeof rsp) break;
         /* Find end-of-group: the next service handle - 1, or the
-         * last attribute handle in our table. */
+         * last attribute handle in the table. */
         {
             uint16_t end_grp = ATT_HANDLE_MAX;
             uint8_t  j;
@@ -835,7 +835,7 @@ static void bt_att_handle_read_by_group(uint8_t conn_idx,
  * @brief Handle ATT Read By Type Request (opcode 0x08)
  *
  * Used by clients to enumerate Characteristic declarations within a
- * service. We respond with a list of {attr_handle, value} pairs for
+ * service. The reply is a list of {attr_handle, value} pairs for
  * matching attributes in range.
  *
  * @param conn_idx  Connection table index
@@ -1318,7 +1318,7 @@ static int bt_hci_cmd_response(uint16_t opcode, const uint8_t *params,
         int n = tiku_bt_recv(out_evt, out_max);
         if (n > 0) {
             /* Discriminate Command Complete (evt 0x0E) carrying the
-             * opcode we sent; ignore anything else (vendor events,
+             * opcode just sent; ignore anything else (vendor events,
              * stale Number_Of_Completed_Packets, etc.). */
             if (n >= 6 && out_evt[0] == HCI_PKT_TYPE_EVENT
                 && out_evt[1] == HCI_EVT_COMMAND_COMPLETE
@@ -1327,7 +1327,7 @@ static int bt_hci_cmd_response(uint16_t opcode, const uint8_t *params,
                 *out_n = n;
                 return TIKU_DRV_OK;
             }
-            /* Not our event — route through the regular dispatchers so
+            /* Someone else's event — route through the dispatchers so
              * an async LE Connection Complete / Disconnection / Adv
              * Report arriving during a command flight is still
              * delivered. */
@@ -1371,7 +1371,7 @@ static int bt_rand_bytes(uint8_t *out, size_t n)
  * Crypto strategy: the CYW43439 controller exposes an AES-128 ECB
  * primitive (HCI_LE_Encrypt, 0x2017) and a P-256 ECDH engine
  * (HCI_LE_Read_Local_P256_Public_Key 0x2025 + HCI_LE_Generate_DHKey
- * 0x205E) -- we offload the heavy lifting to the chip and only
+ * 0x205E) -- the heavy lifting goes to the chip, leaving only
  * implement AES-CMAC (RFC 4493) and the Bluetooth f4/f5/f6 KDFs
  * (Core Spec Vol 3 Part H 2.2) in software. That keeps the code
  * footprint manageable on the Cortex-M33 host: ~3 KB of text rather
@@ -1383,11 +1383,11 @@ static int bt_rand_bytes(uint8_t *out, size_t n)
  *   IDLE                                  --recv Pairing Request-->
  *   WAITING_PUBKEY  (sent Pairing Rsp, awaiting peer Public Key)
  *                                         --recv Public Key-------->
- *   WAITING_RANDOM  (sent our Public Key + Confirm Cb, awaiting Na)
+ *   WAITING_RANDOM  (sent Public Key + Confirm Cb, awaiting Na)
  *                                         --recv Random------------>
  *   WAITING_DHCHECK (sent Nb + computed LTK; awaiting peer DH check)
  *                                         --recv DH Check---------->
- *   ENCRYPTING      (sent our DH check, awaiting LE LTK Request)
+ *   ENCRYPTING      (sent the DH check, awaiting LE LTK Request)
  *                                         --LE LTK Request reply--->
  *   ENCRYPTED       (Encryption Change OK -- bond persisted)
  *
@@ -1405,10 +1405,10 @@ static int bt_rand_bytes(uint8_t *out, size_t n)
  * least significant octet first" -- meaning the bytes are sent
  * LE-first but the AES algorithm internally treats them as an
  * MSB-first 128-bit integer. To make AES-CMAC's byte-oriented
- * arithmetic line up with NimBLE / RFC4493 we byte-reverse the
- * inputs before sending and reverse the output back.
+ * arithmetic line up with NimBLE / RFC4493, the inputs are byte-reversed
+ * before sending and the output reversed back.
  * The CYW43439 sends the encrypted block as the 16 bytes immediately
- * after the standard CC header (evt[7..22] in our buffer indexing).
+ * after the standard CC header (evt[7..22] in this buffer indexing).
  */
 
 /**
@@ -1545,7 +1545,7 @@ static int bt_aes_cmac(const uint8_t key[16],
 /* Bluetooth KDFs: f4, f5, f6 (Core Spec Vol 3 Part H 2.2)                   */
 /*---------------------------------------------------------------------------*/
 
-/* Swap N bytes in place (in-place reverse).  Used to convert between
+/* Swap N bytes in place (in-place reverse), converting between
  * the LE byte order of the SMP wire and the spec's MSB-first
  * "mathematical" byte order that AES-CMAC operates on for the Core
  * Spec sample data to match. */
@@ -1558,7 +1558,7 @@ static void bt_smp_swap_buf(uint8_t *dst, const uint8_t *src, size_t n)
 /*
  * Computes Cb = AES-CMAC(X, U || V || Z) over a 65-byte input where
  * the spec defines U, V, X as integer values (MSB-first conceptually).
- * The wire byte order for these fields is LE; we swap to MSB-first
+ * The wire byte order for these fields is LE; they are swapped to MSB-first
  * before feeding AES-CMAC and swap the output back to LE.
  * U = peer  public key X coordinate (32 B, LE on the wire)
  * V = local public key X coordinate (32 B, LE)
@@ -1604,7 +1604,7 @@ static int bt_smp_f4(const uint8_t U[32], const uint8_t V[32],
  * MacKey = AES-CMAC(T, 0x00 || "btle" || N1 || N2 || A1 || A2 || 0x0100)
  * LTK    = AES-CMAC(T, 0x01 || "btle" || N1 || N2 || A1 || A2 || 0x0100)
  * The wire byte order for W, N1, N2 and the 6 address bytes inside
- * A1/A2 is LE; we swap those fields to MSB-first before feeding
+ * A1/A2 is LE; those fields are swapped to MSB-first before feeding
  * AES-CMAC (the spec defines the inputs as integer values). The
  * addr_type byte at the head of each A-block, the "btle" keyID, the
  * Counter, and the Length are byte-string constants and pass through
@@ -1651,7 +1651,7 @@ static int bt_smp_f5(const uint8_t W[32],
     /* msg layout: Counter(1) || keyID(4) || N1_BE(16) || N2_BE(16)
      *             || addr_type1(1) || addr1_BE(6)
      *             || addr_type2(1) || addr2_BE(6) || Length(2 BE)
-     * Note A1/A2 hold {addr_type, addr_LE x6}; we copy addr_type as-is
+     * Note A1/A2 hold {addr_type, addr_LE x6}; addr_type is copied as-is
      * and swap the 6 address bytes to BE. */
     off          = 0U;
     msg[off++]   = 0x00U;       /* Counter -- placeholder, fixed below */
@@ -1742,7 +1742,7 @@ static int bt_smp_selftest(void)
 
     /* ---- AES-128 ECB sanity (FIPS-197 known answer + spec-vector)
      * Failing AES here means the chip's HCI_LE_Encrypt isn't doing
-     * what we think -- surface it before f4/f5/f6 confuse the picture.
+     * what it should -- surface it before f4/f5/f6 confuse the picture.
      *   AES(0, 0)                  = 66e94bd4ef8a2c3b884cfa59ca342b2e
      *   AES(FIPS-197 K, FIPS P)    = 3ad77bb40d7a3660a89ecaf32466ef97
      */
@@ -1847,7 +1847,7 @@ static int bt_smp_selftest(void)
             0x6E,0x5F,0xA7,0x25,0xCC,0xE7,0xE8,0xA6,
         };
         /* A1/A2 = addr_type(1) || addr_LE(6). NimBLE test passes the
-         * addresses as 6-byte buffers separately; here we build the
+         * addresses as 6-byte buffers separately; here the code builds the
          * 7-byte block that bt_smp_f5 takes. */
         static const uint8_t A1[7] = {
             0x00, 0xCE,0xBF,0x37,0x37,0x12,0x56,
@@ -1980,7 +1980,7 @@ static int bt_bond_find_by_addr(uint8_t addr_type, const uint8_t addr_le[6],
 
 /*
  * replies with Command Status then later a LE Meta subevent 0x08
- * carrying our 64-byte public key. Synchronous Command Status check
+ * carrying the 64-byte public key. Synchronous Command Status check
  * *  only; the actual pubkey arrives async via bt_handle_le_meta.
  */
 
@@ -2026,7 +2026,7 @@ static int bt_smp_request_dhkey(const uint8_t peer_pubkey[64])
  * are all in hand. Idempotent: ignores calls where prerequisites
  * aren't set yet. Returns 0 on success (or already done), -1 on
  * cryptographic failure. Does NOT emit anything on the wire --
- * *  emission of Eb happens only after we receive Ea.
+ * *  emission of Eb happens only after Ea arrives.
  */
 
 /**
@@ -2045,7 +2045,7 @@ static int bt_smp_try_derive_keys(uint8_t conn_idx)
     for (i = 0U; i < 16U; ++i) Na[i] = bt_state.smp[conn_idx].peer_nonce[i];
     for (i = 0U; i < 16U; ++i) Nb[i] = bt_state.smp[conn_idx].local_nonce[i];
 
-    /* Peripheral: A_init = central (peer), A_resp = us. */
+    /* Peripheral: A_init = central (peer), A_resp = local. */
     bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
                       bt_state.conns[conn_idx].info.peer_addr, A_init);
     bt_smp_addr_block(0x00U /* public */,
@@ -2065,8 +2065,8 @@ static int bt_smp_try_derive_keys(uint8_t conn_idx)
     return 0;
 }
 
-/** Compute our DH check Eb and emit it as SMP_OP_PAIRING_DHKEY_CHECK.
- *  Called only after we've validated the peer's Ea -- per spec,
+/** Compute the DH check Eb and emit it as SMP_OP_PAIRING_DHKEY_CHECK.
+ *  Called only after the peer's Ea is validated -- per spec,
  *  responder sends Eb in response to receiving Ea, not before. */
 static int bt_smp_send_dhkey_check(uint8_t conn_idx)
 {
@@ -2104,14 +2104,14 @@ static int bt_smp_send_dhkey_check(uint8_t conn_idx)
     return TIKU_DRV_OK;
 }
 
-/** When we have both our pubkey from the chip and the peer's pubkey,
- *  send our pubkey out and emit the Pairing Confirm Cb. */
+/** Once both the local pubkey (from the chip) and the peer's are in hand,
+ *  send the local pubkey out and emit the Pairing Confirm Cb. */
 static void bt_smp_try_send_pubkey_confirm(uint8_t conn_idx)
 {
     if (!bt_state.smp[conn_idx].pending_pubkey_tx)         return;
     if (!bt_state.smp[conn_idx].have_pubkey)               return;
 
-    /* Send our public key (opcode 0x0C + 64 B in LE order). */
+    /* Send the local public key (opcode 0x0C + 64 B in LE order). */
     {
         uint8_t pdu[65];
         uint8_t i;
@@ -2126,7 +2126,7 @@ static void bt_smp_try_send_pubkey_confirm(uint8_t conn_idx)
     bt_state.smp[conn_idx].pending_pubkey_tx = 0U;
 
     /* Compute Cb = f4(PKbx, PKax, Nb, 0) and send Pairing Confirm.
-     *   PKbx = our   pubkey X (= U for the confirming side)
+     *   PKbx = local pubkey X (= U for the confirming side)
      *   PKax = peer  pubkey X (= V) */
     {
         uint8_t Cb[16];
@@ -2194,10 +2194,10 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
         /* Build Pairing Response: IOCap=NoInputNoOutput (0x03),
          * OOB=0, AuthReq=SC|Bonding, MaxKeySize=16. KeyDist masks
          * echo what the initiator (phone) requested in the Pairing
-         * Request, ANDed with what we can practically distribute --
+         * Request, ANDed with what this stack can practically send --
          * today none, but echoing the bits lets the phone consider
          * the bond legitimate. Phones disconnect right after Pairing
-         * Response if we return 0x00 here (interpretation: "this peer
+         * Response if 0x00 comes back here (interpretation: "this peer
          * has nothing to offer"). Mask to IdKey + SignKey only --
          * EncKey is legacy and irrelevant under LE Secure Connections. */
         {
@@ -2272,7 +2272,7 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
         }
-        /* If our pubkey is already in hand from the chip, fire off
+        /* If the local pubkey is already in hand from the chip, fire off
          * pubkey + confirm now. Otherwise the pubkey-complete handler
          * will trigger it later. */
         bt_smp_try_send_pubkey_confirm(conn_idx);
@@ -2294,7 +2294,7 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             bt_state.smp[conn_idx].peer_nonce[i] = pdu[1U + i];
         }
         bt_state.smp[conn_idx].have_peer_random = 1U;
-        /* Send our Pairing Random (Nb). */
+        /* Send the Pairing Random (Nb). */
         {
             uint8_t pdu_out[17];
             pdu_out[0] = SMP_OP_PAIRING_RANDOM;
@@ -2356,7 +2356,7 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
                 return;
             }
         }
-        /* Peer's Ea is valid. Compute and emit our Eb -- spec
+        /* Peer's Ea is valid. Compute and emit Eb -- spec
          * requires responder to send DHKey Check in response to
          * receiving the initiator's DHKey Check. */
         if (bt_smp_send_dhkey_check(conn_idx) != TIKU_DRV_OK) {
@@ -2404,7 +2404,7 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
     }
 
     case SMP_OP_SECURITY_REQUEST:
-        /* From a central we're already paired with; we honour it by
+        /* From an already-paired central; honoured by
          * doing nothing here (the chip drives the encryption restart
          * via LE LTK Request when the central asks). */
         TIKU_BT_PRINTF("p14.smp: Security Request received (ignored)\n");
@@ -2418,14 +2418,14 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
 }
 
 /*---------------------------------------------------------------------------*/
-/* LE LTK Request -- central asks us to supply the bond LTK                  */
+/* LE LTK Request -- central asks for the bond LTK                          */
 /*---------------------------------------------------------------------------*/
 /*
  * Triggered by the central via LL_ENC_REQ; the chip surfaces it as
- * LE Meta subevent 0x05. We look up the bond by peer addr (or fall
- * back to the in-memory SMP session if pairing just completed) and
- * reply with the LTK -- or send LTK Request Negative Reply if we
- * have no key for this peer.
+ * LE Meta subevent 0x05. The bond is looked up by peer addr (or falls
+ * back to the in-memory SMP session if pairing just completed) and the
+ * LTK returned -- or an LTK Request Negative Reply is sent when no key
+ * is held for this peer.
  */
 
 /**
@@ -2516,13 +2516,13 @@ static void bt_handle_le_ltk_request(const uint8_t *pkt, int len)
  * Bluetooth Core Spec, Vol 6 Part B 2.3.1 (Advertising Channel PDU
  * payload) caps the AD records at 31 bytes for legacy advertising.
  * Each AD record is `[len][type][data...]` where `len` covers `type`
- * + `data`. Our advertising data therefore lays out as:
+ * + `data`. The advertising data therefore lays out as:
  *
  *   [02][AD_TYPE_FLAGS][AD_FLAGS_LE_GENERAL_DISC]
  *   [N+1][AD_TYPE_COMPLETE_LOCAL_NAME][name × N]
  *
  * That's 3 + 2 + N bytes; the chip pads the remaining bytes to 31
- * with zeros (we send the full 31 in our LE_Set_Advertising_Data
+ * with zeros (the full 31 go out in the LE_Set_Advertising_Data
  * payload anyway).
  */
 
@@ -2560,7 +2560,7 @@ static int bt_advertise_setup(const char *name, uint8_t name_len)
      * if its internal adv state machine is mid-transition (most
      * commonly: right after a connection drop, where the
      * link-layer cleanup hasn't fully released the adv state yet).
-     * Disabling first puts the chip into a known state. We ignore
+     * Disabling first puts the chip into a known state. Ignore
      * the rc -- it'll fail harmlessly if adv was already off. */
     {
         uint8_t en0 = 0U;
@@ -2688,8 +2688,8 @@ static uint16_t bt_ms_to_chip_units(uint16_t ms)
 }
 
 /*
- * The AD payload uses the standard `[len][type][data]` records; we
- * walk them, skipping until we find a Complete (0x09) or Shortened
+ * The AD payload uses the standard `[len][type][data]` records; the
+ * scan walks them until it finds a Complete (0x09) or Shortened
  * (0x08) Local Name record. The output is NOT NUL-terminated --
  * caller uses the returned length.
  */
@@ -2745,7 +2745,7 @@ static int bt_scan_find(const uint8_t addr[6])
  * @brief Insert or update an entry from an LE Advertising Report
  *
  * @p addr_le is six bytes in the on-wire little-endian order (LSB
- * first); we reverse them into MSB-first display order before
+ * first); they are reversed into MSB-first display order before
  * caching so callers (the `bt list` shell and tests) don't have to
  * re-reverse. RSSI / name are overwritten on every sighting -- later
  * beacons are more accurate than the first; SCAN_RSP usually carries
@@ -2814,7 +2814,7 @@ static void bt_scan_cache_add(uint8_t evt_type, uint8_t addr_type,
  * [.]  data       (data_len)
  * [.]  rssi       (1, signed)
  * num_reports is almost always 1 on the CYW43439 (the chip rarely
- * bundles in legacy 1M-PHY mode), but the spec allows >1 so we loop.
+ * bundles in legacy 1M-PHY mode), but the spec allows >1 so this loops.
  */
 
 /**
@@ -2838,7 +2838,7 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
      *   [15..16] conn_interval       (2 LE, 1.25 ms units)
      *   [17..18] conn_latency        (2 LE)
      *   [19..20] supervision_timeout (2 LE, 10 ms units)
-     *   [21]   master_clock_accuracy (1) -- unused by us
+     *   [21]   master_clock_accuracy (1) -- unused here
      */
     if (pkt[3] == LE_SUBEVT_CONNECTION_COMPLETE && len >= 22) {
         uint8_t  status = pkt[4];
@@ -2873,7 +2873,7 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         bt_state.conns[idx].in_use  = 1U;
         bt_state.conns[idx].att_mtu = ATT_MTU_DEFAULT;
         /* When advertising as ADV_IND, the chip auto-stops on
-         * connection (per Core Spec). Reflect that in our state. */
+         * connection (per Core Spec). Reflect that in the local state. */
         bt_state.advertising = 0U;
         {
             const tiku_bt_connection_t *c = &bt_state.conns[idx].info;
@@ -2889,9 +2889,9 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         /* Phase 14: as the peripheral, kick the central into starting
          * pairing/encryption by sending an SMP Security Request. iOS
          * never auto-pairs without this; without a Pairing Request
-         * we never get to exercise the LE-SC machinery. AuthReq = SC
-         * + Bonding + no-MITM (0x09) to match what we'll accept in
-         * Pairing Response. */
+         * the LE-SC machinery is never exercised. AuthReq = SC
+         * + Bonding + no-MITM (0x09) to match what Pairing Response
+         * will accept. */
         if (bt_state.conns[idx].info.role == 1U /* peripheral */) {
             uint8_t sec_req[2];
             sec_req[0] = SMP_OP_SECURITY_REQUEST;
@@ -2930,8 +2930,8 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
                     }
                 }
                 bt_state.smp[i].have_pubkey = 1U;
-                /* If peer pubkey is already in hand we owe them our
-                 * pubkey + Pairing Confirm now. */
+                /* If the peer pubkey is already in hand, the local
+                 * pubkey + Pairing Confirm are owed now. */
                 bt_smp_try_send_pubkey_confirm((uint8_t)i);
                 break;
             }
@@ -2961,9 +2961,9 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
                     }
                 }
                 bt_state.smp[i].have_dhkey = 1U;
-                /* Derivation is only valid after our nonce + peer's
-                 * are both set, which is the SMP_WAITING_DHCHECK
-                 * state. Otherwise we just cache. */
+                /* Derivation is only valid once the local nonce and
+                 * the peer's are both set, which is the
+                 * SMP_WAITING_DHCHECK state. Otherwise just cache. */
                 (void)bt_smp_try_derive_keys((uint8_t)i);
                 break;
             }
@@ -2971,7 +2971,7 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         return;
     }
 
-    /* Phase 14: encryption-restart trigger -- chip asks us to supply
+    /* Phase 14: encryption-restart trigger -- the chip asks for
      * the LTK for an active link. */
     if (pkt[3] == LE_SUBEVT_LONG_TERM_KEY_REQUEST) {
         bt_handle_le_ltk_request(pkt, len);
@@ -3011,7 +3011,7 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
 
 /*
  * Disconnection Complete (event 0x05) is the only non-LE-Meta event
- * we care about today. LE Meta (0x3E) is delegated to
+ * handled today. LE Meta (0x3E) is delegated to
  * bt_handle_le_meta which handles Connection Complete + Advertising
  * Report. Everything else is logged at info level and dropped.
  */
@@ -3080,7 +3080,7 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
         return;
     }
     /* Phase 14: Encryption Key Refresh Complete -- same outcome as
-     * Encryption Change as far as we care; mark link encrypted. */
+     * Encryption Change for this purpose; mark link encrypted. */
     if (pkt[1] == HCI_EVT_ENCRYPTION_KEY_REFRESH_COMPLETE && len >= 6) {
         uint8_t  status = pkt[3];
         uint16_t handle = (uint16_t)(pkt[4] | ((uint16_t)pkt[5] << 8));
@@ -3109,7 +3109,7 @@ static void                    bt_demo_push_uptime(void);
 /* Periodic notification timer. Armed once the first LE connection
  * comes up (in EVENT mode -- the runner's protothread reacts to
  * TIKU_EVENT_TIMER); stopped when the last connection goes away.
- * Replaces a per-tick "have we crossed a second boundary?" check
+ * Replaces a per-tick "has a second boundary passed?" check
  * with a real one-shot-then-rearm event timer. */
 static struct tiku_timer bt_demo_notify_timer;
 static uint8_t           bt_demo_notify_armed;
@@ -3265,7 +3265,7 @@ int tiku_bt_init(void)
 #ifdef BT_SMP_SELFTEST
     /* Validate the AES-CMAC + f4/f5/f6 KDFs against the Core Spec
      * Vol 3 Part H 2.7 sample vectors before going on-air. Failing
-     * any vector means the chip-side AES is broken or our byte-
+     * any vector means the chip-side AES is broken or the byte-
      * ordering is off; surface it loudly. */
     (void)bt_smp_selftest();
 #endif
@@ -3320,7 +3320,7 @@ int tiku_bt_advertise_start(const char *name)
     name_len = bt_strlen_capped(name, TIKU_BT_ADV_NAME_MAX);
     if (name_len == 0U) return TIKU_DRV_ERR_INVALID;
 
-    /* If we were already advertising, stop first so the chip accepts
+    /* If advertising was already running, stop first so the chip accepts
      * the new parameters cleanly. */
     if (bt_state.advertising) {
         (void)tiku_bt_advertise_stop();
@@ -3416,7 +3416,7 @@ int tiku_bt_scan_start(uint8_t active, uint16_t interval_ms,
     }
 
     /* LE_Set_Scan_Enable: 2 bytes. Filter_Duplicates=1 lets the chip
-     * deduplicate at the link layer; we still dedup host-side because
+     * deduplicate at the link layer; host-side dedup stays because
      * the chip's filter applies per scan window and clears on every
      * Set_Scan_Enable(0). */
     {
@@ -3544,7 +3544,7 @@ int tiku_bt_disconnect(uint16_t handle)
     params[2] = 0x13U;
 
     /* HCI_Disconnect replies with Command STATUS (event 0x0F), not
-     * Command Complete. Our bt_hci_cmd_response polls for CC, so
+     * Command Complete. bt_hci_cmd_response polls for CC, so
      * it will time out. Instead just queue the command and let the
      * runner observe the asynchronous Disconnection Complete event. */
     {
@@ -3685,7 +3685,7 @@ int tiku_bt_client_discover_services(uint16_t conn_handle)
 int tiku_bt_client_subscribe(uint16_t conn_handle,
                                    uint16_t cccd_handle)
 {
-    /* CCCD value: bit 0 = notify, bit 1 = indicate. We enable
+    /* CCCD value: bit 0 = notify, bit 1 = indicate. This enables
      * notifications by default; callers wanting indications can use
      * tiku_bt_client_write with 0x02. */
     static const uint8_t subscribe_value[2] = { 0x01U, 0x00U };
@@ -3726,7 +3726,7 @@ int tiku_bt_notify(uint16_t char_uuid, const uint8_t *value,
         return TIKU_DRV_ERR_INVALID;
     }
     /* The PDU is opcode(1) + value_handle(2) + value(N); must fit in
-     * the negotiated ATT MTU. Today we cap at the default MTU. */
+     * the negotiated ATT MTU. Today this caps at the default MTU. */
     if ((uint16_t)len + 3U > (uint16_t)ATT_MTU_DEFAULT) {
         return TIKU_DRV_ERR_INVALID;
     }
@@ -3751,7 +3751,7 @@ int tiku_bt_notify(uint16_t char_uuid, const uint8_t *value,
 
     /* Broadcast to every connection (today CONN_MAX=1, loop is forward-
      * compatible). CCCD is per-char today; per-{char, conn} is a
-     * Phase 13+ refinement once we support multi-link bonding. */
+     * Phase 13+ refinement once multi-link bonding is supported. */
     for (conn_idx = 0U;
          conn_idx < TIKU_BT_CONN_MAX;
          ++conn_idx) {
@@ -3835,8 +3835,8 @@ static void bt_demo_push_uptime(void)
 void tiku_bt_poll(void)
 {
     /* Bound the per-tick drain: a busy room can produce dozens of
-     * adverts per second; we cap each tick at 8 packets so we don't
-     * monopolise the runner. The runner ticks at ~128 Hz so the
+     * adverts per second; each tick caps at 8 packets so the runner
+     * is not monopolised. The runner ticks at ~128 Hz so the
      * effective throughput is ~1024 packets/s -- well above what a
      * legacy LE radio can deliver. */
     if (bt_state.ready == 0U) return;
@@ -3844,8 +3844,8 @@ void tiku_bt_poll(void)
         && bt_state.advertising == 0U
         && bt_any_connection() == 0) {
         /* Nothing on-air that could produce events. The empty-ring
-         * recv() costs one bp_read32 (~30 us) but we still pay the
-         * runner-loop overhead -- skip entirely. */
+         * recv() costs one bp_read32 (~30 us) plus the runner-loop
+         * overhead -- skip entirely. */
         return;
     }
     {
@@ -3878,7 +3878,7 @@ void tiku_bt_poll(void)
  * Wake policy mirrors the WHD runner: a 1-tick wait while BT is
  * active (scan / advert / connection up), plain YIELD when idle.
  * The 1 s notification cadence is driven by a tiku_timer in EVENT
- * mode so we don't sample tiku_clock_seconds() 128x per second
+ * mode so tiku_clock_seconds() is not sampled 128x per second
  * just to detect a boundary crossing.
  */
 TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
@@ -3908,8 +3908,8 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
         tiku_bt_poll();
 
         /* Connection-presence drives the periodic uptime push. Arm
-         * the timer the first time we observe an active link; stop
-         * it the first time we see them all gone. The CCCD-subscriber
+         * the timer the first time an active link appears; stop
+         * it the first time they are all gone. The CCCD-subscriber
          * check lives inside bt_demo_push_uptime / tiku_bt_notify, so
          * even an armed timer is harmless without a real client. */
         if (bt_any_connection()) {
@@ -4006,7 +4006,7 @@ int tiku_bt_bond_clear(uint8_t slot)
 
 /*
  * Linear scan over the bond slots. The stored peer_addr is in
- * MSB-first display order; we accept the caller's @p addr_le in LE
+ * MSB-first display order; the caller's @p addr_le is taken in LE
  * wire order so the comparison is straightforward (reverse on the
  * way in). Used by the LE LTK Request handler to recover the LTK
  * from NVM when an already-paired peer reconnects.

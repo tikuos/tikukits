@@ -219,7 +219,7 @@ int tiku_kits_ds_timerwheel_expired(tiku_kits_ds_timerwheel_t *tw,
     }
 
     /* Report the number of fired timers (may exceed max_ids if the
-     * caller's buffer was too small, but we still count them all). */
+     * caller's buffer was too small, but all are still counted). */
     *count = n;
     tw->fired = 0;
     return TIKU_KITS_DS_OK;

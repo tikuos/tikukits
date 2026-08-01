@@ -120,7 +120,7 @@
  * The client sends a "blksize" option in every RRQ/WRQ to negotiate
  * this value with the server (RFC 2348).  If the server does not
  * support the option, it will respond with standard 512-byte blocks
- * which exceed our MTU and will be dropped -- the transfer will
+ * which exceed the MTU and will be dropped -- the transfer will
  * time out.  Use a server that supports RFC 2348.
  */
 

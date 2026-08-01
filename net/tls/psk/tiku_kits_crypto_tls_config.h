@@ -138,7 +138,7 @@ tiku_kits_crypto_tls_rng_fill_trng(uint8_t *buf, uint8_t len)
 #endif
 
 /*
- * A TLS record can carry up to 2^14 bytes of payload, but we limit
+ * A TLS record can carry up to 2^14 bytes of payload, but this limits
  * to a value that fits the SLIP MTU.  The 5-byte record header plus
  * up to 256 bytes of content plus 16-byte AEAD tag plus 1-byte
  * inner content type = 278 bytes.  300 provides margin.

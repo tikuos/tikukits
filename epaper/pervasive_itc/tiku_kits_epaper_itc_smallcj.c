@@ -247,7 +247,7 @@ itc_smallcj_init(tiku_kits_epaper_t *epd)
 {
     /* validate_context() in the generic dispatcher already ensured
      * epd, panel, framebuffer, and (for colour panels) framebuffer_red
-     * are non-NULL. We still need the family_data sanity check. */
+     * are non-NULL. The family_data sanity check is still needed. */
     if (epd->panel->family_data == NULL) {
         return TIKU_KITS_EPAPER_ERR_PARAM;
     }

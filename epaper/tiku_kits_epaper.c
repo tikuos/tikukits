@@ -53,7 +53,7 @@
 /*---------------------------------------------------------------------------*/
 
 /* Validate the context has the minimum required fields and that
- * the panel's ops vtable supplies the operation we are about to
+ * the panel's ops vtable supplies the operation about to be
  * dispatch.  Returns the negative error code if invalid, or
  * TIKU_KITS_EPAPER_OK if the call may proceed. */
 static int

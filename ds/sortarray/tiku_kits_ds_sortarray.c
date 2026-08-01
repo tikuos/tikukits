@@ -151,7 +151,7 @@ int tiku_kits_ds_sortarray_insert(struct tiku_kits_ds_sortarray *sa,
 
     /*
      * Step 2: if duplicates exist, advance past them.  binary_search()
-     * returns the index of the *first* equal element; we walk forward
+     * returns the index of the *first* equal element; walk forward
      * so the new duplicate lands after existing ones, preserving the
      * relative order of equal-valued insertions (stability).
      */

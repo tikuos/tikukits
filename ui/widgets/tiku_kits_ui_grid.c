@@ -16,7 +16,7 @@
  * (x, y, w, h) at render time and renders each child.
  *
  * Direction navigation is grid-coordinate-aware: rather than
- * computing centroids, we walk children by their (row, col)
+ * computing centroids, children are walked by their (row, col)
  * indices. This keeps navigation predictable in regular grids
  * and avoids floating-point distance math.
  */

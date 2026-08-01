@@ -40,7 +40,7 @@
  * @brief Default NTP server: the SLIP host (172.16.7.1).
  *
  * In the TikuOS SLIP point-to-point configuration the host acts as
- * the gateway, so we query it directly.  The TikuBench ntp_test.py
+ * the gateway, so it is queried directly.  The TikuBench ntp_test.py
  * script runs an NTP server on the host side.
  */
 #ifndef TIKU_KITS_TIME_NTP_SERVER

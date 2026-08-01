@@ -188,7 +188,7 @@ struct tiku_kits_ml_dtree_node {
  * Two parameters govern fixed-point behaviour:
  * - @c n_features -- validated against each internal node's
  * feature_index during set_tree() to reject malformed trees.
- * - @c shift -- fractional bits used to interpret confidence
+ * - @c shift -- fractional bits that scale confidence
  * values stored in leaf nodes' threshold field.
  * Example -- a 3-node tree with one split:
  * tiku_kits_ml_dtree_init(&dt, 1, 8);
