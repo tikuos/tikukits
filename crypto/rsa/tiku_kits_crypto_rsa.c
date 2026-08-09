@@ -15,6 +15,7 @@
  */
 
 #include "tiku_kits_crypto_rsa.h"
+#include "../tiku_kits_crypto_bn.h"
 #include "../sha256/tiku_kits_crypto_sha256.h"
 #include <string.h>
 
@@ -89,13 +90,24 @@ static void montmul(uint32_t *out, const uint32_t *a, const uint32_t *b,
     for (i = 0; i <= k; i++) t[i] = 0;
 
     for (i = 0; i < k; i++) {
-        uint64_t c = 0, v; uint32_t mu, hi;
-        for (j = 0; j < k; j++) { v = (uint64_t)a[j] * b[i] + t[j] + c; t[j] = (uint32_t)v; c = v >> 32; }
+        uint32_t c = 0, lo; uint32_t mu, hi; uint64_t v;
+        for (j = 0; j < k; j++) {
+            lo = t[j];
+            tiku_kits_crypto_bn_mac(&lo, &c, a[j], b[i]);
+            t[j] = lo;
+        }
         v = (uint64_t)t[k] + c; t[k] = (uint32_t)v; hi = (uint32_t)(v >> 32);
 
         mu = (uint32_t)((uint64_t)t[0] * n0);
-        v = (uint64_t)mu * m[0] + t[0]; c = v >> 32;
-        for (j = 1; j < k; j++) { v = (uint64_t)mu * m[j] + t[j] + c; t[j - 1] = (uint32_t)v; c = v >> 32; }
+        /* The low limb this produces is zero by construction; only its
+         * carry into the shifted-down loop below is wanted. */
+        lo = t[0]; c = 0;
+        tiku_kits_crypto_bn_mac(&lo, &c, mu, m[0]);
+        for (j = 1; j < k; j++) {
+            lo = t[j];
+            tiku_kits_crypto_bn_mac(&lo, &c, mu, m[j]);
+            t[j - 1] = lo;
+        }
         v = (uint64_t)t[k] + c; t[k - 1] = (uint32_t)v; t[k] = hi + (uint32_t)(v >> 32);
     }
     {

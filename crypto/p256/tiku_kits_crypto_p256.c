@@ -18,6 +18,7 @@
  */
 
 #include "tiku_kits_crypto_p256.h"
+#include "../tiku_kits_crypto_bn.h"
 #include <string.h>
 
 #define NL  8   /* number of 32-bit limbs in a 256-bit number */
@@ -134,22 +135,27 @@ static void mont_mul(bn out, const bn a, const bn b, const mont_ctx *ctx)
     for (i = 0; i <= NL; i++) t[i] = 0;
 
     for (i = 0; i < NL; i++) {
-        uint64_t c = 0, v;
+        uint32_t c = 0, lo;
         uint32_t m, hi;
+        uint64_t v;
         for (j = 0; j < NL; j++) {
-            v = (uint64_t)a[j] * b[i] + t[j] + c;
-            t[j] = (uint32_t)v; c = v >> 32;
+            lo = t[j];
+            tiku_kits_crypto_bn_mac(&lo, &c, a[j], b[i]);
+            t[j] = lo;
         }
         v = (uint64_t)t[NL] + c;
         t[NL] = (uint32_t)v;
         hi = (uint32_t)(v >> 32);              /* 0 or 1 */
 
         m = (uint32_t)((uint64_t)t[0] * ctx->n0);
-        v = (uint64_t)m * ctx->m[0] + t[0];
-        c = v >> 32;                           /* low limb is zeroed by the shift */
+        /* The low limb this produces is zero by construction; only its
+         * carry into the shifted-down loop below is wanted. */
+        lo = t[0]; c = 0;
+        tiku_kits_crypto_bn_mac(&lo, &c, m, ctx->m[0]);
         for (j = 1; j < NL; j++) {
-            v = (uint64_t)m * ctx->m[j] + t[j] + c;
-            t[j - 1] = (uint32_t)v; c = v >> 32;
+            lo = t[j];
+            tiku_kits_crypto_bn_mac(&lo, &c, m, ctx->m[j]);
+            t[j - 1] = lo;
         }
         v = (uint64_t)t[NL] + c;
         t[NL - 1] = (uint32_t)v;
