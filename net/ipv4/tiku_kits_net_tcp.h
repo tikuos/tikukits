@@ -563,7 +563,10 @@ typedef struct tiku_kits_net_tcp_conn {
  *
  * Clears the connection table, listener table, and creates the
  * FRAM-backed TX segment pool via the kernel pool allocator.
- * Called once during net process startup.
+ *
+ * @note Idempotent: a kit that needs TCP under it may call this without
+ *       knowing whether the application already has, and the call after
+ *       the first does nothing.  Without the pool every send is refused.
  */
 void tiku_kits_net_tcp_init(void);
 

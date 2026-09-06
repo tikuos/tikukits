@@ -67,6 +67,9 @@ static tcp_listener_t listeners[TIKU_KITS_NET_TCP_MAX_LISTENERS];
 /** TX segment pool control block */
 static tiku_pool_t seg_pool;
 
+/* Whether init has run: see tiku_kits_net_tcp_init. */
+static uint8_t tcp_inited;
+
 /** ISS counter */
 static uint32_t iss_counter;
 
@@ -1041,6 +1044,14 @@ tiku_kits_net_tcp_init(void)
 {
     uint8_t i;
     uint16_t saved;
+
+    /* Idempotent, so a kit that needs TCP under it may ask for it without
+     * knowing whether the application already did: a second call here
+     * would drop every open connection and the segment pool with them. */
+    if (tcp_inited) {
+        return;
+    }
+    tcp_inited = 1u;
 
     /* Clear connection table */
     memset(conn_table, 0, sizeof(conn_table));
