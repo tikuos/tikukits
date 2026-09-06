@@ -43,6 +43,8 @@
 #include <arch/ambiq/tiku_uart_arch.h>
 #elif defined(PLATFORM_NORDIC)
 #include <arch/nordic/tiku_uart_arch.h>
+#elif defined(PLATFORM_RA8P1)
+#include <arch/ra8p1/tiku_uart_arch.h>
 #else
 #error "tikukits/net/slip: unsupported platform — add an arch include here"
 #endif

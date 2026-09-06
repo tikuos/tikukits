@@ -333,6 +333,8 @@ tiku_kits_net_http_build_request(
 #include <arch/ambiq/tiku_timer_arch.h>
 #elif defined(PLATFORM_NORDIC)
 #include <arch/nordic/tiku_timer_arch.h>
+#elif defined(PLATFORM_RA8P1)
+#include <arch/ra8p1/tiku_timer_arch.h>
 #else
 #error "tikukits/net/http: unsupported platform"
 #endif
