@@ -93,6 +93,10 @@ typedef struct tcp_txseg {
     /* uint8_t payload[MSS] follows -- accessed via (uint8_t *)(seg + 1) */
 } tcp_txseg_t;
 
+/* The pool's block reserves this much before the payload. */
+_Static_assert(sizeof(tcp_txseg_t) <= TIKU_KITS_NET_TCP_TX_SEG_HDR,
+               "tcp_txseg_t outgrows TIKU_KITS_NET_TCP_TX_SEG_HDR");
+
 /*---------------------------------------------------------------------------*/
 /* NVM WRITE HELPER                                                          */
 /*---------------------------------------------------------------------------*/

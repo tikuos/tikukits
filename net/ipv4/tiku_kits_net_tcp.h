@@ -426,12 +426,17 @@
 /* TX SEGMENT POOL SIZING                                                    */
 /*---------------------------------------------------------------------------*/
 
-/** Metadata overhead per TX segment block (next + seq + len + flags + pad) */
-#define TIKU_KITS_NET_TCP_TX_SEG_HDR   10
+/** Metadata per TX segment block (next + seq + len + flags + pad), the
+ *  descriptor's size with a 4-byte pointer; the descriptor is asserted to
+ *  fit where it is defined. */
+#define TIKU_KITS_NET_TCP_TX_SEG_HDR   12
 
-/** Total block size for the TX segment pool */
+/** Total block size for the TX segment pool, rounded up to the pool's own
+ *  alignment: the pool strides its backing array at the rounded size, so
+ *  an array sized from the raw one is short by the rounding times the
+ *  count, and the last segments of a full pool land past its end. */
 #define TIKU_KITS_NET_TCP_TX_SEG_BLOCK \
-    (TIKU_KITS_NET_TCP_TX_SEG_HDR + TIKU_KITS_NET_TCP_MSS)
+    (((TIKU_KITS_NET_TCP_TX_SEG_HDR + TIKU_KITS_NET_TCP_MSS) + 3u) & ~3u)
 
 /*---------------------------------------------------------------------------*/
 /* SEQUENCE NUMBER HELPERS                                                   */
