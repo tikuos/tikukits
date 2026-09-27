@@ -144,10 +144,10 @@ int tiku_kits_sensor_mcp9808_init(uint8_t addr)
 
 /*
  * Fetches the 16-bit temperature register and decodes the 13-bit
- * value into integer + fractional form.  The MCP9808 uses a
- * sign+magnitude encoding (bit 12 = sign) rather than two's
- * complement, so the negative path computes the complement of
- * the magnitude fields independently.
+ * value into integer + fractional form. Bit 12 subtracts 256 C
+ * from the unsigned value in bits 11:0. Convert the complete
+ * fixed-point value before splitting it; the fraction can borrow
+ * from the integer part.
  */
 
 /**
@@ -178,13 +178,10 @@ int tiku_kits_sensor_mcp9808_read(tiku_kits_sensor_temp_t *temp)
     lower = (uint8_t)(raw & 0xFF);
 
     if (upper & 0x10) {
-        /* Negative temperature: sign bit (bit 4 of upper) is set.
-         * MCP9808 uses sign+magnitude, so subtract from the
-         * full-scale range (256 for integer, 16 for fraction). */
+        uint16_t magnitude = (uint16_t)(0x2000u - (raw & 0x1FFFu));
         temp->negative = 1;
-        upper &= 0x0F;
-        temp->integer  = 256 - ((int16_t)(upper << 4) | (lower >> 4));
-        temp->frac     = 16 - (lower & 0x0F);
+        temp->integer  = (int16_t)(magnitude >> 4);
+        temp->frac     = (uint8_t)(magnitude & 0x0F);
     } else {
         /* Positive temperature: magnitude is directly usable */
         temp->negative = 0;

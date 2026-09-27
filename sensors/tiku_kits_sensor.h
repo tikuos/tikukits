@@ -51,6 +51,7 @@
 #define TIKU_KITS_SENSOR_ERR_ID        (-2)  /**< Sensor ID/manufacturer code mismatch during init */
 #define TIKU_KITS_SENSOR_ERR_PARAM     (-3)  /**< Invalid parameter (NULL pointer, out-of-range value) */
 #define TIKU_KITS_SENSOR_ERR_NO_DEVICE (-4)  /**< No device detected on the bus (no presence pulse) */
+#define TIKU_KITS_SENSOR_ERR_CRC       (-5)  /**< Sensor response failed its integrity check */
 /** @} */
 
 /*---------------------------------------------------------------------------*/

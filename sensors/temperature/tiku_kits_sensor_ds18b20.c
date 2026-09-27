@@ -63,6 +63,16 @@
  */
 #define DS18B20_SCRATCHPAD_SIZE     9
 
+/**
+ * @brief Scratchpad byte holding the configuration register.
+ *
+ * Its fixed bits (bit 7 clear, bits 4:0 set) tell a real scratchpad from a
+ * data line held low, which reads as nine zero bytes with a valid CRC.
+ */
+#define DS18B20_CONFIG_BYTE         4
+#define DS18B20_CONFIG_FIXED_MASK   0x9F
+#define DS18B20_CONFIG_FIXED_BITS   0x1F
+
 /*---------------------------------------------------------------------------*/
 /* PUBLIC API                                                                */
 /*---------------------------------------------------------------------------*/
@@ -128,7 +138,8 @@ int tiku_kits_sensor_ds18b20_read(tiku_kits_sensor_temp_t *temp)
 {
     uint8_t scratchpad[DS18B20_SCRATCHPAD_SIZE];
     uint8_t i;
-    int16_t raw;
+    uint16_t raw;
+    uint8_t crc = 0;
 
     if (temp == NULL) {
         return TIKU_KITS_SENSOR_ERR_PARAM;
@@ -152,7 +163,26 @@ int tiku_kits_sensor_ds18b20_read(tiku_kits_sensor_temp_t *temp)
 
     /* Reset bus after reading full scratchpad to release the
      * slave and prepare for the next transaction. */
-    tiku_onewire_reset();
+    if (tiku_onewire_reset() != TIKU_OW_OK) {
+        return TIKU_KITS_SENSOR_ERR_BUS;
+    }
+
+    /* Dallas CRC-8, LSB first: x^8 + x^5 + x^4 + 1. Validate
+     * before changing the caller's last known-good measurement. */
+    for (i = 0; i < DS18B20_SCRATCHPAD_SIZE - 1; i++) {
+        uint8_t bit;
+        crc ^= scratchpad[i];
+        for (bit = 0; bit < 8; bit++) {
+            crc = (uint8_t)((crc >> 1) ^ ((crc & 1) ? 0x8C : 0));
+        }
+    }
+    if (crc != scratchpad[DS18B20_SCRATCHPAD_SIZE - 1]) {
+        return TIKU_KITS_SENSOR_ERR_CRC;
+    }
+    if ((scratchpad[DS18B20_CONFIG_BYTE] & DS18B20_CONFIG_FIXED_MASK) !=
+        DS18B20_CONFIG_FIXED_BITS) {
+        return TIKU_KITS_SENSOR_ERR_CRC;
+    }
 
     /*
      * DS18B20 temperature format (12-bit, default):
@@ -161,13 +191,13 @@ int tiku_kits_sensor_ds18b20_read(tiku_kits_sensor_temp_t *temp)
      *   Bits [10:4]:  integer part (7 bits)
      *   Bits [3:0]:   fractional part (1/16 C per LSB)
      */
-    raw = ((int16_t)scratchpad[1] << 8) | scratchpad[0];
+    raw = ((uint16_t)scratchpad[1] << 8) | scratchpad[0];
 
     if (raw & 0x8000) {
         /* Negative temperature: complement to get absolute
          * magnitude, then split into integer and fraction. */
         temp->negative = 1;
-        raw = (~raw) + 1;
+        raw = (uint16_t)(0u - raw);
     } else {
         temp->negative = 0;
     }

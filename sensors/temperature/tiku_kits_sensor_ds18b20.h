@@ -105,6 +105,7 @@ int tiku_kits_sensor_ds18b20_start_conversion(void);
  * @param temp Pointer to a caller-allocated temperature structure
  * where the result is written.  Must not be NULL.
  * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_CRC if the scratchpad checksum is invalid,
  * TIKU_KITS_SENSOR_ERR_BUS if the 1-Wire reset or read
  * fails,
  * TIKU_KITS_SENSOR_ERR_PARAM if @p temp is NULL

@@ -179,10 +179,10 @@ int tiku_kits_sensor_adt7410_read(tiku_kits_sensor_temp_t *temp)
      *   Resolution: 0.0625 C per LSB
      */
     if (raw & 0x8000) {
-        /* Negative temperature: invert and add 1 to get absolute
-         * value in two's complement, then shift right by 3 to
-         * discard status flag bits. */
-        uint16_t abs_val = ((~raw) + 1) >> 3;
+        /* Discard non-temperature bits before negating the 13-bit
+         * value. Unsigned subtraction also avoids host/16-bit int
+         * promotion differences in ~raw and right shifts. */
+        uint16_t abs_val = (uint16_t)(0x2000u - (raw >> 3));
         temp->negative = 1;
         temp->integer  = (int16_t)(abs_val >> 4);
         temp->frac     = (uint8_t)(abs_val & 0x0F);
