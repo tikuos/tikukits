@@ -16,10 +16,10 @@
  * buffer and sets a flag, and dns_poll() parses the response from
  * application context.
  *
- * A 2-entry cache with TTL-based expiry and LRU eviction avoids
- * redundant queries for recently resolved hostnames.
+ * A 2-entry cache with TTL-based expiry and lowest-remaining-TTL
+ * eviction avoids redundant queries for recently resolved hostnames.
  *
- * Memory footprint: ~60 bytes static SRAM + 102 bytes FRAM.
+ * Memory footprint: ~60 bytes static SRAM + ~170 bytes FRAM.
  */
 
 #include "tiku_kits_net_dns.h"
@@ -46,6 +46,22 @@
 #include <kernel/memory/tiku_mem.h>
 #include <string.h>
 
+/* Seeds the transaction id where the build links a TRNG; MSP430 and RA8P1
+ * link theirs only with the crypto kit. */
+#if defined(PLATFORM_AMBIQ)
+#include <arch/ambiq/tiku_trng_arch.h>
+#elif defined(PLATFORM_NORDIC)
+#include <arch/nordic/tiku_trng_arch.h>
+#elif defined(PLATFORM_RP2350)
+#include <arch/arm-rp2350/tiku_trng_arch.h>
+#elif defined(PLATFORM_RA8P1) && defined(TIKU_KIT_CRYPTO_ENABLE) && \
+      TIKU_KIT_CRYPTO_ENABLE
+#include <arch/ra8p1/tiku_trng_arch.h>
+#elif defined(PLATFORM_MSP430) && defined(TIKU_KIT_CRYPTO_ENABLE) && \
+      TIKU_KIT_CRYPTO_ENABLE
+#include <arch/msp430/tiku_trng_arch.h>
+#endif
+
 /*---------------------------------------------------------------------------*/
 /* INTERNAL STATE (SRAM)                                                     */
 /*---------------------------------------------------------------------------*/
@@ -61,6 +77,9 @@ static uint8_t dns_server_set;
 
 /** Transaction ID for the current query. */
 static uint16_t dns_txn_id;
+
+/** Transaction-id generator; zero until the first query of the boot. */
+static uint16_t dns_id_state;
 
 /** Flag set by UDP callback when a response arrives. */
 static volatile uint8_t dns_reply_ready;
@@ -94,7 +113,7 @@ struct dns_cache_entry {
     uint16_t hash;       /**< djb2 hash of the hostname */
     uint8_t  addr[4];    /**< Resolved IPv4 address */
     uint32_t ttl_sec;    /**< TTL in seconds */
-    uint32_t cached_at;  /**< tiku_clock_time() when cached */
+    uint32_t cached_at;  /**< tiku_clock_seconds() when cached */
     uint8_t  valid;      /**< Non-zero if entry is valid */
 };
 
@@ -128,15 +147,24 @@ static uint8_t dns_rx_buf[100];
 /** Length of data in dns_rx_buf (set by UDP callback). */
 static uint16_t dns_rx_len;
 
+/*
+ * Question section of the query in flight (QNAME, QTYPE, QCLASS), kept so a
+ * reply is accepted only when it repeats it.  Capacity placement only.
+ */
+TIKU_FRAM_SPILL
+static uint8_t dns_question[TIKU_KITS_NET_DNS_MAX_HOSTNAME + 2 + 4];
+
+/** Length of the question held in dns_question. */
+static uint8_t dns_question_len;
+
 /*---------------------------------------------------------------------------*/
 /* HOSTNAME HASH                                                             */
 /*---------------------------------------------------------------------------*/
 
 /*
- * Used as a compact key for cache lookups.  Collisions are
- * harmless -- a false hit returns a cached address that may
- * not match the requested name, but in practice the 2-entry
- * cache makes collisions unlikely for embedded use.
+ * Used as a compact key for cache lookups. A hash collision can return
+ * an address for a different name. This compact cache is not an
+ * identity check; authenticated protocols must still verify the peer.
  */
 
 /**
@@ -154,6 +182,32 @@ static uint16_t dns_hostname_hash(const char *hostname)
         h = ((h << 5) + h) + c;   /* h * 33 + c */
     }
     return (uint16_t)(h & 0xFFFF);
+}
+
+/**
+ * @brief Draw the transaction id for the next query.
+ *
+ * Seeded once per boot from the TRNG (from uptime seconds where the build
+ * links none) and stepped by a 16-bit xorshift, so ids do not restart when
+ * init() runs before each lookup.
+ */
+static uint16_t dns_next_id(void)
+{
+    if (dns_id_state == 0u) {
+        uint8_t seed[2] = {0u, 0u};
+#if defined(TIKU_TRNG_OK)
+        (void)tiku_trng_arch_read_bytes(seed, sizeof(seed));
+#endif
+        dns_id_state = (uint16_t)(((uint16_t)seed[0] << 8 | seed[1]) ^
+                                  (uint16_t)tiku_clock_seconds());
+        if (dns_id_state == 0u) {
+            dns_id_state = 0xACE1u;
+        }
+    }
+    dns_id_state ^= (uint16_t)(dns_id_state << 7);
+    dns_id_state ^= (uint16_t)(dns_id_state >> 9);
+    dns_id_state ^= (uint16_t)(dns_id_state << 8);
+    return dns_id_state;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -184,6 +238,15 @@ static uint16_t dns_encode_hostname(const char *hostname,
     const char *dot;
     uint8_t label_len;
 
+    /* Bound the scan before narrowing a label length to uint8_t. */
+    uint16_t length = 0;
+    while (length <= TIKU_KITS_NET_DNS_MAX_HOSTNAME && hostname[length]) {
+        length++;
+    }
+    if (!length || length > TIKU_KITS_NET_DNS_MAX_HOSTNAME) {
+        return 0;
+    }
+
     while (*p != '\0') {
         /* Find the next dot or end of string */
         dot = p;
@@ -199,7 +262,7 @@ static uint16_t dns_encode_hostname(const char *hostname,
         }
 
         /* Check total length (pos + 1 length byte + label + 1 terminator) */
-        if (pos + 1 + label_len + 1 > TIKU_KITS_NET_DNS_MAX_HOSTNAME) {
+        if (pos + 1 + label_len + 1 > TIKU_KITS_NET_DNS_MAX_HOSTNAME + 2) {
             return 0;
         }
 
@@ -264,8 +327,11 @@ static void dns_udp_recv(const uint8_t *src_addr,
     uint16_t rx_id;
     uint16_t flags;
 
-    (void)src_addr;
-    (void)src_port;
+    if (dns_state != TIKU_KITS_NET_DNS_STATE_SENT ||
+        src_addr == (void *)0 || src_port != TIKU_KITS_NET_DNS_PORT ||
+        memcmp(src_addr, dns_server, sizeof dns_server) != 0) {
+        return;
+    }
 
     /* Need at least a 12-byte DNS header */
     if (payload == (void *)0 ||
@@ -312,7 +378,8 @@ static void dns_udp_recv(const uint8_t *src_addr,
  * @brief Look up a hostname hash in the cache.
  *
  * Checks each cache entry for a matching hash and validates
- * that the TTL has not expired using tiku_clock_time().
+ * that the TTL has not expired using the 32-bit seconds counter.
+ * Raw ticks wrap after only 512 seconds on a 128 Hz MSP430 build.
  *
  * @param hash      djb2 hash of the hostname
  * @param addr_out  Output: 4-byte IPv4 address if found
@@ -322,16 +389,16 @@ static void dns_udp_recv(const uint8_t *src_addr,
 static int8_t dns_cache_lookup(uint16_t hash, uint8_t *addr_out)
 {
     uint8_t i;
-    tiku_clock_time_t now = tiku_clock_time();
-    tiku_clock_time_t elapsed;
+    uint32_t now = (uint32_t)tiku_clock_seconds();
+    uint32_t elapsed;
 
     for (i = 0; i < TIKU_KITS_NET_DNS_CACHE_SIZE; i++) {
         if (dns_cache[i].valid && dns_cache[i].hash == hash) {
             /* Check TTL expiry */
-            elapsed =
-                (now - dns_cache[i].cached_at) / TIKU_CLOCK_SECOND;
+            elapsed = now - dns_cache[i].cached_at;
             if (elapsed < dns_cache[i].ttl_sec) {
                 memcpy(addr_out, dns_cache[i].addr, 4);
+                dns_resolved_ttl = dns_cache[i].ttl_sec - elapsed;
                 return TIKU_KITS_NET_OK;
             }
             /* Expired -- invalidate */
@@ -349,7 +416,7 @@ static int8_t dns_cache_lookup(uint16_t hash, uint8_t *addr_out)
  * @brief Insert a resolved address into the cache.
  *
  * If a free slot exists, uses it.  Otherwise evicts the entry
- * with the lowest remaining TTL (LRU by time-to-live).
+ * with the lowest remaining TTL (not least-recently-used eviction).
  *
  * @param hash  djb2 hash of the hostname
  * @param addr  4-byte IPv4 address to cache
@@ -361,19 +428,18 @@ static void dns_cache_insert(uint16_t hash, const uint8_t *addr,
     uint8_t i;
     uint8_t victim = 0;
     uint32_t min_remaining = 0xFFFFFFFF;
-    tiku_clock_time_t now = tiku_clock_time();
-    tiku_clock_time_t elapsed;
+    uint32_t now = (uint32_t)tiku_clock_seconds();
+    uint32_t elapsed;
     uint32_t remaining;
 
-    /* Look for a free slot or the LRU victim */
+    /* Look for a free slot or the entry closest to expiry. */
     for (i = 0; i < TIKU_KITS_NET_DNS_CACHE_SIZE; i++) {
         if (!dns_cache[i].valid) {
             victim = i;
             break;
         }
         /* Compute remaining TTL */
-        elapsed =
-            (now - dns_cache[i].cached_at) / TIKU_CLOCK_SECOND;
+        elapsed = now - dns_cache[i].cached_at;
         remaining = 0;
         if (elapsed < dns_cache[i].ttl_sec) {
             remaining = dns_cache[i].ttl_sec - (uint32_t)elapsed;
@@ -435,15 +501,50 @@ static uint16_t dns_skip_name(const uint8_t *buf, uint16_t pos,
     return 0;
 }
 
+/**
+ * @brief Check that the reply's question section repeats the query's.
+ *
+ * Compares QNAME, QTYPE and QCLASS byte for byte, ignoring ASCII case in the
+ * name, which a resolver may echo in another case.  Label lengths (at most 63)
+ * and the type and class bytes are below 'A', so folding leaves them alone.
+ *
+ * @return 1 when the question matches, 0 otherwise.
+ */
+static uint8_t dns_question_matches(void)
+{
+    uint8_t i;
+
+    if (dns_question_len == 0u ||
+        TIKU_KITS_NET_DNS_HDR_LEN + dns_question_len > dns_rx_len) {
+        return 0;
+    }
+    for (i = 0; i < dns_question_len; i++) {
+        uint8_t a = dns_rx_buf[TIKU_KITS_NET_DNS_HDR_LEN + i];
+        uint8_t b = dns_question[i];
+
+        if (a >= 'A' && a <= 'Z') {
+            a = (uint8_t)(a + ('a' - 'A'));
+        }
+        if (b >= 'A' && b <= 'Z') {
+            b = (uint8_t)(b + ('a' - 'A'));
+        }
+        if (a != b) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /*---------------------------------------------------------------------------*/
 /* DNS RESPONSE PARSER                                                       */
 /*---------------------------------------------------------------------------*/
 
 /*
- * Validates RCODE, checks for truncation (TC bit), reads the
- * answer count, skips the question section, then iterates
- * through answer RRs looking for the first A record (TYPE=1,
- * CLASS=1, RDLENGTH=4).  Extracts the 4-byte address and TTL.
+ * Validates RCODE, the TC bit and the opcode, requires the one
+ * question to repeat the query's, then iterates through answer
+ * RRs looking for the first A record (TYPE=1, CLASS=1,
+ * RDLENGTH=4).  Extracts the 4-byte address and TTL.  A late
+ * reply to an earlier lookup fails the question check.
  */
 
 /**
@@ -496,21 +597,12 @@ static int8_t dns_parse_response(void)
         return TIKU_KITS_NET_ERR_PARAM;
     }
 
-    /* Skip past the header */
-    pos = TIKU_KITS_NET_DNS_HDR_LEN;
-
-    /* Skip the question section (qdcount questions) */
-    for (i = 0; i < qdcount; i++) {
-        pos = dns_skip_name(dns_rx_buf, pos, dns_rx_len);
-        if (pos == 0) {
-            return TIKU_KITS_NET_ERR_PARAM;
-        }
-        /* Skip QTYPE (2) + QCLASS (2) */
-        pos += 4;
-        if (pos > dns_rx_len) {
-            return TIKU_KITS_NET_ERR_PARAM;
-        }
+    /* A standard query's reply, repeating the one question asked */
+    if ((flags & TIKU_KITS_NET_DNS_OPCODE_MASK) != 0 || qdcount != 1 ||
+        !dns_question_matches()) {
+        return TIKU_KITS_NET_ERR_PARAM;
     }
+    pos = (uint16_t)(TIKU_KITS_NET_DNS_HDR_LEN + dns_question_len);
 
     /* Iterate through answer RRs looking for first A record */
     for (i = 0; i < ancount; i++) {
@@ -550,6 +642,9 @@ static int8_t dns_parse_response(void)
         }
 
         /* Skip RDATA for non-A records */
+        if (rdlength > dns_rx_len - pos) {
+            return TIKU_KITS_NET_ERR_PARAM;
+        }
         pos += rdlength;
         if (pos > dns_rx_len) {
             return TIKU_KITS_NET_ERR_PARAM;
@@ -567,16 +662,15 @@ static int8_t dns_parse_response(void)
 /**
  * @brief Reset all resolver state and flush the cache.
  *
- * Clears the transaction ID counter, reply flags, cache entries,
- * and unbinds any previously-bound UDP port.  After init the
- * resolver is in IDLE state with no server configured.
+ * Clears the reply flags and cache entries and unbinds any
+ * previously-bound UDP port.  After init the resolver is in IDLE
+ * state with no server configured; transaction ids carry on.
  */
 void tiku_kits_net_dns_init(void)
 {
     dns_state = TIKU_KITS_NET_DNS_STATE_IDLE;
     memset(dns_server, 0, sizeof(dns_server));
     dns_server_set = 0;
-    dns_txn_id = 0x1234;
     dns_reply_ready = 0;
     dns_retries = 0;
     memset(dns_resolved_addr, 0, sizeof(dns_resolved_addr));
@@ -676,6 +770,16 @@ int8_t tiku_kits_net_dns_resolve(const char *hostname)
         return TIKU_KITS_NET_ERR_PARAM;
     }
 
+    /* Do not replace a live transaction (or its cache insertion key). */
+    if (dns_state == TIKU_KITS_NET_DNS_STATE_SENT) {
+        return TIKU_KITS_NET_ERR_PARAM;
+    }
+
+    qname_len = dns_encode_hostname(hostname, qname);
+    if (qname_len == 0) {
+        return TIKU_KITS_NET_ERR_PARAM;
+    }
+
     /* Compute hostname hash for cache lookup and later insertion */
     hash = dns_hostname_hash(hostname);
     dns_query_hash = hash;
@@ -686,20 +790,13 @@ int8_t tiku_kits_net_dns_resolve(const char *hostname)
         return TIKU_KITS_NET_OK;
     }
 
-    /* Encode hostname into DNS wire format */
-    qname_len = dns_encode_hostname(hostname, qname);
-    if (qname_len == 0) {
-        return TIKU_KITS_NET_ERR_PARAM;
-    }
-
     /* Reset state for new query */
     dns_reply_ready = 0;
     dns_retries = 0;
     memset(dns_resolved_addr, 0, sizeof(dns_resolved_addr));
     dns_resolved_ttl = 0;
 
-    /* Advance transaction ID */
-    dns_txn_id++;
+    dns_txn_id = dns_next_id();
 
     /*
      * Build DNS query packet on the stack.
@@ -747,6 +844,15 @@ int8_t tiku_kits_net_dns_resolve(const char *hostname)
     /* QCLASS = IN (1), big-endian */
     pkt[pkt_len++] = 0;
     pkt[pkt_len++] = (uint8_t)TIKU_KITS_NET_DNS_QCLASS_IN;
+
+    /* Keep the question for dns_question_matches() */
+    dns_question_len = (uint8_t)(pkt_len - TIKU_KITS_NET_DNS_HDR_LEN);
+    {
+        uint16_t saved = tiku_mpu_unlock_nvm();
+        memcpy(dns_question, &pkt[TIKU_KITS_NET_DNS_HDR_LEN],
+               dns_question_len);
+        tiku_mpu_lock_nvm(saved);
+    }
 
     /* Bind local port to receive response */
     rc = tiku_kits_net_udp_bind(TIKU_KITS_NET_DNS_LOCAL_PORT,
@@ -875,8 +981,8 @@ int8_t tiku_kits_net_dns_get_addr(uint8_t *addr_out)
  * @brief Return the TTL from the resolved A record.
  *
  * Only meaningful in DONE state.  Returns 0 if no result is
- * available.  The TTL is in seconds as received from the DNS
- * server and is not adjusted for elapsed time since the query.
+ * available.  The TTL is in seconds: as received for a fresh
+ * answer, or the time left on the entry for a cache hit.
  */
 uint32_t tiku_kits_net_dns_get_ttl(void)
 {

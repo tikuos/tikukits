@@ -22,7 +22,7 @@
  *
  * A small 2-entry cache avoids redundant queries for recently
  * resolved hostnames.  Cache entries are evicted by TTL expiry
- * or LRU (lowest remaining TTL) when full.
+ * or lowest-remaining-TTL eviction when full.
  *
  * Typical usage:
  * @code
@@ -103,6 +103,7 @@
 #define TIKU_KITS_NET_DNS_FLAG_QR       0x8000  /**< Query/Response bit */
 #define TIKU_KITS_NET_DNS_FLAG_RD       0x0100  /**< Recursion Desired */
 #define TIKU_KITS_NET_DNS_FLAG_TC       0x0200  /**< Truncation */
+#define TIKU_KITS_NET_DNS_OPCODE_MASK   0x7800  /**< Opcode (0 = query) */
 #define TIKU_KITS_NET_DNS_RCODE_MASK    0x000F  /**< Response code mask */
 #define TIKU_KITS_NET_DNS_RCODE_OK      0       /**< No error */
 #define TIKU_KITS_NET_DNS_RCODE_NXDOMAIN 3      /**< Name does not exist */
@@ -183,8 +184,8 @@ void tiku_kits_net_dns_default_server(uint8_t out[4]);
  * @param hostname  Dot-separated hostname (e.g. "pool.ntp.org")
  * @return TIKU_KITS_NET_OK on success (query sent or cache hit),
  * TIKU_KITS_NET_ERR_NULL if @p hostname is NULL,
- * TIKU_KITS_NET_ERR_PARAM if hostname is invalid or
- * no server has been set,
+ * TIKU_KITS_NET_ERR_PARAM if hostname is invalid, no server has
+ * been set, or a query is already in flight,
  * negative error code if UDP send fails.
  */
 int8_t tiku_kits_net_dns_resolve(const char *hostname);
