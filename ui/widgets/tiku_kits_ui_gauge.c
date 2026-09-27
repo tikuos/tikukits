@@ -22,6 +22,7 @@ gauge_render(const tiku_kits_ui_widget_t *base,
 {
     const tiku_kits_ui_gauge_t *g = (const tiku_kits_ui_gauge_t *)base;
     const tiku_kits_ui_theme_t *t = tiku_kits_ui_theme_current();
+    if (base->w < 4u || base->h < 4u) return;
     int16_t  cx = (int16_t)(base->x + base->w / 2);
     int16_t  cy = (int16_t)(base->y + base->h / 2);
     uint16_t r  = (base->w < base->h) ? (uint16_t)(base->w / 2 - 1)

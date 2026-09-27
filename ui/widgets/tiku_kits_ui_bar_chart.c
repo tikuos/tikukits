@@ -20,11 +20,15 @@ bar_chart_render(const tiku_kits_ui_widget_t *base,
         (const tiku_kits_ui_bar_chart_t *)base;
     const tiku_kits_ui_theme_t *t = tiku_kits_ui_theme_current();
     int16_t  effective_max;
-    uint16_t total_gap;
     uint16_t bar_w;
     uint16_t i;
+    uint32_t span;
+    uint8_t  gap;
 
-    if (bc->n_bars == 0u || base->w < 2u || base->h < 2u) return;
+    if (bc->values == NULL || bc->n_bars == 0u ||
+        base->w < 2u || base->h < 2u) {
+        return;
+    }
 
     /* Compute effective max. */
     if (bc->max > 0) {
@@ -37,15 +41,19 @@ bar_chart_render(const tiku_kits_ui_widget_t *base,
         effective_max = (hi > 0) ? hi : 1;
     }
 
-    /* Layout: bars with `gap` pixels between, equal width. */
-    total_gap = (uint16_t)((bc->n_bars > 1u) ? (bc->n_bars - 1u) * bc->gap : 0u);
-    if (total_gap >= base->w) total_gap = (uint16_t)(base->w - bc->n_bars);
-    bar_w = (uint16_t)((base->w - total_gap) / bc->n_bars);
-    if (bar_w == 0u) bar_w = 1u;
-
     /* Baseline. */
     tiku_kits_gfx_hline(s, base->x, (int16_t)(base->y + base->h - 1),
         base->w, t->color_muted);
+
+    /* Cells share the width plus one trailing gap, so bar widths differ by at
+     * most a pixel and the last bar ends at the edge.  A gap as wide as a cell
+     * is dropped; more bars than pixels leaves some cells empty. */
+    gap  = bc->gap;
+    span = (uint32_t)base->w + gap;
+    if (span / bc->n_bars <= gap) {
+        gap  = 0u;
+        span = base->w;
+    }
 
     for (i = 0; i < bc->n_bars; i++) {
         int16_t  v = bc->values[i];
@@ -53,13 +61,19 @@ bar_chart_render(const tiku_kits_ui_widget_t *base,
         int16_t  bar_y;
         uint16_t bar_h;
         uint32_t scaled;
+        uint16_t left = (uint16_t)((uint32_t)i * span / bc->n_bars);
+        uint16_t right = (uint16_t)(((uint32_t)i + 1u) * span / bc->n_bars
+                                    - gap);
+
+        if (right <= left) continue;
+        bar_w = (uint16_t)(right - left);
 
         if (v < 0) v = 0;
         if (v > effective_max) v = effective_max;
 
         scaled = (uint32_t)v * (uint32_t)(base->h - 1u) / effective_max;
         bar_h  = (uint16_t)scaled;
-        bar_x  = (int16_t)(base->x + i * (bar_w + bc->gap));
+        bar_x  = (int16_t)(base->x + left);
         bar_y  = (int16_t)(base->y + base->h - 1u - bar_h);
 
         if (bar_h > 0u) {
