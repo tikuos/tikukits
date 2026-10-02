@@ -4,11 +4,11 @@
  *
  * Authors: Ambuj Varshney <ambuj@tiku-os.org>
  *
- * tiku_kits_net_wifi.c - WiFi link backend (CYW43439) for tikukits/net
+ * tiku_kits_net_wifi.c - WiFi link backend for tikukits/net
  *
- * Adapter between the kit's `tiku_kits_net_link_t` contract and the
- * driver's `whd_tx_eth` / `whd_register_rx_callback` API. See the
- * header for the full RESPONSIBILITIES list.
+ * Adapter between the kit's `tiku_kits_net_link_t` contract and the radio's
+ * frames through tiku_wireless (`tiku_wireless_tx_eth`, `_set_rx`), whichever
+ * driver supplies them.  See the header for the full RESPONSIBILITIES list.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -21,7 +21,6 @@
 #include "../ipv4/tiku_kits_net_ipv4.h"
 #include "../ipv4/tiku_kits_net_dhcp.h"   /* lease: gw + netmask for next-hop */
 #include <interfaces/wireless/tiku_wireless.h>
-#include "drivers/wifi/cyw43/whd.h"
 
 /*---------------------------------------------------------------------------*/
 /* CONSTANTS                                                                 */
@@ -36,13 +35,13 @@
 
 /* ARP request/reply frame size: 14 EthII + 28 ARP body = 42 bytes.
  * The chip pads to the 64-byte 802.3 minimum on the air, so no
- * pre-padding is needed here (whd_tx_eth ships exactly what it is
+ * pre-padding is needed here (the radio ships exactly what it is
  * given).  */
 #define ARP_FRAME_BYTES  42U
 
 /* Single staging frame between the driver RX callback (runner ctx)
  * and the kit's poll_rx (net-proc ctx). Sized to hold any v4 frame
- * the kit will produce. WHD delivers up to 1514 B; this caps at the
+ * the kit will produce. A radio delivers up to 1514 B; this caps at the
  * kit's MTU so the kit's buf_size on poll_rx is enough. */
 #define RX_STAGE_BYTES       TIKU_KITS_NET_MTU
 
@@ -82,6 +81,15 @@ typedef struct {
 
 static arp_entry_t arp_cache[ARP_CACHE_SIZE];
 static uint8_t     arp_cache_next;
+
+/*
+ * One packet waiting for its next hop's MAC: a send that misses the cache
+ * asks the LAN and keeps the packet here, and the reply's arrival sends it.
+ * A newer miss replaces it -- lwIP keeps one per pending entry likewise.
+ */
+static uint8_t  arp_wait_pkt[TIKU_KITS_NET_MTU];
+static uint16_t arp_wait_len;              /* 0 = nothing waiting */
+static uint8_t  arp_wait_hop[4];
 
 /**
  * @brief Insert or refresh an (ip, mac) pair in the ARP cache
@@ -226,7 +234,7 @@ arp_reply_build(uint8_t *out,
  * Validates that the frame is a well-formed IPv4-over-Ethernet ARP
  * request (htype=1, ptype=0x0800, hlen=6, plen=4) and that the
  * target IP matches the kit's configured address; if so, sends an
- * ARP reply via whd_tx_eth. Non-request opcodes and requests
+ * ARP reply via tiku_wireless_tx_eth. Non-request opcodes and requests
  * targeting other hosts are ignored — the AP forwards ARPs broadcast,
  * so seeing one for someone else is expected.
  */
@@ -274,7 +282,7 @@ arp_handle_in(const uint8_t *frame, uint16_t len)
     /* requester_mac = body[8..13], requester_ip = body[14..17] */
     (void)arp_reply_build(reply, st.mac, kit_ip,
                           &body[8], &body[14]);
-    (void)whd_tx_eth(reply, ARP_FRAME_BYTES);
+    (void)tiku_wireless_tx_eth(reply, ARP_FRAME_BYTES);
     return 1;
 }
 
@@ -314,11 +322,30 @@ arp_request_send(const uint8_t target_ip[4])
     for (i = 0U; i < 4U; ++i) frame[n + 14U + i] = our_ip[i];     /* sender IP  */
     for (i = 0U; i < 6U; ++i) frame[n + 18U + i] = 0x00U;         /* target MAC */
     for (i = 0U; i < 4U; ++i) frame[n + 24U + i] = target_ip[i];  /* target IP  */
-    (void)whd_tx_eth(frame, ARP_FRAME_BYTES);
+    (void)tiku_wireless_tx_eth(frame, ARP_FRAME_BYTES);
+}
+
+static int8_t wifi_send(const uint8_t *pkt, uint16_t len);
+
+/**
+ * @brief An ARP reply has taught the cache @p ip's MAC: send the packet
+ *        that waited for it, if any.
+ */
+static void
+arp_wait_flush(const uint8_t ip[4])
+{
+    uint16_t len = arp_wait_len;
+
+    if (len == 0U || ip[0] != arp_wait_hop[0] || ip[1] != arp_wait_hop[1]
+        || ip[2] != arp_wait_hop[2] || ip[3] != arp_wait_hop[3]) {
+        return;
+    }
+    arp_wait_len = 0U;
+    (void)wifi_send(arp_wait_pkt, len);
 }
 
 /*---------------------------------------------------------------------------*/
-/* whd_register_rx_callback hook — runs in runner-process context.           */
+/* The radio's receiver -- runs in the kernel thread (the driver's runner).  */
 /*---------------------------------------------------------------------------*/
 
 /*
@@ -331,11 +358,11 @@ arp_request_send(const uint8_t target_ip[4])
  */
 
 /**
- * @brief WHD driver RX callback (runner-process context)
+ * @brief The radio's RX callback (kernel thread, the driver's runner)
  *
  * @param frame  Pointer to the start of the EthII frame
  * @param len    Total length of the frame in bytes
- * @param ctx    Opaque callback context (unused, passed by WHD)
+ * @param ctx    Opaque callback context (unused)
  */
 static void
 wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
@@ -355,6 +382,7 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
         if (len >= ETH_HDR_LEN + 28U) {
             const uint8_t *body = frame + ETH_HDR_LEN;
             arp_cache_learn(&body[14], &body[8]);
+            arp_wait_flush(&body[14]);
         }
         /* Reply if it is "who has <local IP>". Otherwise just leave the
          * cached MAC in place. */
@@ -406,7 +434,7 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
 /*
  * Prepends an EthII header (broadcast MAC for limited-broadcast /
  * multicast destinations, otherwise the cached MAC from the passive
- * ARP cache) and ships the result via whd_tx_eth. For v1, unicast
+ * ARP cache) and ships the result via tiku_wireless_tx_eth. For v1, unicast
  * peers never heard from fail with NOLINK until outbound-
  * first ARP discovery lands in 5.A.1.
  */
@@ -471,10 +499,15 @@ wifi_send(const uint8_t *pkt, uint16_t len)
         if (arp_cache_lookup(nexthop, dst)) {
             /* dst now holds the cached MAC for the next hop. */
         } else {
-            /* Cache miss: ARP the next hop, drop this packet; the caller's retry
-             * resolves once the reply lands. */
+            /* Cache miss: ARP the next hop and keep this packet until the
+             * reply lands (wifi_rx_cb sends it then). */
+            if (len <= sizeof arp_wait_pkt) {
+                for (i = 0U; i < len; ++i) arp_wait_pkt[i] = pkt[i];
+                for (i = 0U; i < 4U; ++i) arp_wait_hop[i] = nexthop[i];
+                arp_wait_len = len;
+            }
             arp_request_send(nexthop);
-            return TIKU_KITS_NET_ERR_NOLINK;
+            return TIKU_KITS_NET_OK;
         }
     }
 
@@ -482,7 +515,7 @@ wifi_send(const uint8_t *pkt, uint16_t len)
     for (i = 0U; i < len; ++i) eth[ETH_HDR_LEN + i] = pkt[i];
     total = (uint16_t)(ETH_HDR_LEN + len);
 
-    rc = whd_tx_eth(eth, total);
+    rc = tiku_wireless_tx_eth(eth, total);
     if (rc == TIKU_DRV_OK)            return TIKU_KITS_NET_OK;
     if (rc == TIKU_DRV_ERR_INVALID)   return TIKU_KITS_NET_ERR_PARAM;
     if (rc == TIKU_DRV_ERR_TIMEOUT)   return TIKU_KITS_NET_ERR_TIMEOUT;
@@ -540,7 +573,7 @@ const tiku_kits_net_link_t tiku_kits_net_wifi_link = {
 
 /*
  * Clears the RX staging slot and drop counters, registers the RX
- * callback with the WHD driver, and installs this link with the IPv4
+ * callback with the radio driver, and installs this link with the IPv4
  * kit via tiku_kits_net_ipv4_set_link so outbound packets flow
  * through wifi_send.
  */
@@ -557,11 +590,12 @@ tiku_kits_net_wifi_init(void)
     int rc;
 
     rx_stage_len      = 0U;
+    arp_wait_len      = 0U;
     rx_dropped_full   = 0UL;
     rx_dropped_other  = 0UL;
     rx_delivered      = 0UL;
 
-    rc = whd_register_rx_callback(wifi_rx_cb, (void *)0);
+    rc = tiku_wireless_set_rx(wifi_rx_cb, (void *)0);
     if (rc != TIKU_DRV_OK) return TIKU_KITS_NET_ERR_NOLINK;
 
     tiku_kits_net_ipv4_set_link(&tiku_kits_net_wifi_link);

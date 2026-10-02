@@ -65,6 +65,10 @@
 /* nRF54L15: CRACEN ring-oscillator TRNG (no classic NRF_RNG on this die).
  * Same read_bytes() contract, so the adapter below is identical. */
 #include <arch/nordic/tiku_trng_arch.h>
+#elif defined(PLATFORM_ESP32C61)
+/* ESP32-C61: the LP RNG with its noise sampling on, each word read only
+ * once fresh samples are mixed in.  Same read_bytes() contract. */
+#include <arch/esp32c61/tiku_trng_arch.h>
 #else
 #error "TIKU_KITS_CRYPTO_TLS_RNG_FILL must be defined to a function " \
        "with signature void f(uint8_t *buf, uint8_t len) that provides " \

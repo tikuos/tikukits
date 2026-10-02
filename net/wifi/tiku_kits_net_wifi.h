@@ -10,7 +10,8 @@
  */
 
 /*
- * Wraps the CYW43439 WHD driver (drivers/wifi/cyw43) so the IPv4
+ * Rides the radio's frames through tiku_wireless (tx_eth, set_rx) --
+ * the CYW43439 on the Pico 2 W or the ESP32-C61's own -- so the IPv4
  * stack in tikukits/net/ipv4/ can use WiFi as its link layer in
  * place of (or alongside) SLIP.
  *
@@ -25,17 +26,16 @@
  * enough for DHCP DISCOVER, which is the bootstrap traffic that
  * unblocks every other v4 protocol. Unicast routing (ARP cache,
  * gateway-MAC resolution) is phase 5.A.1.
- * - RX buffering: the WHD driver's RX callback fires from runner
- * context with a borrowed frame pointer. This adapter copies the
- * IP payload into a staging buffer that the kit's polling RX
- * path consumes.
+ * - RX: the radio's receiver runs in the kernel thread with a
+ * borrowed frame pointer. This adapter copies the IP payload into
+ * a staging buffer and hands it to the IPv4 input path.
  * - Optional ARP reply: when an incoming ARP request asks for the
  * IP the kit considers local, an ARP reply goes back so
  * other devices on the LAN can reach this host.
  *
  * BUILD GATE
- * Compiled only when both submodules are present:
- * TIKU_DRV_WIFI_CYW43_ENABLE=1  (driver)
+ * Compiled only with a radio driver and the net kit both present:
+ * TIKU_DRV_WIFI_CYW43_ENABLE=1 or TIKU_DRV_WIFI_ESP_ENABLE=1 (driver)
  * TIKU_KITS_NET_WIFI_ENABLE=1   (this adapter)
  */
 
@@ -53,17 +53,17 @@ extern "C" {
  *        tiku_kits_net_ipv4_set_link() once the radio is joined.
  *
  * Lifetime: static (lives forever once the binary is loaded). Safe
- * to install before WHD has finished joining — send/poll_rx will
+ * to install before the radio has finished joining — send/poll_rx will
  * report "no link" until the radio is up.
  */
 extern const tiku_kits_net_link_t tiku_kits_net_wifi_link;
 
 /*
- * Registers the adapter's RX callback with the WHD driver and
+ * Registers the adapter's RX callback with the radio driver and
  * installs `tiku_kits_net_wifi_link` as the active IPv4 link.
  * Idempotent — safe to call again after a wifi disconnect/reconnect.
  * Pre-conditions:
- * - drivers/wifi/cyw43/ initialised (cyw43_runner started)
+ * - the radio driver initialised (its runner started)
  * - tikukits/net/ipv4 initialised (net_proc running)
  * Joined state is NOT required to call this — the adapter only
  * succeeds at send/poll_rx once `tiku_wireless_status().up == 1`.

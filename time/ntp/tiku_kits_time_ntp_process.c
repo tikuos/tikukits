@@ -24,13 +24,8 @@
 #include <kernel/timers/tiku_clock.h>
 #include "tiku_kits_time_ntp.h"
 
-#ifdef PLATFORM_MSP430
-#include "tiku.h"
+#include <hal/tiku_printf_hal.h>
 #define NTP_PRINTF(...) TIKU_PRINTF(__VA_ARGS__)
-#else
-#include <stdio.h>
-#define NTP_PRINTF(...) printf(__VA_ARGS__)
-#endif
 
 /*---------------------------------------------------------------------------*/
 /* NTP SERVER ADDRESS                                                        */

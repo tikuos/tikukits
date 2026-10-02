@@ -40,6 +40,8 @@
 #include <arch/nordic/tiku_timer_arch.h>
 #elif defined(PLATFORM_RA8P1)
 #include <arch/ra8p1/tiku_timer_arch.h>
+#elif defined(PLATFORM_ESP32C61)
+#include <arch/esp32c61/tiku_timer_arch.h>
 #else
 #error "tikukits/net/ipv4/dns: unsupported platform"
 #endif
@@ -54,6 +56,8 @@
 #include <arch/nordic/tiku_trng_arch.h>
 #elif defined(PLATFORM_RP2350)
 #include <arch/arm-rp2350/tiku_trng_arch.h>
+#elif defined(PLATFORM_ESP32C61)
+#include <arch/esp32c61/tiku_trng_arch.h>
 #elif defined(PLATFORM_RA8P1) && defined(TIKU_KIT_CRYPTO_ENABLE) && \
       TIKU_KIT_CRYPTO_ENABLE
 #include <arch/ra8p1/tiku_trng_arch.h>

@@ -37,6 +37,8 @@
 #include <arch/nordic/tiku_device_select.h>
 #elif defined(PLATFORM_RA8P1)
 #include <arch/ra8p1/tiku_device_select.h>
+#elif defined(PLATFORM_ESP32C61)
+#include <arch/esp32c61/tiku_device_select.h>
 #else
 #error "tikukits/net/ipv4: unsupported platform"
 #endif
