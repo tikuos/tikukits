@@ -48,13 +48,9 @@
  * still arch-specific; a kernel-level wrapper (tiku_trng_*) is a
  * follow-up. */
 #include <arch/arm-rp2350/tiku_trng_arch.h>
+#elif PLATFORM_ESP32C61
+#include <arch/esp32c61/tiku_trng_arch.h>
 #endif
-
-/* Driver-side BTFW version string. The blob header lives in the
- * transport translation unit (it parses the .S-baked image), so the
- * generic stack's tiku_bt_fw_version() forwards to this getter.
- * Longer term the vtable could grow a get_fw_version member. */
-extern const char *cyw43_bt_fw_version(void);
 
 #ifndef TIKU_BT_PRINTF
 #define TIKU_BT_PRINTF(...) TIKU_PRINTF("[bt] " __VA_ARGS__)
@@ -102,7 +98,9 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
  * identity), 0x08 is "LE Controller". The OCF lower bits match the
  * Bluetooth Core Spec command tables. */
 #define HCI_OP_DISCONNECT               0x0406U  /* OGF=0x01 (link ctrl) */
+#define HCI_OP_SET_EVENT_MASK           0x0C01U
 #define HCI_OP_RESET                    0x0C03U
+#define HCI_OP_LE_SET_EVENT_MASK        0x2001U
 #define HCI_OP_READ_LOCAL_VERSION       0x1001U
 #define HCI_OP_READ_BD_ADDR             0x1009U
 #define HCI_OP_LE_SET_ADV_PARAMS        0x2006U
@@ -1338,7 +1336,11 @@ static int bt_hci_cmd_response(uint16_t opcode, const uint8_t *params,
             }
             continue;
         }
-        tiku_common_delay_ms(5U);
+        if (g_bt_transport != 0 && g_bt_transport->wait != 0) {
+            g_bt_transport->wait(5U);
+        } else {
+            tiku_common_delay_ms(5U);
+        }
     }
     *out_n = 0;
     return TIKU_DRV_ERR_TIMEOUT;
@@ -1351,7 +1353,7 @@ static int bt_hci_cmd_response(uint16_t opcode, const uint8_t *params,
 /* TRNG wrapper for SMP entropy (Nb nonce). Sits inside the Phase 14
  * block because it's only consumed by the pairing state machine.
  * Returns 0 on success. */
-#if PLATFORM_RP2350
+#if PLATFORM_RP2350 || PLATFORM_ESP32C61
 static int bt_rand_bytes(uint8_t *out, size_t n)
 {
     if (out == (uint8_t *)0) return TIKU_TRNG_ERR_INVALID;
@@ -1360,8 +1362,8 @@ static int bt_rand_bytes(uint8_t *out, size_t n)
 #else
 static int bt_rand_bytes(uint8_t *out, size_t n)
 {
-    /* TRNG is only wired on RP2350 today; refuse pairing on platforms
-     * without one rather than emit predictable nonces. */
+    /* No TRNG wired here: refuse pairing rather than emit predictable
+     * nonces. */
     (void)out; (void)n;
     return -1;
 }
@@ -3220,6 +3222,34 @@ int tiku_bt_init(void)
             TIKU_BT_PRINTF("p6.D: HCI_Reset OK (status=0x00)\n");
         }
 
+        /* After a Reset a controller sends no LE Meta events (event mask
+         * bit 61) and only the default LE sub-events; ask for what this
+         * stack handles.  Some firmware sends them unasked (the CYW43's),
+         * a spec-following controller (the ESP32-C61's) does not. */
+        {
+            /* Default mask (bits 0..44) plus LE Meta, little-endian. */
+            static const uint8_t mask[8] = {
+                0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0x00, 0x20
+            };
+            /* Connection Complete, Advertising Report, Connection Update
+             * Complete, Remote Features, LTK Request, P-256 Public Key,
+             * DHKey: sub-events 1-5, 8 and 9. */
+            static const uint8_t le_mask[8] = {
+                0x9F, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+            };
+
+            if (bt_hci_cmd_response(HCI_OP_SET_EVENT_MASK, mask, 8U,
+                                    evt, sizeof evt, &n) != TIKU_DRV_OK
+                || n < 7 || evt[6] != 0U) {
+                TIKU_BT_PRINTF("p6.D: Set_Event_Mask refused\n");
+            }
+            if (bt_hci_cmd_response(HCI_OP_LE_SET_EVENT_MASK, le_mask, 8U,
+                                    evt, sizeof evt, &n) != TIKU_DRV_OK
+                || n < 7 || evt[6] != 0U) {
+                TIKU_BT_PRINTF("p6.D: LE_Set_Event_Mask refused\n");
+            }
+        }
+
         if (bt_hci_cmd_response(HCI_OP_READ_LOCAL_VERSION,
                                 (const uint8_t *)0, 0U,
                                 evt, sizeof evt, &n) == TIKU_DRV_OK
@@ -3300,10 +3330,12 @@ int tiku_bt_local_version(tiku_bt_version_t *out)
 
 const char *tiku_bt_fw_version(void)
 {
-    /* Forward to the driver's getter -- the BTFW header string lives
-     * in the transport's translation unit where the .S-baked blob is
-     * parsed at upload time. */
-    return cyw43_bt_fw_version();
+    /* The transport knows its controller's firmware (the CYW43's BTFW
+     * header string, the ESP32-C61 library's build id). */
+    if (g_bt_transport != 0 && g_bt_transport->version != 0) {
+        return g_bt_transport->version();
+    }
+    return "";
 }
 
 /*---------------------------------------------------------------------------*/
