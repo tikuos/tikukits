@@ -64,6 +64,16 @@
  */
 #define TIKU_KITS_SENSOR_MCP9808_ADDR_DEFAULT    0x18
 
+/** Lowest and highest 7-bit address the A0..A2 pins select. */
+#define TIKU_KITS_SENSOR_MCP9808_ADDR_MIN        0x18
+#define TIKU_KITS_SENSOR_MCP9808_ADDR_MAX        0x1F
+
+/** Lowest conversion resolution, in bits (0.5 C per LSB). */
+#define TIKU_KITS_SENSOR_MCP9808_RES_MIN         9
+
+/** Highest conversion resolution, in bits (0.0625 C per LSB, the default). */
+#define TIKU_KITS_SENSOR_MCP9808_RES_MAX         12
+
 /*---------------------------------------------------------------------------*/
 /* FUNCTION PROTOTYPES                                                       */
 /*---------------------------------------------------------------------------*/
@@ -88,6 +98,7 @@
  * default pin configuration, or 0x18-0x1F for custom
  * A0/A1/A2 settings.
  * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM if @p addr is outside 0x18-0x1F,
  * TIKU_KITS_SENSOR_ERR_BUS if the I2C transaction fails
  * (NACK, bus timeout, etc.),
  * TIKU_KITS_SENSOR_ERR_ID if the manufacturer ID or device
@@ -131,5 +142,66 @@ int tiku_kits_sensor_mcp9808_read(tiku_kits_sensor_temp_t *temp);
  * @return Pointer to the constant string "MCP9808" (never NULL)
  */
 const char *tiku_kits_sensor_mcp9808_name(void);
+
+/*
+ * The calls below need the sensor initialized by
+ * tiku_kits_sensor_mcp9808_init(), and so the I2C bus initialized before
+ * it; without one they return TIKU_KITS_SENSOR_ERR_NO_DEVICE.  Every write
+ * is read back, and a read-back that differs is TIKU_KITS_SENSOR_ERR_BUS.
+ */
+
+/**
+ * @brief Get the address of the initialized sensor
+ *
+ * @return The 7-bit address, or 0 until an init has succeeded
+ */
+uint8_t tiku_kits_sensor_mcp9808_address(void);
+
+/**
+ * @brief Read the conversion resolution
+ *
+ * @param bits Receives the resolution, 9..12 bits.  Must not be NULL.
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM if @p bits is NULL,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS if the I2C transaction fails
+ */
+int tiku_kits_sensor_mcp9808_get_resolution(uint8_t *bits);
+
+/**
+ * @brief Set the conversion resolution
+ *
+ * @param bits Resolution, 9..12 bits (12 is the power-on default)
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM for a resolution out of range,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS if a transfer fails or the read-back differs
+ */
+int tiku_kits_sensor_mcp9808_set_resolution(uint8_t bits);
+
+/**
+ * @brief Read whether the sensor is in shutdown
+ *
+ * @param enabled Receives 1 in shutdown, 0 converting.  Must not be NULL.
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM if @p enabled is NULL,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS if the I2C transaction fails
+ */
+int tiku_kits_sensor_mcp9808_get_shutdown(uint8_t *enabled);
+
+/**
+ * @brief Enter (1) or leave (0) shutdown
+ *
+ * Alert settings and lock bits are kept; a pending alert is not cleared.
+ *
+ * @param enabled 1 to enter shutdown, 0 to resume conversions
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM for a value other than 0 or 1, or for
+ * shutdown while the critical or window lock is set,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS if a transfer fails or the read-back differs
+ */
+int tiku_kits_sensor_mcp9808_set_shutdown(uint8_t enabled);
 
 #endif /* TIKU_KITS_SENSOR_MCP9808_H_ */

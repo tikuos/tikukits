@@ -65,6 +65,16 @@
  */
 #define TIKU_KITS_SENSOR_ADT7410_ADDR_DEFAULT    0x48
 
+/** Lowest and highest 7-bit address the A0..A1 pins select. */
+#define TIKU_KITS_SENSOR_ADT7410_ADDR_MIN        0x48
+#define TIKU_KITS_SENSOR_ADT7410_ADDR_MAX        0x4B
+
+/** Default conversion resolution, in bits (0.0625 C per LSB). */
+#define TIKU_KITS_SENSOR_ADT7410_RES_LOW         13
+
+/** High conversion resolution, in bits (0.0078 C per LSB). */
+#define TIKU_KITS_SENSOR_ADT7410_RES_HIGH        16
+
 /*---------------------------------------------------------------------------*/
 /* FUNCTION PROTOTYPES                                                       */
 /*---------------------------------------------------------------------------*/
@@ -87,6 +97,7 @@
  * default pin configuration, or 0x48-0x4B for custom
  * A0/A1 settings.
  * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM if @p addr is outside 0x48-0x4B,
  * TIKU_KITS_SENSOR_ERR_BUS if the I2C transaction fails
  * (NACK, bus timeout, etc.),
  * TIKU_KITS_SENSOR_ERR_ID if the upper 5 bits of the ID
@@ -127,5 +138,79 @@ int tiku_kits_sensor_adt7410_read(tiku_kits_sensor_temp_t *temp);
  * @return Pointer to the constant string "ADT7410" (never NULL)
  */
 const char *tiku_kits_sensor_adt7410_name(void);
+
+/*
+ * The calls below need the sensor initialized by
+ * tiku_kits_sensor_adt7410_init(), and so the I2C bus initialized before
+ * it; without one they return TIKU_KITS_SENSOR_ERR_NO_DEVICE.  Every write
+ * is read back, and a read-back that differs is TIKU_KITS_SENSOR_ERR_BUS.
+ */
+
+/**
+ * @brief Get the address of the initialized sensor
+ *
+ * @return The 7-bit address, or 0 until an init has succeeded
+ */
+uint8_t tiku_kits_sensor_adt7410_address(void);
+
+/**
+ * @brief Read the conversion resolution
+ *
+ * @param bits Receives the resolution, 13 or 16 bits.  Must not be NULL.
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM if @p bits is NULL,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS if the I2C transaction fails
+ */
+int tiku_kits_sensor_adt7410_get_resolution(uint8_t *bits);
+
+/**
+ * @brief Set the conversion resolution
+ *
+ * @param bits Resolution: 13 (the power-on default) or 16 bits
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM for any other resolution,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS if a transfer fails or the read-back differs
+ */
+int tiku_kits_sensor_adt7410_set_resolution(uint8_t bits);
+
+/**
+ * @brief Read whether the sensor is in shutdown
+ *
+ * @param enabled Receives 1 in shutdown, else 0.  Must not be NULL.
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM if @p enabled is NULL,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS if the I2C transaction fails
+ */
+int tiku_kits_sensor_adt7410_get_shutdown(uint8_t *enabled);
+
+/**
+ * @brief Enter shutdown (1) or continuous conversion (0)
+ *
+ * Leaving shutdown selects continuous conversion, whatever mode was set.
+ *
+ * @param enabled 1 to enter shutdown, 0 for continuous conversion
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM for a value other than 0 or 1,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS if a transfer fails or the read-back differs
+ */
+int tiku_kits_sensor_adt7410_set_shutdown(uint8_t enabled);
+
+/**
+ * @brief Read the temperature in millidegrees Celsius
+ *
+ * Reads at the configured resolution, rounded to the nearest millidegree;
+ * unlike tiku_kits_sensor_adt7410_read() it keeps 16-bit precision.
+ *
+ * @param millidegrees Receives the temperature.  Must not be NULL.
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM if @p millidegrees is NULL,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS if the I2C transaction fails
+ */
+int tiku_kits_sensor_adt7410_read_mc(int32_t *millidegrees);
 
 #endif /* TIKU_KITS_SENSOR_ADT7410_H_ */

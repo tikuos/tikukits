@@ -43,6 +43,16 @@
 #include "../tiku_kits_sensor.h"
 
 /*---------------------------------------------------------------------------*/
+/* CONSTANTS                                                                 */
+/*---------------------------------------------------------------------------*/
+
+/** Lowest conversion resolution, in bits (0.5 C per LSB). */
+#define TIKU_KITS_SENSOR_DS18B20_RES_MIN         9
+
+/** Highest conversion resolution, in bits (0.0625 C per LSB, the default). */
+#define TIKU_KITS_SENSOR_DS18B20_RES_MAX         12
+
+/*---------------------------------------------------------------------------*/
 /* FUNCTION PROTOTYPES                                                       */
 /*---------------------------------------------------------------------------*/
 
@@ -122,5 +132,40 @@ int tiku_kits_sensor_ds18b20_read(tiku_kits_sensor_temp_t *temp);
  * @return Pointer to the constant string "DS18B20" (never NULL)
  */
 const char *tiku_kits_sensor_ds18b20_name(void);
+
+/**
+ * @brief Report whether the last init found a device on the bus
+ *
+ * @return 1 after a successful tiku_kits_sensor_ds18b20_init(), else 0
+ */
+uint8_t tiku_kits_sensor_ds18b20_ready(void);
+
+/**
+ * @brief Read the conversion resolution
+ *
+ * Reads it from the scratchpad, so no conversion may be running.
+ *
+ * @param bits Receives the resolution, 9..12 bits.  Must not be NULL.
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM if @p bits is NULL,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS or TIKU_KITS_SENSOR_ERR_CRC if the read fails
+ */
+int tiku_kits_sensor_ds18b20_get_resolution(uint8_t *bits);
+
+/**
+ * @brief Set the conversion resolution, verified by reading it back
+ *
+ * The setting lives in scratchpad RAM and is lost at power-off; the EEPROM
+ * is never written.  The alarm bytes are kept.  No conversion may be running.
+ *
+ * @param bits Resolution, 9..12 bits
+ * @return TIKU_KITS_SENSOR_OK on success,
+ * TIKU_KITS_SENSOR_ERR_PARAM for a resolution out of range,
+ * TIKU_KITS_SENSOR_ERR_NO_DEVICE before a successful init,
+ * TIKU_KITS_SENSOR_ERR_BUS or TIKU_KITS_SENSOR_ERR_CRC if a transfer fails
+ * or the read-back differs
+ */
+int tiku_kits_sensor_ds18b20_set_resolution(uint8_t bits);
 
 #endif /* TIKU_KITS_SENSOR_DS18B20_H_ */

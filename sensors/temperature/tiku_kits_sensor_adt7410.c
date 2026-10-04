@@ -56,12 +56,35 @@
 /** Expected manufacturer code after masking (Analog Devices, 11001xxx) */
 #define ADT7410_ID_EXPECTED     0xC8
 
+/**
+ * @brief Configuration register address.
+ *
+ * 8-bit register: [7] resolution (1 = 16-bit), [6:5] operation mode
+ * (00 continuous, 11 shutdown), [4:0] alert and fault settings.
+ */
+#define ADT7410_REG_CONFIG      0x03
+
+/** Configuration bit: 16-bit resolution; clear selects 13-bit. */
+#define ADT7410_CONFIG_RES16    0x80
+
+/** Configuration field: operation mode; both bits set is shutdown. */
+#define ADT7410_CONFIG_MODE     0x60
+
+/** Status bits [2:0] of the temperature register in 13-bit mode. */
+#define ADT7410_TEMP_FLAGS      0x0007u
+
+/** LSBs per degree Celsius of the 16-bit temperature value (1/128 C). */
+#define ADT7410_LSB_PER_C       128L
+
 /*---------------------------------------------------------------------------*/
 /* INTERNAL STATE                                                            */
 /*---------------------------------------------------------------------------*/
 
 /** Stored I2C address latched by init, used by all subsequent reads */
 static uint8_t sensor_addr;
+
+/** 1 after a successful init: the device at sensor_addr identified itself */
+static uint8_t sensor_ready;
 
 /*---------------------------------------------------------------------------*/
 /* INTERNAL HELPERS                                                          */
@@ -129,6 +152,12 @@ int tiku_kits_sensor_adt7410_init(uint8_t addr)
 {
     uint8_t id;
 
+    if (addr < TIKU_KITS_SENSOR_ADT7410_ADDR_MIN ||
+        addr > TIKU_KITS_SENSOR_ADT7410_ADDR_MAX) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    sensor_ready = 0;
+
     /* Store the address so read helpers can use it for all future
      * transactions without the caller needing to pass it again. */
     sensor_addr = addr;
@@ -143,6 +172,7 @@ int tiku_kits_sensor_adt7410_init(uint8_t addr)
         return TIKU_KITS_SENSOR_ERR_ID;
     }
 
+    sensor_ready = 1;
     return TIKU_KITS_SENSOR_OK;
 }
 
@@ -209,4 +239,166 @@ int tiku_kits_sensor_adt7410_read(tiku_kits_sensor_temp_t *temp)
 const char *tiku_kits_sensor_adt7410_name(void)
 {
     return "ADT7410";
+}
+
+/*---------------------------------------------------------------------------*/
+/* CONFIGURATION                                                             */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief Return the address of the initialized sensor, 0 if none
+ */
+uint8_t tiku_kits_sensor_adt7410_address(void)
+{
+    return sensor_ready ? sensor_addr : 0;
+}
+
+/**
+ * @brief Read the conversion resolution, 13 or 16 bits
+ */
+int tiku_kits_sensor_adt7410_get_resolution(uint8_t *bits)
+{
+    uint8_t value;
+    int rc;
+
+    if (bits == NULL) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    if (!sensor_ready) {
+        return TIKU_KITS_SENSOR_ERR_NO_DEVICE;
+    }
+    rc = read_reg8(ADT7410_REG_CONFIG, &value);
+    if (rc == TIKU_KITS_SENSOR_OK) {
+        *bits = (value & ADT7410_CONFIG_RES16) ?
+                TIKU_KITS_SENSOR_ADT7410_RES_HIGH :
+                TIKU_KITS_SENSOR_ADT7410_RES_LOW;
+    }
+    return rc;
+}
+
+/**
+ * @brief Replace the configuration bits in @p mask, verified by read-back
+ *
+ * @param mask  Configuration bits to change
+ * @param bits  Their new value, within @p mask
+ * @return TIKU_KITS_SENSOR_OK, TIKU_KITS_SENSOR_ERR_NO_DEVICE before a
+ *         successful init, or TIKU_KITS_SENSOR_ERR_BUS
+ */
+static int config_update(uint8_t mask, uint8_t bits)
+{
+    uint8_t old;
+    uint8_t actual;
+    uint8_t tx[2] = { ADT7410_REG_CONFIG, 0 };
+    int rc;
+
+    if (!sensor_ready) {
+        return TIKU_KITS_SENSOR_ERR_NO_DEVICE;
+    }
+    rc = read_reg8(ADT7410_REG_CONFIG, &old);
+    if (rc != TIKU_KITS_SENSOR_OK) {
+        return rc;
+    }
+    tx[1] = (uint8_t)((old & ~mask) | bits);
+    if (tiku_i2c_write(sensor_addr, tx, 2) != TIKU_I2C_OK) {
+        return TIKU_KITS_SENSOR_ERR_BUS;
+    }
+    rc = read_reg8(ADT7410_REG_CONFIG, &actual);
+    if (rc != TIKU_KITS_SENSOR_OK) {
+        return rc;
+    }
+    return (actual == tx[1]) ? TIKU_KITS_SENSOR_OK : TIKU_KITS_SENSOR_ERR_BUS;
+}
+
+/**
+ * @brief Set the conversion resolution, 13 or 16 bits
+ */
+int tiku_kits_sensor_adt7410_set_resolution(uint8_t bits)
+{
+    if (bits != TIKU_KITS_SENSOR_ADT7410_RES_LOW &&
+        bits != TIKU_KITS_SENSOR_ADT7410_RES_HIGH) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    return config_update(ADT7410_CONFIG_RES16,
+                         (bits == TIKU_KITS_SENSOR_ADT7410_RES_HIGH) ?
+                         ADT7410_CONFIG_RES16 : 0);
+}
+
+/**
+ * @brief Read whether the sensor is in shutdown
+ */
+int tiku_kits_sensor_adt7410_get_shutdown(uint8_t *enabled)
+{
+    uint8_t value;
+    int rc;
+
+    if (enabled == NULL) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    if (!sensor_ready) {
+        return TIKU_KITS_SENSOR_ERR_NO_DEVICE;
+    }
+    rc = read_reg8(ADT7410_REG_CONFIG, &value);
+    if (rc == TIKU_KITS_SENSOR_OK) {
+        *enabled = (uint8_t)((value & ADT7410_CONFIG_MODE) ==
+                             ADT7410_CONFIG_MODE);
+    }
+    return rc;
+}
+
+/**
+ * @brief Enter shutdown (1) or continuous conversion (0)
+ */
+int tiku_kits_sensor_adt7410_set_shutdown(uint8_t enabled)
+{
+    if (enabled > 1u) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    return config_update(ADT7410_CONFIG_MODE,
+                         enabled ? ADT7410_CONFIG_MODE : 0);
+}
+
+/*---------------------------------------------------------------------------*/
+
+/*
+ * Reads the configuration first to know the resolution: in 13-bit mode the
+ * three status bits are cleared, which leaves the value in the same 1/128 C
+ * units as 16-bit mode.  The conversion rounds half away from zero.
+ */
+
+/**
+ * @brief Read the temperature in millidegrees Celsius
+ */
+int tiku_kits_sensor_adt7410_read_mc(int32_t *millidegrees)
+{
+    uint8_t config;
+    uint16_t raw;
+    int32_t units;
+    int rc;
+
+    if (millidegrees == NULL) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    if (!sensor_ready) {
+        return TIKU_KITS_SENSOR_ERR_NO_DEVICE;
+    }
+    rc = read_reg8(ADT7410_REG_CONFIG, &config);
+    if (rc != TIKU_KITS_SENSOR_OK) {
+        return rc;
+    }
+    rc = read_reg16(ADT7410_REG_TEMP, &raw);
+    if (rc != TIKU_KITS_SENSOR_OK) {
+        return rc;
+    }
+    if (!(config & ADT7410_CONFIG_RES16)) {
+        raw &= (uint16_t)~ADT7410_TEMP_FLAGS;
+    }
+    units = (raw & 0x8000u) ? (int32_t)raw - 65536L : (int32_t)raw;
+    if (units < 0) {
+        *millidegrees = -((-units * 1000L + ADT7410_LSB_PER_C / 2) /
+                          ADT7410_LSB_PER_C);
+    } else {
+        *millidegrees = (units * 1000L + ADT7410_LSB_PER_C / 2) /
+                        ADT7410_LSB_PER_C;
+    }
+    return TIKU_KITS_SENSOR_OK;
 }

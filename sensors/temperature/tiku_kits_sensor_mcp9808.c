@@ -62,12 +62,38 @@
 /** Expected upper byte of the device ID register (MCP9808 family) */
 #define MCP9808_DEVICE_ID_UPPER 0x04
 
+/**
+ * @brief Configuration register address.
+ *
+ * 16-bit register: [8] shutdown, [7] critical lock, [6] window lock,
+ * [5] interrupt clear, [4:0] alert output control.
+ */
+#define MCP9808_REG_CONFIG      0x01
+
+/** Configuration bit: shutdown (low-power, no conversions). */
+#define MCP9808_CONFIG_SHDN     0x0100u
+
+/** Configuration bits: critical and window locks; set, they forbid shutdown */
+#define MCP9808_CONFIG_LOCKS    0x00C0u
+
+/** Configuration bit: interrupt clear; writing 1 clears the alert. */
+#define MCP9808_CONFIG_INT_CLR  0x0020u
+
+/** Resolution register address: 8-bit, [1:0] select 9..12 bits. */
+#define MCP9808_REG_RESOLUTION  0x08
+
+/** Resolution field mask of the resolution register. */
+#define MCP9808_RES_MASK        0x03
+
 /*---------------------------------------------------------------------------*/
 /* INTERNAL STATE                                                            */
 /*---------------------------------------------------------------------------*/
 
 /** Stored I2C address latched by init, used by all subsequent reads */
 static uint8_t sensor_addr;
+
+/** 1 after a successful init: the device at sensor_addr identified itself */
+static uint8_t sensor_ready;
 
 /*---------------------------------------------------------------------------*/
 /* INTERNAL HELPERS                                                          */
@@ -117,6 +143,12 @@ int tiku_kits_sensor_mcp9808_init(uint8_t addr)
 {
     uint16_t id;
 
+    if (addr < TIKU_KITS_SENSOR_MCP9808_ADDR_MIN ||
+        addr > TIKU_KITS_SENSOR_MCP9808_ADDR_MAX) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    sensor_ready = 0;
+
     /* Store the address so read_reg16() can use it for all future
      * transactions without the caller needing to pass it again. */
     sensor_addr = addr;
@@ -137,6 +169,7 @@ int tiku_kits_sensor_mcp9808_init(uint8_t addr)
         return TIKU_KITS_SENSOR_ERR_ID;
     }
 
+    sensor_ready = 1;
     return TIKU_KITS_SENSOR_OK;
 }
 
@@ -204,4 +237,129 @@ int tiku_kits_sensor_mcp9808_read(tiku_kits_sensor_temp_t *temp)
 const char *tiku_kits_sensor_mcp9808_name(void)
 {
     return "MCP9808";
+}
+
+/*---------------------------------------------------------------------------*/
+/* CONFIGURATION                                                             */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief Return the address of the initialized sensor, 0 if none
+ */
+uint8_t tiku_kits_sensor_mcp9808_address(void)
+{
+    return sensor_ready ? sensor_addr : 0;
+}
+
+/**
+ * @brief Read the conversion resolution, 9..12 bits
+ */
+int tiku_kits_sensor_mcp9808_get_resolution(uint8_t *bits)
+{
+    uint8_t reg = MCP9808_REG_RESOLUTION;
+    uint8_t value;
+
+    if (bits == NULL) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    if (!sensor_ready) {
+        return TIKU_KITS_SENSOR_ERR_NO_DEVICE;
+    }
+    if (tiku_i2c_write_read(sensor_addr, &reg, 1, &value, 1) !=
+        TIKU_I2C_OK) {
+        return TIKU_KITS_SENSOR_ERR_BUS;
+    }
+    *bits = (uint8_t)(TIKU_KITS_SENSOR_MCP9808_RES_MIN +
+                      (value & MCP9808_RES_MASK));
+    return TIKU_KITS_SENSOR_OK;
+}
+
+/**
+ * @brief Set the conversion resolution, verified by reading it back
+ */
+int tiku_kits_sensor_mcp9808_set_resolution(uint8_t bits)
+{
+    uint8_t tx[2] = { MCP9808_REG_RESOLUTION, 0 };
+    uint8_t actual;
+    int rc;
+
+    if (bits < TIKU_KITS_SENSOR_MCP9808_RES_MIN ||
+        bits > TIKU_KITS_SENSOR_MCP9808_RES_MAX) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    if (!sensor_ready) {
+        return TIKU_KITS_SENSOR_ERR_NO_DEVICE;
+    }
+    tx[1] = (uint8_t)(bits - TIKU_KITS_SENSOR_MCP9808_RES_MIN);
+    if (tiku_i2c_write(sensor_addr, tx, 2) != TIKU_I2C_OK) {
+        return TIKU_KITS_SENSOR_ERR_BUS;
+    }
+    rc = tiku_kits_sensor_mcp9808_get_resolution(&actual);
+    if (rc != TIKU_KITS_SENSOR_OK) {
+        return rc;
+    }
+    return (actual == bits) ? TIKU_KITS_SENSOR_OK : TIKU_KITS_SENSOR_ERR_BUS;
+}
+
+/**
+ * @brief Read whether the sensor is in shutdown
+ */
+int tiku_kits_sensor_mcp9808_get_shutdown(uint8_t *enabled)
+{
+    uint16_t value;
+    int rc;
+
+    if (enabled == NULL) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    if (!sensor_ready) {
+        return TIKU_KITS_SENSOR_ERR_NO_DEVICE;
+    }
+    rc = read_reg16(MCP9808_REG_CONFIG, &value);
+    if (rc == TIKU_KITS_SENSOR_OK) {
+        *enabled = (uint8_t)((value & MCP9808_CONFIG_SHDN) != 0u);
+    }
+    return rc;
+}
+
+/**
+ * @brief Enter or leave shutdown, verified by reading it back
+ *
+ * Alerts and lock bits are left as they are; a set lock refuses shutdown.
+ */
+int tiku_kits_sensor_mcp9808_set_shutdown(uint8_t enabled)
+{
+    uint16_t value;
+    uint8_t tx[3] = { MCP9808_REG_CONFIG, 0, 0 };
+    uint8_t actual;
+    int rc;
+
+    if (enabled > 1u) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    if (!sensor_ready) {
+        return TIKU_KITS_SENSOR_ERR_NO_DEVICE;
+    }
+    rc = read_reg16(MCP9808_REG_CONFIG, &value);
+    if (rc != TIKU_KITS_SENSOR_OK) {
+        return rc;
+    }
+    if (enabled && (value & MCP9808_CONFIG_LOCKS) != 0u) {
+        return TIKU_KITS_SENSOR_ERR_PARAM;
+    }
+    /* Interrupt clear is written as 0, so a pending alert stays pending. */
+    value = (uint16_t)((value & ~(MCP9808_CONFIG_SHDN |
+                                  MCP9808_CONFIG_INT_CLR)) |
+                       (enabled ? MCP9808_CONFIG_SHDN : 0u));
+    tx[1] = (uint8_t)(value >> 8);
+    tx[2] = (uint8_t)value;
+    if (tiku_i2c_write(sensor_addr, tx, 3) != TIKU_I2C_OK) {
+        return TIKU_KITS_SENSOR_ERR_BUS;
+    }
+    rc = tiku_kits_sensor_mcp9808_get_shutdown(&actual);
+    if (rc != TIKU_KITS_SENSOR_OK) {
+        return rc;
+    }
+    return (actual == enabled) ? TIKU_KITS_SENSOR_OK
+                               : TIKU_KITS_SENSOR_ERR_BUS;
 }
