@@ -146,8 +146,9 @@ typedef enum {
 /**
  * @brief Initialise the DNS resolver.
  *
- * Clears all state, flushes the cache, and resets the transaction
- * ID counter.  Safe to call again to forcibly reset.
+ * Clears query state and flushes the cache. Transaction IDs and an explicit
+ * default-resolver override survive this call. Safe to call again to forcibly
+ * reset a query; this does not reset boot-session configuration.
  */
 void tiku_kits_net_dns_init(void);
 
@@ -155,16 +156,47 @@ void tiku_kits_net_dns_init(void);
  * @brief Set the DNS server address.
  *
  * Copies 4 bytes from @p addr.  Must be called before
- * dns_resolve().
+ * dns_resolve().  A different server flushes the cached answers.
  *
  * @param addr  DNS server IPv4 address (4 bytes, network order)
  * @return TIKU_KITS_NET_OK on success,
- *         TIKU_KITS_NET_ERR_NULL if @p addr is NULL.
+ *         TIKU_KITS_NET_ERR_NULL if @p addr is NULL,
+ *         TIKU_KITS_NET_ERR_PARAM while a query is pending.
  */
 int8_t tiku_kits_net_dns_set_server(const uint8_t *addr);
 
 /**
- * @brief Fill @p out with the best default resolver: the DHCP lease's
+ * @brief Get the current query server, without starting a query.
+ *
+ * @return The server's 4 bytes, or NULL before a server is set
+ */
+const uint8_t *tiku_kits_net_dns_get_server(void);
+
+/**
+ * @brief Set a boot-session override for tiku_kits_net_dns_default_server().
+ *
+ * It survives tiku_kits_net_dns_init(), so clients that initialize the
+ * resolver for each query still use it.  Setting it sends nothing, stores
+ * nothing in NVM and leaves the current query server as it is.
+ *
+ * @param addr  Override address (4 bytes, copied), or NULL to restore
+ *              automatic selection
+ * @return TIKU_KITS_NET_OK, with the cache flushed;
+ *         TIKU_KITS_NET_ERR_PARAM while a query is pending
+ * @note Call from the same cooperative context as the other resolver calls.
+ */
+int8_t tiku_kits_net_dns_set_default_override(const uint8_t *addr);
+
+/**
+ * @brief Get the boot-session override.
+ *
+ * @return The override's 4 bytes, owned by the resolver and read-only, or
+ *         NULL for automatic selection
+ */
+const uint8_t *tiku_kits_net_dns_get_default_override(void);
+
+/**
+ * @brief Fill @p out with the explicit override, else the DHCP lease's
  *        DNS server (option 6) when bound and present, else 8.8.8.8.
  */
 void tiku_kits_net_dns_default_server(uint8_t out[4]);

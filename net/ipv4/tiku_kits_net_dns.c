@@ -73,6 +73,10 @@
 /** Current resolver state. */
 static tiku_kits_net_dns_state_t dns_state;
 
+/* Boot-session policy, separate from the resolver's per-query server. */
+static uint8_t dns_default_override[4];
+static uint8_t dns_default_override_set;
+
 /** Configured DNS server address (4 bytes, network order). */
 static uint8_t dns_server[4];
 
@@ -666,9 +670,9 @@ static int8_t dns_parse_response(void)
 /**
  * @brief Reset all resolver state and flush the cache.
  *
- * Clears the reply flags and cache entries and unbinds any
- * previously-bound UDP port.  After init the resolver is in IDLE
- * state with no server configured; transaction ids carry on.
+ * Clears the reply flags and cache entries and unbinds any previously-bound
+ * UDP port, leaving the resolver IDLE with no query server configured;
+ * transaction ids and the explicit default-resolver override carry on.
  */
 void tiku_kits_net_dns_init(void)
 {
@@ -705,6 +709,15 @@ int8_t tiku_kits_net_dns_set_server(const uint8_t *addr)
         return TIKU_KITS_NET_ERR_NULL;
     }
 
+    /* Changing the peer mid-query would reject its response and misdirect
+     * retries. Cache entries also belong to the server that supplied them. */
+    if (dns_state == TIKU_KITS_NET_DNS_STATE_SENT) {
+        return TIKU_KITS_NET_ERR_PARAM;
+    }
+    if (!dns_server_set || memcmp(dns_server, addr, 4) != 0) {
+        tiku_kits_net_dns_cache_flush();
+    }
+
     memcpy(dns_server, addr, 4);
     dns_server_set = 1;
     return TIKU_KITS_NET_OK;
@@ -712,13 +725,47 @@ int8_t tiku_kits_net_dns_set_server(const uint8_t *addr)
 
 /*---------------------------------------------------------------------------*/
 
+/**
+ * @brief Return the query server, or NULL before one is set.
+ */
+const uint8_t *tiku_kits_net_dns_get_server(void)
+{
+    return dns_server_set ? dns_server : NULL;
+}
+
+/**
+ * @brief Return the boot-session override, or NULL when there is none.
+ */
+const uint8_t *tiku_kits_net_dns_get_default_override(void)
+{
+    return dns_default_override_set ? dns_default_override : NULL;
+}
+
+/**
+ * @brief Set or clear the boot-session override and flush the cache.
+ *
+ * Refused while a query is pending, so the query's answer cannot be cached
+ * under the new policy.
+ */
+int8_t tiku_kits_net_dns_set_default_override(const uint8_t *addr)
+{
+    if (dns_state == TIKU_KITS_NET_DNS_STATE_SENT) {
+        return TIKU_KITS_NET_ERR_PARAM;
+    }
+    if (addr != NULL) {
+        memcpy(dns_default_override, addr, 4);
+    }
+    dns_default_override_set = (uint8_t)(addr != NULL);
+    tiku_kits_net_dns_cache_flush();
+    return TIKU_KITS_NET_OK;
+}
+
 /*
- * Prefers the DHCP-lease-provided DNS server (option 6) when a lease
- * is bound and carried one: campus/corporate networks often block
- * outbound UDP/53 to public resolvers, so hardcoding 8.8.8.8 made
- * every hostname lookup fail there.  Falls back to Google public DNS
- * when there is no lease (SLIP builds, static setups) or the server
- * sent no option 6.
+ * Prefers an explicit default override, then the DHCP DNS server (option 6)
+ * when a lease is bound and carried one, since campus and corporate networks
+ * often block outbound UDP/53 to public resolvers.  Falls back to Google
+ * public DNS when there is no lease (SLIP builds, static setups) or the
+ * server sent no option 6.
  */
 
 /**
@@ -726,6 +773,10 @@ int8_t tiku_kits_net_dns_set_server(const uint8_t *addr)
  */
 void tiku_kits_net_dns_default_server(uint8_t out[4])
 {
+    if (dns_default_override_set) {
+        memcpy(out, dns_default_override, 4);
+        return;
+    }
 #if defined(TIKU_KITS_NET_DHCP_ENABLE) && TIKU_KITS_NET_DHCP_ENABLE
     if (tiku_kits_net_dhcp_get_state() == TIKU_KITS_NET_DHCP_STATE_BOUND) {
         const tiku_kits_net_dhcp_lease_t *l = tiku_kits_net_dhcp_get_lease();
