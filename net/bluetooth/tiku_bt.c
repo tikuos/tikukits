@@ -159,6 +159,7 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define ATT_OP_READ_BY_GROUP_TYPE_RSP   0x11U
 #define ATT_OP_WRITE_REQ                0x12U
 #define ATT_OP_WRITE_RSP                0x13U
+#define ATT_OP_WRITE_CMD                0x52U
 #define ATT_OP_HANDLE_VALUE_NOTIFY      0x1BU
 
 /* ATT error codes used in Error Response (0x01) PDUs. */
@@ -947,6 +948,9 @@ static void bt_att_handle_read(uint8_t conn_idx, const uint8_t *pdu,
                                       ATT_ERR_READ_NOT_PERMITTED);
                     return;
                 }
+                if (produced > (uint16_t)(sizeof rsp - 1U)) {
+                    produced = (uint16_t)(sizeof rsp - 1U);
+                }
             } else {
                 copy = table[i].value_len;
                 if ((uint16_t)copy + 1U > (uint16_t)sizeof rsp)
@@ -968,18 +972,20 @@ static void bt_att_handle_read(uint8_t conn_idx, const uint8_t *pdu,
  * The handle either resolves to a CCCD (in which case the 2-byte
  * value is stored in bt_state.cccd_value via the row's cccd_ref) or
  * to a user characteristic whose on_write callback is invoked.
- * Anything else gets Write Not Permitted (0x03).
+ * Anything else gets Write Not Permitted (0x03).  A Write Command is
+ * never answered, so it gets neither the response nor an error.
  */
 
 /**
- * @brief Handle ATT Write Request (opcode 0x12)
+ * @brief Handle ATT Write Request (opcode 0x12) or Write Command (0x52)
  *
  * @param conn_idx  Connection table index
  * @param pdu       ATT PDU (opcode at [0])
  * @param len       PDU length
+ * @param with_rsp  1 for a Write Request, 0 for a Write Command
  */
 static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
-                                uint16_t len)
+                                uint16_t len, uint8_t with_rsp)
 {
     uint16_t       h;
     bt_att_entry_t table[ATT_HANDLE_MAX];
@@ -987,8 +993,10 @@ static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
     uint8_t        i;
     uint8_t        rsp;
     if (len < 3U) {
-        bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, 0U,
-                          ATT_ERR_REQUEST_NOT_SUPPORTED);
+        if (with_rsp) {
+            bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, 0U,
+                              ATT_ERR_REQUEST_NOT_SUPPORTED);
+        }
         return;
     }
     h = (uint16_t)(pdu[1] | ((uint16_t)pdu[2] << 8));
@@ -1010,8 +1018,10 @@ static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
                             (new_val & 0x0001U) ? 1U : 0U,
                             (new_val & 0x0002U) ? 1U : 0U);
             rsp = ATT_OP_WRITE_RSP;
-            (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
-                              L2CAP_CID_ATT, &rsp, 1U);
+            if (with_rsp) {
+                (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
+                                  L2CAP_CID_ATT, &rsp, 1U);
+            }
             return;
         }
 
@@ -1023,22 +1033,30 @@ static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
                 table[i].char_ref->user, &pdu[3],
                 (uint16_t)(len - 3U));
             if (wrc != 0) {
-                bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, h,
-                                  ATT_ERR_WRITE_NOT_PERMITTED);
+                if (with_rsp) {
+                    bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, h,
+                                      ATT_ERR_WRITE_NOT_PERMITTED);
+                }
                 return;
             }
             rsp = ATT_OP_WRITE_RSP;
-            (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
-                              L2CAP_CID_ATT, &rsp, 1U);
+            if (with_rsp) {
+                (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
+                                  L2CAP_CID_ATT, &rsp, 1U);
+            }
             return;
         }
 
-        bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, h,
-                          ATT_ERR_WRITE_NOT_PERMITTED);
+        if (with_rsp) {
+            bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, h,
+                              ATT_ERR_WRITE_NOT_PERMITTED);
+        }
         return;
     }
-    bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, h,
-                      ATT_ERR_INVALID_HANDLE);
+    if (with_rsp) {
+        bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, h,
+                          ATT_ERR_INVALID_HANDLE);
+    }
 }
 
 /**
@@ -1126,7 +1144,10 @@ static void bt_handle_att(uint8_t conn_idx, const uint8_t *pdu,
         bt_att_handle_read(conn_idx, pdu, len);
         break;
     case ATT_OP_WRITE_REQ:
-        bt_att_handle_write(conn_idx, pdu, len);
+        bt_att_handle_write(conn_idx, pdu, len, 1U);
+        break;
+    case ATT_OP_WRITE_CMD:
+        bt_att_handle_write(conn_idx, pdu, len, 0U);
         break;
     /* Phase 13 client-side responses: log + drop. A future
      * Phase 13.x pass will add per-request state so callers can
