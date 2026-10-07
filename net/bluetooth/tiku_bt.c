@@ -350,6 +350,8 @@ static struct {
     uint8_t                    scanning;
     uint8_t                    scan_count;
     tiku_bt_scan_entry_t scan[TIKU_BT_SCAN_MAX];
+    char                       scan_prefix[TIKU_BT_SCAN_NAME_MAX];
+    uint8_t                    scan_prefix_len;  /* 0: cache every device */
 
     /* Phase 9 — active LE connections. `in_use` is 0 for free slots,
      * 1 for live links. ATT context (current_mtu) is per-connection
@@ -2546,10 +2548,11 @@ static void bt_smp_send_failed(uint8_t conn_idx, uint8_t reason)
     TIKU_BT_PRINTF("p14.smp: pairing failed reason=0x%02x\n", reason);
 }
 
-/** Forward decl -- bond find helper; full implementation is alongside
- *  the bond store at the bottom of the file. */
+/** Forward decls -- the bond find and keep helpers live beside the bond
+ *  store at the bottom of the file. */
 static int bt_bond_find_by_addr(uint8_t addr_type, const uint8_t addr_le[6],
                                 tiku_bt_bond_record_t *out);
+static uint8_t bt_bond_keep(const tiku_bt_bond_record_t *rec);
 
 #if (TIKU_BT_SW_CRYPTO + 0)
 /* The private key of a key pair the stack made itself (big-endian), for
@@ -3169,8 +3172,8 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
                 rec.ltk[k] = bt_state.smp[conn_idx].ltk[k];
             }
             rec.flags = (uint32_t)SMP_AUTHREQ_SC;
-            (void)tiku_bt_bond_save(0U, &rec);
-            TIKU_BT_PRINTF("p14.smp: bond saved slot 0\n");
+            TIKU_BT_PRINTF("p14.smp: bond saved slot %u\n",
+                            (unsigned)bt_bond_keep(&rec));
         }
         if (bt_smp_start_encryption(conn_idx, bt_state.smp[conn_idx].ltk)
             != TIKU_DRV_OK) {
@@ -3264,8 +3267,8 @@ static void bt_smp_resp_check_ea(uint8_t conn_idx)
             rec.ltk[k] = bt_state.smp[conn_idx].ltk[k];
         }
         rec.flags = (uint32_t)SMP_AUTHREQ_SC;    /* SC, no MITM */
-        (void)tiku_bt_bond_save(0U, &rec);
-        TIKU_BT_PRINTF("p14.smp: bond saved slot 0\n");
+        TIKU_BT_PRINTF("p14.smp: bond saved slot %u\n",
+                        (unsigned)bt_bond_keep(&rec));
     }
     bt_state.smp[conn_idx].state = SMP_ENCRYPTING;
 }
@@ -3845,7 +3848,8 @@ static int bt_scan_find(const uint8_t addr[6])
  * beacons are more accurate than the first; SCAN_RSP usually carries
  * the long name where ADV_IND only had the short form. A full cache
  * takes a new device in place of its weakest entry, when it is heard
- * louder: in a busy room the list keeps the nearest devices.
+ * louder: in a busy room the list keeps the nearest devices. Under a
+ * name filter (tiku_bt_scan_filter) a new device must carry the prefix.
  *
  * @param evt_type   HCI LE Advertising Report event_type
  *                   (0 ADV_IND ... 4 SCAN_RSP)
@@ -3861,14 +3865,22 @@ static void bt_scan_cache_add(uint8_t evt_type, uint8_t addr_type,
                               int8_t rssi)
 {
     uint8_t addr_msb[6];
+    char    namebuf[TIKU_BT_SCAN_NAME_MAX];
+    uint8_t n;
     int     idx;
     int     k;
     tiku_bt_scan_entry_t *e;
 
     for (k = 0; k < 6; ++k) addr_msb[k] = addr_le[5 - k];
+    n = bt_extract_name(ad, ad_len, namebuf, sizeof namebuf);
 
     idx = bt_scan_find(addr_msb);
     if (idx < 0) {
+        /* Under a name filter a device joins once a report names it. */
+        if (bt_state.scan_prefix_len > n) return;
+        for (k = 0; k < (int)bt_state.scan_prefix_len; ++k) {
+            if (namebuf[k] != bt_state.scan_prefix[k]) return;
+        }
         if (bt_state.scan_count < TIKU_BT_SCAN_MAX) {
             idx = (int)bt_state.scan_count;
             bt_state.scan_count = (uint8_t)(bt_state.scan_count + 1U);
@@ -3892,15 +3904,22 @@ static void bt_scan_cache_add(uint8_t evt_type, uint8_t addr_type,
 
     e->evt_type = evt_type;
     e->rssi_dbm = rssi;
-    {
-        char    namebuf[TIKU_BT_SCAN_NAME_MAX];
-        uint8_t n = bt_extract_name(ad, ad_len, namebuf, sizeof namebuf);
-        if (n > 0U) {                          /* never erase a known name */
-            uint8_t i;
-            e->name_len = n;
-            for (i = 0U; i < n; ++i) e->name[i] = namebuf[i];
+    if (n > 0U) {                              /* never erase a known name */
+        e->name_len = n;
+        for (k = 0; k < (int)n; ++k) e->name[k] = namebuf[k];
+    }
+}
+
+void tiku_bt_scan_filter(const char *prefix)
+{
+    uint8_t n = 0U;
+    if (prefix != (const char *)0) {
+        while (prefix[n] != '\0' && n < TIKU_BT_SCAN_NAME_MAX) {
+            bt_state.scan_prefix[n] = prefix[n];
+            ++n;
         }
     }
+    bt_state.scan_prefix_len = n;
 }
 
 /*
@@ -5426,21 +5445,53 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
 }
 
 /*---------------------------------------------------------------------------*/
-/* SMP bonding store (phase 14 stub)                                         */
+/* SMP bonding store                                                         */
 /*---------------------------------------------------------------------------*/
 /*
- * One 32-byte fixed-width slot in .persistent SRAM (FRAM-backed on
- * MSP430, flash-backed on RP2350) so the next Phase 14 SMP change
- * can drop in real LTK/IRK material without a schema migration.
- *
- * Layout mirrors how whd.c places wifi_cred_record: tagged with
- * .persistent so the linker scripts back it with non-volatile
- * storage, and gated on a magic field that distinguishes "real
- * record" from "uninitialised NVM bytes". No checksum today (the
- * stub doesn't carry secret material); Phase 14 should add one
- * alongside real key storage.
+ * Fixed 32-byte records in durable memory, each tagged with a magic that
+ * tells a stored bond from blank NVM; bt_bond_turn is the slot a full
+ * store gives up next, so new peers replace the old ones in turn.
  */
 static TIKU_DURABLE tiku_bt_bond_record_t bt_bond_nvm[TIKU_BT_BOND_MAX];
+static TIKU_DURABLE uint8_t               bt_bond_turn;
+
+/**
+ * @brief Store @p rec: in the slot its peer holds, else an empty one, else
+ *        the next slot in turn.
+ *
+ * @return The slot the record went to
+ */
+static uint8_t bt_bond_keep(const tiku_bt_bond_record_t *rec)
+{
+    uint8_t slot;
+    uint8_t empty = TIKU_BT_BOND_MAX;
+    uint8_t k;
+
+    for (slot = 0U; slot < TIKU_BT_BOND_MAX; ++slot) {
+        const tiku_bt_bond_record_t *b = &bt_bond_nvm[slot];
+        if (b->magic != TIKU_BT_BOND_MAGIC) {
+            if (empty == TIKU_BT_BOND_MAX) empty = slot;
+            continue;
+        }
+        if (b->peer_addr_type != rec->peer_addr_type) continue;
+        for (k = 0U; k < 6U; ++k) {
+            if (b->peer_addr[k] != rec->peer_addr[k]) break;
+        }
+        if (k == 6U) break;
+    }
+    if (slot == TIKU_BT_BOND_MAX) {
+        if (empty < TIKU_BT_BOND_MAX) {
+            slot = empty;
+        } else {
+            uint16_t mpu_saved = tiku_mpu_unlock_nvm();
+            slot = (uint8_t)(bt_bond_turn % TIKU_BT_BOND_MAX);
+            bt_bond_turn = (uint8_t)((slot + 1U) % TIKU_BT_BOND_MAX);
+            tiku_mpu_lock_nvm(mpu_saved);
+        }
+    }
+    (void)tiku_bt_bond_save(slot, rec);
+    return slot;
+}
 
 int tiku_bt_bond_save(uint8_t slot, const tiku_bt_bond_record_t *rec)
 {
