@@ -1425,18 +1425,22 @@ static void bt_handle_att(uint8_t conn_idx, const uint8_t *pdu,
         }
         break;
     case ATT_OP_READ_RSP:
-        TIKU_BT_PRINTF("p13.att: Read Rsp %u B: ", (unsigned)(len - 1U));
         {
+            /* The value's first 16 bytes in hex, on one line; the digits
+             * are made here, as TIKU_PRINTF has no zero-padded %02x on
+             * every platform. */
+            static const char hex[] = "0123456789abcdef";
+            char     txt[16U * 3U + 1U];
             uint16_t k;
+            uint16_t n = 0U;
             for (k = 1U; k < len && k < 17U; ++k) {
-                /* TIKU_PRINTF doesn't support %02x zero-pad reliably
-                 * across platforms; emit two nibbles via hex digits. */
-                static const char hex[] = "0123456789abcdef";
-                /* Concatenated in a single string to fit one printf. */
-                TIKU_BT_PRINTF("%c%c ", hex[(pdu[k] >> 4) & 0xF],
-                                          hex[pdu[k] & 0xF]);
+                txt[n++] = hex[(pdu[k] >> 4) & 0xFU];
+                txt[n++] = hex[pdu[k] & 0xFU];
+                txt[n++] = ' ';
             }
-            TIKU_BT_PRINTF("\n");
+            txt[n] = '\0';
+            TIKU_BT_PRINTF("p13.att: Read Rsp %u B: %s\n",
+                            (unsigned)(len - 1U), txt);
         }
         break;
     case ATT_OP_READ_BY_TYPE_RSP:
@@ -3839,7 +3843,9 @@ static int bt_scan_find(const uint8_t addr[6])
  * caching so callers (the `bt list` shell and tests) don't have to
  * re-reverse. RSSI / name are overwritten on every sighting -- later
  * beacons are more accurate than the first; SCAN_RSP usually carries
- * the long name where ADV_IND only had the short form.
+ * the long name where ADV_IND only had the short form. A full cache
+ * takes a new device in place of its weakest entry, when it is heard
+ * louder: in a busy room the list keeps the nearest devices.
  *
  * @param evt_type   HCI LE Advertising Report event_type
  *                   (0 ADV_IND ... 4 SCAN_RSP)
@@ -3863,9 +3869,19 @@ static void bt_scan_cache_add(uint8_t evt_type, uint8_t addr_type,
 
     idx = bt_scan_find(addr_msb);
     if (idx < 0) {
-        if (bt_state.scan_count >= TIKU_BT_SCAN_MAX) return;
-        idx = (int)bt_state.scan_count;
-        bt_state.scan_count = (uint8_t)(bt_state.scan_count + 1U);
+        if (bt_state.scan_count < TIKU_BT_SCAN_MAX) {
+            idx = (int)bt_state.scan_count;
+            bt_state.scan_count = (uint8_t)(bt_state.scan_count + 1U);
+        } else {
+            uint8_t i;
+            idx = 0;
+            for (i = 1U; i < TIKU_BT_SCAN_MAX; ++i) {
+                if (bt_state.scan[i].rssi_dbm < bt_state.scan[idx].rssi_dbm) {
+                    idx = (int)i;
+                }
+            }
+            if (rssi <= bt_state.scan[idx].rssi_dbm) return;
+        }
         e = &bt_state.scan[idx];
         for (k = 0; k < 6; ++k) e->addr[k] = addr_msb[k];
         e->addr_type = addr_type;
