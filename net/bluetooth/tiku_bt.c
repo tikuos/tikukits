@@ -204,6 +204,10 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define SMP_OP_PAIRING_PUBLIC_KEY       0x0CU
 #define SMP_OP_PAIRING_DHKEY_CHECK      0x0DU
 #define SMP_OP_SECURITY_REQUEST         0x0BU
+#define SMP_OP_IDENTITY_INFO            0x08U
+#define SMP_OP_IDENTITY_ADDR_INFO       0x09U
+#define SMP_OP_SIGNING_INFO             0x0AU
+#define SMP_KEYDIST_ID                  0x02U
 
 #define SMP_ERR_PAIRING_NOT_SUPPORTED   0x05U
 #define SMP_ERR_CONFIRM_VALUE_FAILED    0x04U
@@ -426,8 +430,13 @@ static struct {
         uint8_t  local_nonce[16];   /* Nb (local, peripheral)                */
         uint8_t  ltk[16];
         uint8_t  mackey[16];
-        uint8_t  peer_iocap[3];     /* AuthReq, OOB, IOcap from Pairing Req  */
-        uint8_t  own_iocap[3];      /* what went out in Pairing Response     */
+        /* IO capability, OOB flag, AuthReq as on the wire: f6 takes them
+         * so, the least significant octet first. */
+        uint8_t  peer_iocap[3];     /* the peer's, from its Request/Response */
+        uint8_t  own_iocap[3];      /* ours, as sent                         */
+        uint8_t  own_respkd;        /* keys promised the initiator, to send  */
+        uint8_t  peer_check[16];    /* Ea, when it beats the DHKey           */
+        uint8_t  have_peer_check;   /* 1 while that Ea waits for f5          */
         uint8_t  peer_addr_le[6];   /* LE-order copy of peer addr            */
         uint8_t  peer_addr_type;    /* 0 public, 1 random                    */
         /* The initiator's side (this end is the central): the Pairing
@@ -2241,11 +2250,12 @@ static int bt_smp_f5(const uint8_t W[32],
 /*
  * E = AES-CMAC(W, N1 || N2 || R || IOcap || A1 || A2)
  * where W is the MacKey from f5, R is 16 B (zero for Just Works), and
- * IOcap is the 3-byte block {AuthReq, OOB, IOcap}.
- * Byte-order treatment matches f5: integer fields (W, N1, N2, R, and
- * the 6 address bytes within A1/A2) are swapped to MSB-first; the
- * byte-string fields (addr_type at head of each A-block, IOcap)
- * pass through unchanged. Output is swapped back to LE.
+ * IOcap is AuthReq || OOB || IO capability, AuthReq most significant.
+ * Byte-order treatment matches f5: integer fields (W, N1, N2, R, IOcap
+ * and the 6 address bytes within A1/A2) are swapped to MSB-first, so
+ * IOcap goes in as the Pairing Request/Response carries it; the
+ * addr_type at the head of each A-block passes through. Output is
+ * swapped back to LE.
  */
 
 /**
@@ -2255,7 +2265,7 @@ static int bt_smp_f5(const uint8_t W[32],
  * @param N1     16-byte own-side nonce (this side computing E, LE)
  * @param N2     16-byte peer-side nonce (LE)
  * @param R      16-byte randomiser (zero for Just Works)
- * @param IOcap  3-byte IO Capabilities block in {AuthReq,OOB,IOcap} form
+ * @param IOcap  IO capability, OOB flag, AuthReq, as on the wire
  * @param A1     7-byte address (initiator: addr_type || addr_LE)
  * @param A2     7-byte address (responder: addr_type || addr_LE)
  * @param out    16-byte check value (LE byte order)
@@ -2705,6 +2715,7 @@ static void bt_smp_addrs(uint8_t conn_idx, uint8_t A[7], uint8_t B[7])
 }
 
 static int bt_smp_init_send_ea(uint8_t conn_idx);              /* fwd */
+static void bt_smp_resp_check_ea(uint8_t conn_idx);            /* fwd */
 
 /**
  * Derive MacKey + LTK via f5 once {DHKey, peer_nonce, local_nonce}
@@ -2732,11 +2743,16 @@ static int bt_smp_try_derive_keys(uint8_t conn_idx)
     }
     bt_state.smp[conn_idx].pending_f5 = 0U;
     TIKU_BT_PRINTF("p14.smp: f5 derived MacKey + LTK\n");
-    /* The initiator checks first: its Ea goes out once the keys are in. */
+    /* The initiator checks first: its Ea goes out once the keys are in.
+     * A responder may already hold the initiator's Ea. */
     if (bt_state.smp[conn_idx].initiator
         && bt_smp_init_send_ea(conn_idx) != TIKU_DRV_OK) {
         bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
         return -1;
+    }
+    if (!bt_state.smp[conn_idx].initiator
+        && bt_state.smp[conn_idx].have_peer_check) {
+        bt_smp_resp_check_ea(conn_idx);
     }
     return 0;
 }
@@ -2759,10 +2775,8 @@ static int bt_smp_send_dhkey_check(uint8_t conn_idx)
                       bt_state.conns[conn_idx].info.peer_addr, A_init);
     bt_smp_addr_block(0x00U, bt_state.bd_addr, A_resp);
     /* Eb = f6(MacKey, Nb, Na, 0, IOcapB, B, A): own nonce first per
-     * spec 2.2.8. IOcap in f6 order = {AuthReq, OOB, IOcap}. */
-    IOcap_b[0] = bt_state.smp[conn_idx].own_iocap[2]; /* AuthReq */
-    IOcap_b[1] = bt_state.smp[conn_idx].own_iocap[1]; /* OOB     */
-    IOcap_b[2] = bt_state.smp[conn_idx].own_iocap[0]; /* IOCap   */
+     * spec 2.2.8; IOcapB as on the wire, which f6 turns MSB first. */
+    for (i = 0U; i < 3U; ++i) IOcap_b[i] = bt_state.smp[conn_idx].own_iocap[i];
     rc = bt_smp_f6(bt_state.smp[conn_idx].mackey,
                    Nb, Na, R0, IOcap_b, A_resp, A_init, Eb);
     if (rc != TIKU_DRV_OK) {
@@ -2862,6 +2876,8 @@ static void bt_smp_session_reset(uint8_t conn_idx)
     bt_state.smp[conn_idx].got_response      = 0U;
     bt_state.smp[conn_idx].pka_sent          = 0U;
     bt_state.smp[conn_idx].dhkey_requested   = 0U;
+    bt_state.smp[conn_idx].own_respkd        = 0U;
+    bt_state.smp[conn_idx].have_peer_check   = 0U;
 }
 
 /**
@@ -2975,13 +2991,12 @@ static int bt_smp_init_send_ea(uint8_t conn_idx)
 {
     static const uint8_t R0[16] = {0};
     uint8_t Na[16], Nb[16], A[7], B[7], iocap[3], pdu[17];
+    uint8_t k;
     int     rc;
 
     bt_smp_nonces(conn_idx, Na, Nb);
     bt_smp_addrs(conn_idx, A, B);
-    iocap[0] = bt_state.smp[conn_idx].own_iocap[2];   /* AuthReq */
-    iocap[1] = bt_state.smp[conn_idx].own_iocap[1];   /* OOB     */
-    iocap[2] = bt_state.smp[conn_idx].own_iocap[0];   /* IOCap   */
+    for (k = 0U; k < 3U; ++k) iocap[k] = bt_state.smp[conn_idx].own_iocap[k];
     rc = bt_smp_f6(bt_state.smp[conn_idx].mackey, Na, Nb, R0, iocap, A, B,
                    &pdu[1]);
     if (rc != TIKU_DRV_OK) return rc;
@@ -3124,9 +3139,7 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
         }
         bt_smp_nonces(conn_idx, Na, Nb);
         bt_smp_addrs(conn_idx, A, B);
-        iocap[0] = bt_state.smp[conn_idx].peer_iocap[2];  /* AuthReq */
-        iocap[1] = bt_state.smp[conn_idx].peer_iocap[1];  /* OOB     */
-        iocap[2] = bt_state.smp[conn_idx].peer_iocap[0];  /* IOCap   */
+        for (i = 0U; i < 3U; ++i) iocap[i] = bt_state.smp[conn_idx].peer_iocap[i];
         if (bt_smp_f6(bt_state.smp[conn_idx].mackey, Nb, Na, R0, iocap,
                       B, A, eb) != TIKU_DRV_OK) {
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
@@ -3170,6 +3183,13 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
         bt_smp_session_reset(conn_idx);
         return;
 
+    case SMP_OP_IDENTITY_INFO:
+    case SMP_OP_IDENTITY_ADDR_INFO:
+    case SMP_OP_SIGNING_INFO:
+        /* Keys a responder distributes (none asked): taken, not kept. */
+        TIKU_BT_PRINTF("p14.smp: key 0x%02x from the responder\n", pdu[0]);
+        return;
+
     default:
         break;
     }
@@ -3181,6 +3201,71 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
 /*---------------------------------------------------------------------------*/
 /* SMP main handler                                                          */
 /*---------------------------------------------------------------------------*/
+/**
+ * @brief The responder's check of the initiator's Ea (held in the session)
+ *        under the derived MacKey: Eb back and the bond, or Pairing Failed.
+ */
+static void bt_smp_resp_check_ea(uint8_t conn_idx)
+{
+    static const uint8_t R0[16] = {0};
+    uint8_t Na[16], Nb[16];
+    uint8_t A_init[7], A_resp[7];
+    uint8_t Ea_exp[16];
+    uint8_t i;
+    int     match = 1;
+
+    bt_state.smp[conn_idx].have_peer_check = 0U;
+    for (i = 0U; i < 16U; ++i) Na[i] = bt_state.smp[conn_idx].peer_nonce[i];
+    for (i = 0U; i < 16U; ++i) Nb[i] = bt_state.smp[conn_idx].local_nonce[i];
+    bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
+                      bt_state.conns[conn_idx].info.peer_addr, A_init);
+    bt_smp_addr_block(0x00U, bt_state.bd_addr, A_resp);
+    /* Expected Ea = f6(MacKey, Na, Nb, 0, IOcapA, A_init, A_resp),
+     * IOcapA the initiator's Pairing Request bytes as on the wire. */
+    if (bt_smp_f6(bt_state.smp[conn_idx].mackey, Na, Nb, R0,
+                  bt_state.smp[conn_idx].peer_iocap,
+                  A_init, A_resp, Ea_exp) != TIKU_DRV_OK) {
+        bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+        return;
+    }
+    for (i = 0U; i < 16U; ++i) {
+        if (Ea_exp[i] != bt_state.smp[conn_idx].peer_check[i]) match = 0;
+    }
+    if (!match) {
+        bt_smp_send_failed(conn_idx, SMP_ERR_DHKEY_CHECK_FAILED);
+        return;
+    }
+    /* Peer's Ea is valid. Compute and emit Eb -- spec
+     * requires responder to send DHKey Check in response to
+     * receiving the initiator's DHKey Check. */
+    if (bt_smp_send_dhkey_check(conn_idx) != TIKU_DRV_OK) {
+        bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+        return;
+    }
+    /* Persist bond + wait for LE LTK Request (the chip raises it
+     * once the central issues LL_ENC_REQ on the link). */
+    {
+        tiku_bt_bond_record_t rec;
+        uint8_t k;
+        rec.magic          = TIKU_BT_BOND_MAGIC;
+        rec.peer_addr_type = bt_state.smp[conn_idx].peer_addr_type;
+        /* Bond record stores addr in MSB-first display order
+         * (matches scan / conn API for easy lookup). */
+        for (k = 0U; k < 6U; ++k) {
+            rec.peer_addr[k] =
+                bt_state.conns[conn_idx].info.peer_addr[k];
+        }
+        rec._pad = 0U;
+        for (k = 0U; k < 16U; ++k) {
+            rec.ltk[k] = bt_state.smp[conn_idx].ltk[k];
+        }
+        rec.flags = (uint32_t)SMP_AUTHREQ_SC;    /* SC, no MITM */
+        (void)tiku_bt_bond_save(0U, &rec);
+        TIKU_BT_PRINTF("p14.smp: bond saved slot 0\n");
+    }
+    bt_state.smp[conn_idx].state = SMP_ENCRYPTING;
+}
+
 /**
  * @brief Handle one incoming SMP PDU on L2CAP CID 6
  *
@@ -3221,14 +3306,11 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             return;
         }
         /* Build Pairing Response: IOCap=NoInputNoOutput (0x03),
-         * OOB=0, AuthReq=SC|Bonding, MaxKeySize=16. KeyDist masks
-         * echo what the initiator (phone) requested in the Pairing
-         * Request, ANDed with what this stack can practically send --
-         * today none, but echoing the bits lets the phone consider
-         * the bond legitimate. Phones disconnect right after Pairing
-         * Response if 0x00 comes back here (interpretation: "this peer
-         * has nothing to offer"). Mask to IdKey + SignKey only --
-         * EncKey is legacy and irrelevant under LE Secure Connections. */
+         * OOB=0, AuthReq=SC|Bonding, MaxKeySize=16. Of the keys the
+         * initiator asks to swap, only identity keys: it may send its
+         * IRK and identity address, and this end sends its own once the
+         * link is encrypted (see the Encryption Change handler). EncKey
+         * is legacy and SignKey unused, so neither is offered. */
         {
             uint8_t rsp[7];
             uint8_t peer_initkd = (len >= 6U) ? pdu[5] : 0U;
@@ -3238,8 +3320,8 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             rsp[2] = 0x00U;                           /* OOB no           */
             rsp[3] = (uint8_t)(SMP_AUTHREQ_SC | 0x01U); /* SC + Bonding   */
             rsp[4] = 16U;                             /* MaxKeySize       */
-            rsp[5] = (uint8_t)(peer_initkd & 0x06U);  /* IdKey + SignKey  */
-            rsp[6] = (uint8_t)(peer_respkd & 0x06U);
+            rsp[5] = (uint8_t)(peer_initkd & SMP_KEYDIST_ID);
+            rsp[6] = (uint8_t)(peer_respkd & SMP_KEYDIST_ID);
             bt_state.smp[conn_idx].own_iocap[0] = rsp[1];
             bt_state.smp[conn_idx].own_iocap[1] = rsp[2];
             bt_state.smp[conn_idx].own_iocap[2] = rsp[3];
@@ -3262,6 +3344,8 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             return;
         }
         bt_smp_session_reset(conn_idx);           /* responder's side */
+        bt_state.smp[conn_idx].own_respkd =
+            (uint8_t)(((len >= 7U) ? pdu[6] : 0U) & SMP_KEYDIST_ID);
         bt_state.smp[conn_idx].state             = SMP_WAITING_PUBKEY;
         if (bt_smp_request_local_pubkey() != TIKU_DRV_OK) {
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
@@ -3335,10 +3419,6 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
     }
 
     case SMP_OP_PAIRING_DHKEY_CHECK: {
-        uint8_t Na[16], Nb[16];
-        uint8_t A_init[7], A_resp[7];
-        uint8_t Ea_exp[16];
-        int     rc;
         uint8_t i;
         if (len < 17U) {
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
@@ -3348,66 +3428,17 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
         }
-        for (i = 0U; i < 16U; ++i) Na[i] = bt_state.smp[conn_idx].peer_nonce[i];
-        for (i = 0U; i < 16U; ++i) Nb[i] = bt_state.smp[conn_idx].local_nonce[i];
-        bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
-                          bt_state.conns[conn_idx].info.peer_addr, A_init);
-        bt_smp_addr_block(0x00U, bt_state.bd_addr, A_resp);
-        /* Expected Ea = f6(MacKey, Na, Nb, 0, IOcapA, A_init, A_resp).
-         * IOcapA is the peer's (initiator) IO cap from Pairing Request,
-         * BUT in f6 order: AuthReq || OOB || IOCap. */
-        {
-            static const uint8_t R0[16] = {0};
-            uint8_t IOcap_a[3];
-            IOcap_a[0] = bt_state.smp[conn_idx].peer_iocap[2]; /* AuthReq */
-            IOcap_a[1] = bt_state.smp[conn_idx].peer_iocap[1]; /* OOB     */
-            IOcap_a[2] = bt_state.smp[conn_idx].peer_iocap[0]; /* IOCap   */
-            rc = bt_smp_f6(bt_state.smp[conn_idx].mackey,
-                           Na, Nb, R0, IOcap_a, A_init, A_resp, Ea_exp);
+        for (i = 0U; i < 16U; ++i) {
+            bt_state.smp[conn_idx].peer_check[i] = pdu[1U + i];
         }
-        if (rc != TIKU_DRV_OK) {
-            bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
-            return;
+        bt_state.smp[conn_idx].have_peer_check = 1U;
+        /* A quick initiator's Ea can beat a slow controller's DHKey (the
+         * EM9305 under a Mac): held, and checked once f5 has run. */
+        if (bt_state.smp[conn_idx].pending_f5) {
+            TIKU_BT_PRINTF("p14.smp: DH Check Ea before the DHKey, held\n");
+            break;
         }
-        {
-            int match = 1;
-            for (i = 0U; i < 16U; ++i) {
-                if (Ea_exp[i] != pdu[1U + i]) match = 0;
-            }
-            if (!match) {
-                bt_smp_send_failed(conn_idx, SMP_ERR_DHKEY_CHECK_FAILED);
-                return;
-            }
-        }
-        /* Peer's Ea is valid. Compute and emit Eb -- spec
-         * requires responder to send DHKey Check in response to
-         * receiving the initiator's DHKey Check. */
-        if (bt_smp_send_dhkey_check(conn_idx) != TIKU_DRV_OK) {
-            bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
-            return;
-        }
-        /* Persist bond + wait for LE LTK Request (the chip raises it
-         * once the central issues LL_ENC_REQ on the link). */
-        {
-            tiku_bt_bond_record_t rec;
-            uint8_t k;
-            rec.magic          = TIKU_BT_BOND_MAGIC;
-            rec.peer_addr_type = bt_state.smp[conn_idx].peer_addr_type;
-            /* Bond record stores addr in MSB-first display order
-             * (matches scan / conn API for easy lookup). */
-            for (k = 0U; k < 6U; ++k) {
-                rec.peer_addr[k] =
-                    bt_state.conns[conn_idx].info.peer_addr[k];
-            }
-            rec._pad = 0U;
-            for (k = 0U; k < 16U; ++k) {
-                rec.ltk[k] = bt_state.smp[conn_idx].ltk[k];
-            }
-            rec.flags = (uint32_t)SMP_AUTHREQ_SC;    /* SC, no MITM */
-            (void)tiku_bt_bond_save(0U, &rec);
-            TIKU_BT_PRINTF("p14.smp: bond saved slot 0\n");
-        }
-        bt_state.smp[conn_idx].state = SMP_ENCRYPTING;
+        bt_smp_resp_check_ea(conn_idx);
         break;
     }
 
@@ -3431,6 +3462,14 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
          * doing nothing here (the chip drives the encryption restart
          * via LE LTK Request when the central asks). */
         TIKU_BT_PRINTF("p14.smp: Security Request received (ignored)\n");
+        break;
+
+    case SMP_OP_IDENTITY_INFO:
+    case SMP_OP_IDENTITY_ADDR_INFO:
+    case SMP_OP_SIGNING_INFO:
+        /* Keys the initiator distributes after encryption: taken, not
+         * kept (the bond is by the address the link used). */
+        TIKU_BT_PRINTF("p14.smp: key 0x%02x from the initiator\n", pdu[0]);
         break;
 
     default:
@@ -4189,6 +4228,21 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
         if (idx >= 0 && status == 0x00U && enabled != 0U) {
             bt_state.smp[idx].state = SMP_ENCRYPTED;
             TIKU_BT_PRINTF("p14.smp: *** link encrypted ***\n");
+            /* The identity keys a fresh pairing promised, now that the
+             * link is encrypted: an all-zero IRK (this end never uses a
+             * private address) and the public address. */
+            if ((bt_state.smp[idx].own_respkd & SMP_KEYDIST_ID) != 0U) {
+                uint8_t key[17] = {0};
+                uint8_t k;
+                key[0] = SMP_OP_IDENTITY_INFO;
+                bt_smp_send((uint8_t)idx, key, sizeof key);
+                key[0] = SMP_OP_IDENTITY_ADDR_INFO;
+                key[1] = 0x00U;                         /* public */
+                for (k = 0U; k < 6U; ++k) key[2U + k] = bt_state.bd_addr[5U - k];
+                bt_smp_send((uint8_t)idx, key, 8U);
+                bt_state.smp[idx].own_respkd = 0U;
+                TIKU_BT_PRINTF("p14.smp: identity keys sent\n");
+            }
         }
         return;
     }
