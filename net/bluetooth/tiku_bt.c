@@ -16,10 +16,11 @@
  * ^
  * |  tiku_bt_transport_t vtable (send / recv / is_ready)
  * v
- * driver-provided transport    e.g. drivers/wifi/cyw43/bt_transport.c
- * (BTSDIO over CYW43439 backplane),
- * or a UART-HCI driver for Nordic /
- * ESP32 / TI parts.
+ * driver-provided transport    the CYW43439's BTSDIO
+ * (drivers/wifi/cyw43/bt_transport.c),
+ * the ESP32-C61's in-memory HCI
+ * (drivers/wifi/esp/esp_ble.c) or the
+ * EM9305's SPI-HCI (arch/ambiq/tiku_em9305.c).
  *
  * This file owns everything above the transport: the HCI command/event
  * machinery, L2CAP channel demux (ATT on CID 4, SMP on CID 6), the ATT
@@ -41,6 +42,12 @@
 #include <kernel/process/tiku_process.h>
 #include <kernel/timers/tiku_clock.h>
 #include <kernel/timers/tiku_timer.h>
+/* SMP crypto for a controller without its own (TIKU_BT_SW_CRYPTO): AES-128
+ * for the key functions, P-256 for the key pair and the DHKey. */
+#if (TIKU_BT_SW_CRYPTO + 0)
+#include <tikukits/crypto/aes128/tiku_kits_crypto_aes128.h>
+#include <tikukits/crypto/p256/tiku_kits_crypto_p256.h>
+#endif
 
 #if PLATFORM_RP2350
 /* TRNG access for Phase 14 SMP work (ECDH ephemeral keys, Pairing
@@ -50,6 +57,8 @@
 #include <arch/arm-rp2350/tiku_trng_arch.h>
 #elif PLATFORM_ESP32C61
 #include <arch/esp32c61/tiku_trng_arch.h>
+#elif PLATFORM_AMBIQ
+#include <arch/ambiq/tiku_trng_arch.h>
 #endif
 
 #ifndef TIKU_BT_PRINTF
@@ -66,6 +75,9 @@
  * events posted via bt_wake_runner() re-dispatch it after state
  * flips (scan on/off, advertise on/off, connect/disconnect). */
 TIKU_PROCESS(tiku_bt_runner, "bt");
+static void bt_wake_runner(void);                          /* fwd */
+static int  bt_advertise_begin(const char *name, uint8_t adv_type,
+                               const uint8_t *uuid128);    /* fwd */
 
 /*---------------------------------------------------------------------------*/
 /* Transport registry (a driver registers its vtable via                     */
@@ -103,8 +115,12 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define HCI_OP_LE_SET_EVENT_MASK        0x2001U
 #define HCI_OP_READ_LOCAL_VERSION       0x1001U
 #define HCI_OP_READ_BD_ADDR             0x1009U
+#define HCI_OP_READ_BUFFER_SIZE         0x1005U
+#define HCI_OP_LE_READ_BUFFER_SIZE      0x2002U
 #define HCI_OP_LE_SET_ADV_PARAMS        0x2006U
+#define HCI_OP_LE_READ_ADV_TX_POWER     0x2007U
 #define HCI_OP_LE_SET_ADV_DATA          0x2008U
+#define HCI_OP_LE_SET_SCAN_RSP_DATA     0x2009U
 #define HCI_OP_LE_SET_ADV_ENABLE        0x200AU
 #define HCI_OP_LE_SET_SCAN_PARAMS       0x200BU
 #define HCI_OP_LE_SET_SCAN_ENABLE       0x200CU
@@ -118,10 +134,13 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define HCI_OP_LE_LTK_REQUEST_NEGATIVE_REPLY    0x201BU
 #define HCI_OP_LE_READ_LOCAL_P256_PUBKEY        0x2025U
 #define HCI_OP_LE_GENERATE_DHKEY_V2             0x205EU
+#define HCI_OP_LE_GENERATE_DHKEY_V1             0x2026U
+#define HCI_OP_LE_ENABLE_ENCRYPTION             0x2019U
 
 /* HCI Event codes. */
 #define HCI_EVT_DISCONNECTION_COMPLETE  0x05U
 #define HCI_EVT_ENCRYPTION_CHANGE       0x08U
+#define HCI_EVT_NUM_COMPLETED_PACKETS   0x13U
 #define HCI_EVT_COMMAND_COMPLETE        0x0EU
 #define HCI_EVT_COMMAND_STATUS          0x0FU
 #define HCI_EVT_LE_META                 0x3EU
@@ -135,6 +154,8 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 /* LE Meta subevent codes (event[3] in an HCI_EVT_LE_META frame). */
 #define LE_SUBEVT_CONNECTION_COMPLETE   0x01U
 #define LE_SUBEVT_ADVERTISING_REPORT    0x02U
+#define LE_SUBEVT_DATA_LENGTH_CHANGE    0x07U
+#define LE_SUBEVT_ENH_CONNECTION_COMPLETE 0x0AU
 /* Phase 14: encryption + P-256 crypto offload async results. */
 #define LE_SUBEVT_LONG_TERM_KEY_REQUEST         0x05U
 #define LE_SUBEVT_READ_LOCAL_P256_PUBKEY_CPL    0x08U
@@ -185,6 +206,7 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define SMP_OP_SECURITY_REQUEST         0x0BU
 
 #define SMP_ERR_PAIRING_NOT_SUPPORTED   0x05U
+#define SMP_ERR_CONFIRM_VALUE_FAILED    0x04U
 #define SMP_ERR_DHKEY_CHECK_FAILED      0x0BU
 #define SMP_ERR_UNSPECIFIED_REASON      0x08U
 
@@ -277,6 +299,28 @@ static uint8_t       bt_arena_buf[BT_ARENA_BYTES] __attribute__((aligned(4)));
 static tiku_arena_t  bt_arena;
 static uint8_t      *bt_scratch_cmd;
 
+/* The largest HCI packet a controller sends: an event (3 + 255 bytes) or an
+ * ACL packet of up to a 251-byte link-layer payload. */
+#define BT_PKT_MAX            260U
+
+/* The largest ATT PDU the stack sends or takes, and the L2CAP PDU it rides
+ * in: one 251-byte link-layer payload once the data length is extended. */
+#define BT_ATT_MTU_MAX        247U
+#define BT_L2CAP_MAX          (4U + BT_ATT_MTU_MAX)
+
+/* LE's smallest link-layer payload, the length every link starts with. */
+#define BT_LL_OCTETS_MIN      27U
+
+/*
+ * Packets come in through one of these by nesting depth.  A handler that
+ * waits on the controller (a command's reply, a free ACL buffer) takes the
+ * packets that arrive meanwhile into the next buffer, so the one it is
+ * reading stays intact.  The stack nests at most this deep.
+ */
+#define BT_RX_DEPTH           3U
+static uint8_t bt_rx_buf[BT_RX_DEPTH][BT_PKT_MAX];
+static uint8_t bt_rx_depth;
+
 static struct {
     uint8_t  ready;         /* 1 after tiku_bt_init() completes */
 
@@ -294,6 +338,10 @@ static struct {
     uint8_t  adv_name_len;
     char     adv_name[TIKU_BT_ADV_NAME_MAX];
 
+    /* A central's LE Create Connection in flight: its Connection
+     * Complete (or failure) is still to come. */
+    uint8_t                    connecting;
+
     /* Phase 8 — GAP scanning state + dedup'd results cache. */
     uint8_t                    scanning;
     uint8_t                    scan_count;
@@ -306,7 +354,23 @@ static struct {
         uint8_t                    in_use;
         tiku_bt_connection_t info;
         uint16_t                   att_mtu;
+        /* The payload the link layer sends per PDU (Data Length Change):
+         * every outgoing ACL fragment fits one, since the EM9305 does not
+         * split a packet the PDU cannot carry. */
+        uint16_t                   tx_octets;
+        /* An L2CAP PDU arriving in ACL fragments: its length (0: none
+         * open) and the bytes in so far. */
+        uint16_t                   rx_need;
+        uint16_t                   rx_len;
+        uint8_t                    rx_buf[BT_L2CAP_MAX];
     } conns[TIKU_BT_CONN_MAX];
+
+    /* ACL flow control: the payload one HCI ACL packet carries and the
+     * packets the controller buffers (0: unknown, no limit), and how many it
+     * holds unsent; Number Of Completed Packets hands them back. */
+    uint16_t  acl_len;
+    uint8_t   acl_num;
+    uint8_t   acl_inflight;
 
     /* Phase 11 — user-registered services. user_svc_count grows on
      * tiku_bt_register_service() and is capped at
@@ -319,17 +383,28 @@ static struct {
      * bit 0 = notify, bit 1 = indicate) is conceptually per
      * {char, connection} but the legacy GATT model keeps it as
      * per-char because most clients only subscribe on one link.
-     * cccd_char_uuid[i] identifies which char each slot belongs to;
+     * cccd_char[i] is the characteristic each slot belongs to;
      * cccd_value[i] holds the current bits. */
     uint8_t   cccd_count;
-    uint16_t  cccd_char_uuid[TIKU_BT_CHAR_MAX];
+    const tiku_bt_char_t *cccd_char[TIKU_BT_CHAR_MAX];
     uint16_t  cccd_value[TIKU_BT_CHAR_MAX];
 
-    /* Per-char Characteristic Declaration value scratch (5 bytes:
-     * props + value_handle_lo + value_handle_hi + uuid_lo + uuid_hi).
+    /* Per-char Characteristic Declaration value scratch: properties,
+     * value handle (2) and the characteristic's UUID (2 or 16 bytes).
      * Filled at snapshot time because value_handle depends on the
      * order of registration; can't be a static const. */
-    uint8_t   char_decl_buf[TIKU_BT_CHAR_MAX][5];
+    uint8_t   char_decl_buf[TIKU_BT_CHAR_MAX][19];
+
+    /* Advertising as last started, for the re-advertise after a link
+     * drops: ADV_IND or ADV_NONCONN_IND, and the service UUID the scan
+     * response lists (NULL: none). */
+    uint8_t        adv_type;
+    const uint8_t *adv_uuid128;
+    uint8_t        adv_wanted;   /* 1 from a start until a stop */
+
+    /* Every advertising report, as heard, for a module with its own
+     * table (the broadcast facade's observer). */
+    tiku_bt_adv_hook_t adv_hook;
 
     /* Phase 14 — per-connection SMP session state (one parallel slot
      * per conns[] slot). Lives outside conns[] so the bookkeeping is
@@ -355,7 +430,21 @@ static struct {
         uint8_t  own_iocap[3];      /* what went out in Pairing Response     */
         uint8_t  peer_addr_le[6];   /* LE-order copy of peer addr            */
         uint8_t  peer_addr_type;    /* 0 public, 1 random                    */
+        /* The initiator's side (this end is the central): the Pairing
+         * Response is in, the local key sent, the peer's confirm Cb. */
+        uint8_t  initiator;
+        uint8_t  got_response;
+        uint8_t  pka_sent;
+        uint8_t  dhkey_requested;   /* 1 once the DHKey is asked for */
+        uint8_t  peer_confirm[16];
     } smp[TIKU_BT_CONN_MAX];
+
+    /* Crypto the controller lacks, done here instead (a build with
+     * TIKU_BT_SW_CRYPTO): AES-128 (it has no LE Encrypt) and P-256 (no LE
+     * Read Local P-256 Public Key), the latter found out at the first
+     * pairing. */
+    uint8_t  sw_aes;
+    uint8_t  sw_p256;
 } bt_state;
 
 /*---------------------------------------------------------------------------*/
@@ -422,12 +511,59 @@ static int bt_any_connection(void)
 /*---------------------------------------------------------------------------*/
 
 /*
- * Builds the HCI ACL header (type 0x02 + 12-bit handle + flags +
- * total length) and the L2CAP header (length + CID), then hands the
- * resulting packet to tiku_bt_send. PB flag is set to 0b10
- * (first automatically-flushable packet) which is the only value
- * permitted on LE-U links per Core Spec Vol 4 Part E 5.4.2.
+ * An L2CAP PDU goes out as one or more HCI ACL packets, each at most what
+ * the controller's ACL buffer and the link layer's PDU hold.  The first
+ * carries PB=00 (the start of a non-flushable PDU, the start value a host
+ * sends on LE-U), the rest PB=01 (continuing).  Each takes one of the
+ * controller's ACL buffers; with none free the stack waits for Number Of
+ * Completed Packets.
  */
+
+static int  bt_rx_one(uint8_t wait_evt, uint16_t wait_op, uint8_t *out,
+                      uint16_t out_max, int *out_n);       /* fwd */
+static void bt_transport_wait(uint16_t ms);                /* fwd */
+
+/**
+ * @brief The largest ACL payload one HCI packet carries on @p conn_idx's
+ *        link: the link layer's PDU, within the controller's ACL buffer.
+ */
+static uint16_t bt_acl_frag_max(int conn_idx)
+{
+    uint16_t m = BT_LL_OCTETS_MIN;
+
+    if (conn_idx >= 0 && bt_state.conns[conn_idx].tx_octets > m) {
+        m = bt_state.conns[conn_idx].tx_octets;
+    }
+    if (bt_state.acl_len != 0U && bt_state.acl_len < m) {
+        m = bt_state.acl_len;
+    }
+    return m;
+}
+
+/**
+ * @brief Wait for a free ACL buffer in the controller, taking its packets
+ *        meanwhile.
+ *
+ * A controller that frees none in about a second is taken to have lost the
+ * events, and the count starts again rather than the link stalling.
+ */
+static void bt_acl_credit_wait(void)
+{
+    unsigned polls = 0U;
+
+    while (bt_state.acl_num != 0U
+           && bt_state.acl_inflight >= bt_state.acl_num) {
+        if (polls >= 200U) {
+            TIKU_BT_PRINTF("acl: no buffer freed in 1 s, count reset\n");
+            bt_state.acl_inflight = 0U;
+            return;
+        }
+        if (bt_rx_one(0U, 0U, (uint8_t *)0, 0U, (int *)0) <= 0) {
+            bt_transport_wait(5U);
+        }
+        ++polls;
+    }
+}
 
 /**
  * @brief Send one L2CAP PDU over the named connection
@@ -435,38 +571,50 @@ static int bt_any_connection(void)
  * @param handle   Chip-assigned connection handle (12 bits)
  * @param cid      L2CAP channel ID (e.g. L2CAP_CID_ATT)
  * @param payload  Bytes of the L2CAP payload (the ATT/SMP PDU)
- * @param len      Payload length in bytes
+ * @param len      Payload length in bytes, at most BT_ATT_MTU_MAX
  * @return TIKU_DRV_OK on send success.
  */
 static int bt_send_acl(uint16_t handle, uint16_t cid,
                        const uint8_t *payload, uint16_t len)
 {
-    /* Header layout (9 bytes before payload):
-     *   [0]   0x02                       HCI ACL type
-     *   [1..2] handle(12) | PB=10 | BC=00  little-endian
-     *   [3..4] HCI data total length      little-endian (= 4 + len)
-     *   [5..6] L2CAP payload length       little-endian (= len)
-     *   [7..8] L2CAP CID                  little-endian
-     *   [9..]  payload
-     */
-    {
-        uint8_t  pkt[260];
-        uint16_t hl = (uint16_t)((handle & 0x0FFFU) | (0x2U << 12)); /* PB=10 */
-        uint16_t total = (uint16_t)(4U + len);
-        uint16_t i;
-        if ((uint32_t)9U + len > sizeof pkt) return TIKU_DRV_ERR_INVALID;
+    /* Each packet: [0] 0x02 (ACL), [1..2] handle(12) | PB(2) | BC(2),
+     * [3..4] its data length, [5..] the next bytes of the L2CAP PDU, which
+     * is length(2) + CID(2) + payload. */
+    uint8_t  pkt[5U + BT_L2CAP_MAX];
+    uint8_t  hdr[4];
+    uint16_t total = (uint16_t)(4U + len);
+    uint16_t frag  = bt_acl_frag_max(bt_conn_find(handle));
+    uint16_t off   = 0U;
+
+    if (len > BT_ATT_MTU_MAX) return TIKU_DRV_ERR_INVALID;
+    hdr[0] = (uint8_t)(len & 0xFFU);
+    hdr[1] = (uint8_t)((len >> 8) & 0xFFU);
+    hdr[2] = (uint8_t)(cid & 0xFFU);
+    hdr[3] = (uint8_t)((cid >> 8) & 0xFFU);
+    while (off < total) {
+        uint16_t n  = (uint16_t)(total - off);
+        uint16_t hf = (uint16_t)(handle & 0x0FFFU);
+        uint16_t k;
+        int      rc;
+
+        if (n > frag) n = frag;
+        if (off != 0U) hf = (uint16_t)(hf | (0x1U << 12));   /* PB=01 */
         pkt[0] = HCI_PKT_TYPE_ACL;
-        pkt[1] = (uint8_t)(hl & 0xFFU);
-        pkt[2] = (uint8_t)((hl >> 8) & 0xFFU);
-        pkt[3] = (uint8_t)(total & 0xFFU);
-        pkt[4] = (uint8_t)((total >> 8) & 0xFFU);
-        pkt[5] = (uint8_t)(len & 0xFFU);
-        pkt[6] = (uint8_t)((len >> 8) & 0xFFU);
-        pkt[7] = (uint8_t)(cid & 0xFFU);
-        pkt[8] = (uint8_t)((cid >> 8) & 0xFFU);
-        for (i = 0U; i < len; ++i) pkt[9U + i] = payload[i];
-        return tiku_bt_send(pkt, (uint16_t)(9U + len));
+        pkt[1] = (uint8_t)(hf & 0xFFU);
+        pkt[2] = (uint8_t)((hf >> 8) & 0xFFU);
+        pkt[3] = (uint8_t)(n & 0xFFU);
+        pkt[4] = (uint8_t)((n >> 8) & 0xFFU);
+        for (k = 0U; k < n; ++k) {
+            uint16_t at = (uint16_t)(off + k);
+            pkt[5U + k] = (at < 4U) ? hdr[at] : payload[at - 4U];
+        }
+        bt_acl_credit_wait();
+        rc = tiku_bt_send(pkt, (uint16_t)(5U + n));
+        if (rc != TIKU_DRV_OK) return rc;
+        if (bt_state.acl_num != 0U) bt_state.acl_inflight++;
+        off = (uint16_t)(off + n);
     }
+    return TIKU_DRV_OK;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -509,7 +657,8 @@ static int bt_send_acl(uint16_t handle, uint16_t cid,
  * the 2 bytes; write updates them)
  * Read/write dispatch in bt_att_handle_read / bt_att_handle_write
  * picks the active source by checking pointers in priority order:
- * cccd_ref → char_ref → static value.
+ * cccd_ref → char_ref → static value.  An attribute's type is the
+ * 16-bit @p uuid, or @p uuid128 when that is set.
  */
 
 /**
@@ -518,11 +667,59 @@ static int bt_send_acl(uint16_t handle, uint16_t cid,
 typedef struct {
     uint16_t                          handle;
     uint16_t                          uuid;
+    const uint8_t                    *uuid128;
     const uint8_t                    *value;
     uint8_t                           value_len;
     const tiku_bt_char_t       *char_ref;
     uint16_t                         *cccd_ref;
 } bt_att_entry_t;
+
+/* The snapshot the request handlers share.  Each reads it and replies
+ * last, so a request handled while one waits to send rebuilds it the
+ * same way without harm. */
+static bt_att_entry_t bt_att_table[ATT_HANDLE_MAX];
+
+/* The Bluetooth Base UUID, little-endian: the 16-bit UUID xxxx is
+ * 0000xxxx-0000-1000-8000-00805F9B34FB, its bytes at [12] and [13]. */
+static const uint8_t bt_uuid_base[16] = {
+    0xFBU, 0x34U, 0x9BU, 0x5FU, 0x80U, 0x00U, 0x00U, 0x80U,
+    0x00U, 0x10U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U
+};
+
+/** @brief Byte @p k (0..15) of @p e's type as a 128-bit UUID. */
+static uint8_t bt_att_type_byte(const bt_att_entry_t *e, uint8_t k)
+{
+    if (e->uuid128 != (const uint8_t *)0) return e->uuid128[k];
+    if (k == 12U) return (uint8_t)(e->uuid & 0xFFU);
+    if (k == 13U) return (uint8_t)((e->uuid >> 8) & 0xFFU);
+    return bt_uuid_base[k];
+}
+
+/**
+ * @brief 1 when attribute @p e has the type @p t, given as a 16-bit UUID
+ *        (@p tlen 2) or a 128-bit one (@p tlen 16), little-endian.
+ */
+static int bt_att_type_is(const bt_att_entry_t *e, const uint8_t *t,
+                          uint16_t tlen)
+{
+    uint8_t k;
+
+    if (tlen == 2U && e->uuid128 == (const uint8_t *)0) {
+        return e->uuid == (uint16_t)(t[0] | ((uint16_t)t[1] << 8));
+    }
+    for (k = 0U; k < 16U; ++k) {
+        uint8_t want;
+        if (tlen == 16U) {
+            want = t[k];
+        } else if (tlen == 2U) {
+            want = (k == 12U) ? t[0] : (k == 13U) ? t[1] : bt_uuid_base[k];
+        } else {
+            return 0;
+        }
+        if (bt_att_type_byte(e, k) != want) return 0;
+    }
+    return 1;
+}
 
 /* Value payloads for the static (non-name) attributes. The two
  * Characteristic Declarations encode {properties, value_handle, char_uuid}. */
@@ -540,19 +737,19 @@ static const uint8_t att_val_char_appear[5] = {
     0x01U, 0x2AU,            /* char UUID    0x2A01 LE */
 };
 
-/** Find or assign the CCCD slot for @p char_uuid. Returns -1 if the
- *  pool is exhausted. CCCD slots are created lazily on the first
- *  snapshot that sees a notify-capable char with this UUID. */
-static int bt_cccd_slot_for(uint16_t char_uuid)
+/** Find or assign the CCCD slot for characteristic @p c. Returns -1 if
+ *  the pool is exhausted. CCCD slots are created lazily on the first
+ *  snapshot that sees a notify-capable char. */
+static int bt_cccd_slot_for(const tiku_bt_char_t *c)
 {
     uint8_t i;
     for (i = 0U; i < bt_state.cccd_count; ++i) {
-        if (bt_state.cccd_char_uuid[i] == char_uuid) return (int)i;
+        if (bt_state.cccd_char[i] == c) return (int)i;
     }
     if (bt_state.cccd_count >= TIKU_BT_CHAR_MAX) return -1;
     i = bt_state.cccd_count;
-    bt_state.cccd_char_uuid[i] = char_uuid;
-    bt_state.cccd_value[i]     = 0U;
+    bt_state.cccd_char[i]  = c;
+    bt_state.cccd_value[i] = 0U;
     bt_state.cccd_count = (uint8_t)(bt_state.cccd_count + 1U);
     return (int)i;
 }
@@ -564,6 +761,7 @@ static void bt_att_set_static(bt_att_entry_t *e, uint16_t handle,
 {
     e->handle    = handle;
     e->uuid      = uuid;
+    e->uuid128   = (const uint8_t *)0;
     e->value     = val;
     e->value_len = len;
     e->char_ref  = (const tiku_bt_char_t *)0;
@@ -575,9 +773,9 @@ static void bt_att_set_static(bt_att_entry_t *e, uint16_t handle,
  * GAP service with Device Name + Appearance
  * GATT stub service (Primary Service Decl only)
  * Then for each registered user service:
- * Primary Service Decl
+ * Primary Service Decl (its UUID: 2 bytes, or the 16 of a 128-bit one)
  * For each characteristic:
- * Char Declaration (5-byte value into bt_state.char_decl_buf[])
+ * Char Declaration (5- or 19-byte value in bt_state.char_decl_buf[])
  * Char Value       (refs char def for callbacks / static)
  * If NOTIFY/INDICATE in properties:
  * CCCD attribute (refs bt_state.cccd_value[slot])
@@ -627,38 +825,51 @@ static uint8_t bt_att_snapshot(bt_att_entry_t *out)
     for (svc = 0U; svc < bt_state.user_svc_count; ++svc) {
         const tiku_bt_service_t *s = bt_state.user_svc[svc];
         uint8_t  ch;
-        /* Primary Service Decl: value = service UUID (2 bytes LE).
-         * The UUID bytes are stored inline in a slot in char_decl_buf
-         * (any spare 2 bytes will do; this takes the high 2 of the next
-         * available slot since char_decl values are 5 bytes wide and
-         * a service decl only needs 2). */
-        if (char_buf_slot >= TIKU_BT_CHAR_MAX) break;
-        bt_state.char_decl_buf[char_buf_slot][0] = (uint8_t)(s->uuid & 0xFFU);
-        bt_state.char_decl_buf[char_buf_slot][1] =
-            (uint8_t)((s->uuid >> 8) & 0xFFU);
-        bt_att_set_static(&out[n++], h++, UUID_PRIMARY_SERVICE,
-                          &bt_state.char_decl_buf[char_buf_slot][0], 2U);
+        /* Primary Service Decl: value = the service UUID, little-endian.
+         * A 16-bit one is copied into a char_decl_buf slot; a 128-bit
+         * one is the caller's (static) bytes, and its slot stays unused
+         * so the limit counts services the same either way. */
+        if (char_buf_slot >= TIKU_BT_CHAR_MAX || n >= ATT_HANDLE_MAX) break;
+        if (s->uuid128 != (const uint8_t *)0) {
+            bt_att_set_static(&out[n++], h++, UUID_PRIMARY_SERVICE,
+                              s->uuid128, 16U);
+        } else {
+            bt_state.char_decl_buf[char_buf_slot][0] =
+                (uint8_t)(s->uuid & 0xFFU);
+            bt_state.char_decl_buf[char_buf_slot][1] =
+                (uint8_t)((s->uuid >> 8) & 0xFFU);
+            bt_att_set_static(&out[n++], h++, UUID_PRIMARY_SERVICE,
+                              &bt_state.char_decl_buf[char_buf_slot][0], 2U);
+        }
         ++char_buf_slot;
 
         for (ch = 0U; ch < s->char_count && n + 3U <= ATT_HANDLE_MAX; ++ch) {
             const tiku_bt_char_t *c = &s->chars[ch];
             uint16_t value_handle = (uint16_t)(h + 1U);
             uint8_t *decl_bytes;
+            uint8_t  decl_len = 5U;
             if (char_buf_slot >= TIKU_BT_CHAR_MAX) break;
             decl_bytes = bt_state.char_decl_buf[char_buf_slot++];
             decl_bytes[0] = c->properties;
             decl_bytes[1] = (uint8_t)(value_handle & 0xFFU);
             decl_bytes[2] = (uint8_t)((value_handle >> 8) & 0xFFU);
-            decl_bytes[3] = (uint8_t)(c->uuid & 0xFFU);
-            decl_bytes[4] = (uint8_t)((c->uuid >> 8) & 0xFFU);
+            if (c->uuid128 != (const uint8_t *)0) {
+                uint8_t k;
+                for (k = 0U; k < 16U; ++k) decl_bytes[3U + k] = c->uuid128[k];
+                decl_len = 19U;
+            } else {
+                decl_bytes[3] = (uint8_t)(c->uuid & 0xFFU);
+                decl_bytes[4] = (uint8_t)((c->uuid >> 8) & 0xFFU);
+            }
             /* Char Decl attribute. */
             bt_att_set_static(&out[n], h++, UUID_CHARACTERISTIC,
-                              decl_bytes, 5U);
+                              decl_bytes, decl_len);
             ++n;
             /* Char Value attribute. Static value used as fallback in
              * the read handler when on_read is NULL. */
             out[n].handle    = h++;
             out[n].uuid      = c->uuid;
+            out[n].uuid128   = c->uuid128;
             out[n].value     = c->static_value;
             out[n].value_len = (uint8_t)c->static_value_len;
             out[n].char_ref  = c;
@@ -668,10 +879,11 @@ static uint8_t bt_att_snapshot(bt_att_entry_t *out)
             if ((c->properties &
                  (TIKU_BT_PROP_NOTIFY |
                   TIKU_BT_PROP_INDICATE)) != 0U) {
-                int slot = bt_cccd_slot_for(c->uuid);
+                int slot = bt_cccd_slot_for(c);
                 if (slot >= 0) {
                     out[n].handle    = h++;
                     out[n].uuid      = UUID_CCCD;
+                    out[n].uuid128   = (const uint8_t *)0;
                     out[n].value     = (const uint8_t *)
                                          &bt_state.cccd_value[slot];
                     out[n].value_len = 2U;
@@ -685,19 +897,41 @@ static uint8_t bt_att_snapshot(bt_att_entry_t *out)
     return n;
 }
 
-/** Find the Char Value attribute for a given char UUID. Returns -1
- *  if not present in the snapshot. */
+/** Find the Char Value attribute of characteristic @p c. Returns -1 if
+ *  it is not in the snapshot. */
+static int bt_att_find_char(const bt_att_entry_t *table, uint8_t n,
+                            const tiku_bt_char_t *c)
+{
+    uint8_t i;
+    for (i = 0U; i < n; ++i) {
+        if (table[i].char_ref == c) return (int)i;
+    }
+    return -1;
+}
+
+/** Find the Char Value attribute for a given 16-bit char UUID. Returns
+ *  -1 if not present in the snapshot. */
 static int bt_att_find_char_value(const bt_att_entry_t *table,
                                   uint8_t n, uint16_t char_uuid)
 {
     uint8_t i;
     for (i = 0U; i < n; ++i) {
-        if (table[i].uuid == char_uuid
-            && table[i].char_ref != (const tiku_bt_char_t *)0) {
+        if (table[i].char_ref != (const tiku_bt_char_t *)0
+            && table[i].uuid128 == (const uint8_t *)0
+            && table[i].uuid == char_uuid) {
             return (int)i;
         }
     }
     return -1;
+}
+
+/** The ATT MTU of connection @p conn_idx: 23 until an exchange raises it. */
+static uint16_t bt_att_mtu(uint8_t conn_idx)
+{
+    uint16_t m = bt_state.conns[conn_idx].att_mtu;
+    if (m < ATT_MTU_DEFAULT) m = ATT_MTU_DEFAULT;
+    if (m > BT_ATT_MTU_MAX)  m = BT_ATT_MTU_MAX;
+    return m;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -721,9 +955,9 @@ static void bt_att_send_error(uint8_t conn_idx, uint8_t req_op,
 /**
  * @brief Handle ATT Exchange MTU Request (opcode 0x02)
  *
- * Request layout: opcode(1) + client_rx_mtu(2 LE). The reply carries
- * server_rx_mtu (also 23 for now) so both sides know to keep PDUs
- * <= ATT_MTU_DEFAULT. Larger MTUs are a Phase 11+ feature.
+ * Request layout: opcode(1) + client_rx_mtu(2 LE). The reply offers
+ * BT_ATT_MTU_MAX, and the link then uses the smaller of the two (never
+ * below the default 23).
  *
  * @param conn_idx  Connection table index
  * @param pdu       ATT PDU bytes (opcode at [0])
@@ -732,31 +966,35 @@ static void bt_att_send_error(uint8_t conn_idx, uint8_t req_op,
 static void bt_att_handle_mtu(uint8_t conn_idx, const uint8_t *pdu,
                               uint16_t len)
 {
-    uint8_t rsp[3];
+    uint8_t  rsp[3];
+    uint16_t client_mtu;
+    uint16_t mtu;
+
     if (len < 3U) {
         bt_att_send_error(conn_idx, ATT_OP_EXCHANGE_MTU_REQ, 0U,
                           ATT_ERR_REQUEST_NOT_SUPPORTED);
         return;
     }
-    {
-        uint16_t client_mtu = (uint16_t)(pdu[1] | ((uint16_t)pdu[2] << 8));
-        TIKU_BT_PRINTF("p10.att: Exchange MTU req client=%u "
-                        "-> rsp server=%u\n",
-                        client_mtu, (unsigned)ATT_MTU_DEFAULT);
-    }
+    client_mtu = (uint16_t)(pdu[1] | ((uint16_t)pdu[2] << 8));
+    mtu = (client_mtu < BT_ATT_MTU_MAX) ? client_mtu : BT_ATT_MTU_MAX;
+    if (mtu < ATT_MTU_DEFAULT) mtu = ATT_MTU_DEFAULT;
+    TIKU_BT_PRINTF("p10.att: Exchange MTU req client=%u -> MTU %u\n",
+                    client_mtu, mtu);
     rsp[0] = ATT_OP_EXCHANGE_MTU_RSP;
-    rsp[1] = (uint8_t)(ATT_MTU_DEFAULT & 0xFFU);
-    rsp[2] = (uint8_t)((ATT_MTU_DEFAULT >> 8) & 0xFFU);
-    bt_state.conns[conn_idx].att_mtu = ATT_MTU_DEFAULT;
+    rsp[1] = (uint8_t)(BT_ATT_MTU_MAX & 0xFFU);
+    rsp[2] = (uint8_t)((BT_ATT_MTU_MAX >> 8) & 0xFFU);
+    /* The response goes out at the old MTU; the new one holds after. */
     (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
                       L2CAP_CID_ATT, rsp, sizeof rsp);
+    bt_state.conns[conn_idx].att_mtu = mtu;
 }
 
 /*
  * Used by clients to enumerate Primary Service declarations. The
- * request gives a handle range + group UUID (usually 0x2800); the
- * reply is a list of {start_handle, end_handle, service_uuid}
- * tuples for matching attributes in range.
+ * request gives a handle range + group UUID (0x2800); the reply is a
+ * list of {start_handle, end_handle, service_uuid} tuples for matching
+ * attributes in range, all of one length (2- or 16-byte UUIDs), as
+ * many as the MTU holds.  The client asks again from past the last.
  */
 
 /**
@@ -769,59 +1007,65 @@ static void bt_att_handle_mtu(uint8_t conn_idx, const uint8_t *pdu,
 static void bt_att_handle_read_by_group(uint8_t conn_idx,
                                         const uint8_t *pdu, uint16_t len)
 {
-    uint16_t start_h, end_h, group_uuid;
-    bt_att_entry_t table[ATT_HANDLE_MAX];
-    uint8_t        n_attrs;
-    uint8_t        rsp[32];
-    uint8_t        off = 2U;
-    uint8_t        i;
-    int            first = 1;
+    bt_att_entry_t primary_type;
+    uint16_t start_h, end_h;
+    uint8_t  n_attrs;
+    uint8_t  rsp[BT_ATT_MTU_MAX];
+    uint16_t mtu = bt_att_mtu(conn_idx);
+    uint16_t off = 2U;
+    uint8_t  rec_len = 0U;
+    uint8_t  i;
 
-    if (len < 7U) {
+    if (len != 7U && len != 21U) {
         bt_att_send_error(conn_idx, ATT_OP_READ_BY_GROUP_TYPE_REQ, 0U,
                           ATT_ERR_REQUEST_NOT_SUPPORTED);
         return;
     }
-    start_h    = (uint16_t)(pdu[1] | ((uint16_t)pdu[2] << 8));
-    end_h      = (uint16_t)(pdu[3] | ((uint16_t)pdu[4] << 8));
-    group_uuid = (uint16_t)(pdu[5] | ((uint16_t)pdu[6] << 8));
-    TIKU_BT_PRINTF("p10.att: Read By Group Type 0x%04x range "
-                    "0x%04x..0x%04x\n", group_uuid, start_h, end_h);
-    if (group_uuid != UUID_PRIMARY_SERVICE) {
+    start_h = (uint16_t)(pdu[1] | ((uint16_t)pdu[2] << 8));
+    end_h   = (uint16_t)(pdu[3] | ((uint16_t)pdu[4] << 8));
+    TIKU_BT_PRINTF("p10.att: Read By Group Type range 0x%04x..0x%04x\n",
+                    start_h, end_h);
+    bt_att_set_static(&primary_type, 0U, UUID_PRIMARY_SERVICE,
+                      (const uint8_t *)0, 0U);
+    if (!bt_att_type_is(&primary_type, &pdu[5], (uint16_t)(len - 5U))) {
         bt_att_send_error(conn_idx, ATT_OP_READ_BY_GROUP_TYPE_REQ,
                           start_h, ATT_ERR_ATTRIBUTE_NOT_FOUND);
         return;
     }
 
-    n_attrs = bt_att_snapshot(table);
+    n_attrs = bt_att_snapshot(bt_att_table);
     rsp[0] = ATT_OP_READ_BY_GROUP_TYPE_RSP;
-    rsp[1] = 6U;                         /* length per entry */
-
     for (i = 0U; i < n_attrs; ++i) {
-        if (table[i].uuid != UUID_PRIMARY_SERVICE) continue;
-        if (table[i].handle < start_h || table[i].handle > end_h) continue;
-        if (off + 6U > sizeof rsp) break;
-        /* Find end-of-group: the next service handle - 1, or the
-         * last attribute handle in the table. */
-        {
-            uint16_t end_grp = ATT_HANDLE_MAX;
-            uint8_t  j;
-            for (j = (uint8_t)(i + 1U); j < n_attrs; ++j) {
-                if (table[j].uuid == UUID_PRIMARY_SERVICE) {
-                    end_grp = (uint16_t)(table[j].handle - 1U);
-                    break;
-                }
-            }
-            rsp[off++] = (uint8_t)(table[i].handle & 0xFFU);
-            rsp[off++] = (uint8_t)((table[i].handle >> 8) & 0xFFU);
-            rsp[off++] = (uint8_t)(end_grp & 0xFFU);
-            rsp[off++] = (uint8_t)((end_grp >> 8) & 0xFFU);
-            rsp[off++] = table[i].value[0];
-            rsp[off++] = table[i].value[1];
-            first = 0;
+        const bt_att_entry_t *e = &bt_att_table[i];
+        uint16_t end_grp;
+        uint8_t  j;
+
+        if (e->uuid != UUID_PRIMARY_SERVICE || e->uuid128 != 0) continue;
+        if (e->handle < start_h || e->handle > end_h) continue;
+        if (rec_len == 0U) {
+            rec_len = (uint8_t)(4U + e->value_len);
+            rsp[1]  = rec_len;
+        } else if ((uint8_t)(4U + e->value_len) != rec_len) {
+            break;                       /* one entry length per reply */
         }
+        if (off + rec_len > mtu) break;
+        /* The group ends before the next service, or at the last
+         * attribute. */
+        end_grp = bt_att_table[n_attrs - 1U].handle;
+        for (j = (uint8_t)(i + 1U); j < n_attrs; ++j) {
+            if (bt_att_table[j].uuid == UUID_PRIMARY_SERVICE
+                && bt_att_table[j].uuid128 == (const uint8_t *)0) {
+                end_grp = (uint16_t)(bt_att_table[j].handle - 1U);
+                break;
+            }
+        }
+        rsp[off++] = (uint8_t)(e->handle & 0xFFU);
+        rsp[off++] = (uint8_t)((e->handle >> 8) & 0xFFU);
+        rsp[off++] = (uint8_t)(end_grp & 0xFFU);
+        rsp[off++] = (uint8_t)((end_grp >> 8) & 0xFFU);
+        for (j = 0U; j < e->value_len; ++j) rsp[off++] = e->value[j];
     }
-    if (first) {
+    if (rec_len == 0U) {
         bt_att_send_error(conn_idx, ATT_OP_READ_BY_GROUP_TYPE_REQ,
                           start_h, ATT_ERR_ATTRIBUTE_NOT_FOUND);
         return;
@@ -833,9 +1077,9 @@ static void bt_att_handle_read_by_group(uint8_t conn_idx,
 /**
  * @brief Handle ATT Read By Type Request (opcode 0x08)
  *
- * Used by clients to enumerate Characteristic declarations within a
- * service. The reply is a list of {attr_handle, value} pairs for
- * matching attributes in range.
+ * Enumerates a service's Characteristic declarations (a 16- or 128-bit
+ * type): {attr_handle, value} pairs in range, of one length, as many as
+ * the MTU holds.
  *
  * @param conn_idx  Connection table index
  * @param pdu       ATT PDU bytes
@@ -844,52 +1088,51 @@ static void bt_att_handle_read_by_group(uint8_t conn_idx,
 static void bt_att_handle_read_by_type(uint8_t conn_idx,
                                        const uint8_t *pdu, uint16_t len)
 {
-    uint16_t start_h, end_h, type_uuid;
-    bt_att_entry_t table[ATT_HANDLE_MAX];
-    uint8_t        n_attrs;
-    uint8_t        rsp[32];
-    uint8_t        off = 2U;
-    uint8_t        i;
-    uint8_t        rec_len = 0U;
-    int            first = 1;
+    uint16_t start_h, end_h;
+    uint8_t  n_attrs;
+    uint8_t  rsp[BT_ATT_MTU_MAX];
+    uint16_t mtu = bt_att_mtu(conn_idx);
+    uint16_t off = 2U;
+    uint8_t  i;
+    uint8_t  rec_len = 0U;
 
-    if (len < 7U) {
+    if (len != 7U && len != 21U) {
         bt_att_send_error(conn_idx, ATT_OP_READ_BY_TYPE_REQ, 0U,
                           ATT_ERR_REQUEST_NOT_SUPPORTED);
         return;
     }
-    start_h   = (uint16_t)(pdu[1] | ((uint16_t)pdu[2] << 8));
-    end_h     = (uint16_t)(pdu[3] | ((uint16_t)pdu[4] << 8));
-    type_uuid = (uint16_t)(pdu[5] | ((uint16_t)pdu[6] << 8));
-    TIKU_BT_PRINTF("p10.att: Read By Type 0x%04x range "
-                    "0x%04x..0x%04x\n", type_uuid, start_h, end_h);
+    start_h = (uint16_t)(pdu[1] | ((uint16_t)pdu[2] << 8));
+    end_h   = (uint16_t)(pdu[3] | ((uint16_t)pdu[4] << 8));
+    TIKU_BT_PRINTF("p10.att: Read By Type (%u-bit) range "
+                    "0x%04x..0x%04x\n", (len == 7U) ? 16U : 128U,
+                    start_h, end_h);
 
-    n_attrs = bt_att_snapshot(table);
+    n_attrs = bt_att_snapshot(bt_att_table);
     rsp[0] = ATT_OP_READ_BY_TYPE_RSP;
 
     for (i = 0U; i < n_attrs; ++i) {
-        if (table[i].uuid != type_uuid) continue;
-        if (table[i].handle < start_h || table[i].handle > end_h) continue;
-        if (first) {
-            rec_len    = (uint8_t)(2U + table[i].value_len);
-            rsp[1]     = rec_len;
-            first      = 0;
-        } else if ((uint8_t)(2U + table[i].value_len) != rec_len) {
+        const bt_att_entry_t *e = &bt_att_table[i];
+        uint8_t vlen = e->value_len;
+        uint8_t k;
+
+        if (e->handle < start_h || e->handle > end_h) continue;
+        if (!bt_att_type_is(e, &pdu[5], (uint16_t)(len - 5U))) continue;
+        if (vlen > (uint8_t)(mtu - 4U)) vlen = (uint8_t)(mtu - 4U);
+        if (rec_len == 0U) {
+            rec_len = (uint8_t)(2U + vlen);
+            rsp[1]  = rec_len;
+        } else if ((uint8_t)(2U + vlen) != rec_len) {
             /* Spec says all returned entries in one Read By Type Rsp
              * must share the same length. Stop at the first mismatch
              * -- client will issue another request to walk further. */
             break;
         }
-        if (off + rec_len > sizeof rsp) break;
-        rsp[off++] = (uint8_t)(table[i].handle & 0xFFU);
-        rsp[off++] = (uint8_t)((table[i].handle >> 8) & 0xFFU);
-        {
-            uint8_t k;
-            for (k = 0U; k < table[i].value_len; ++k)
-                rsp[off++] = table[i].value[k];
-        }
+        if (off + rec_len > mtu) break;
+        rsp[off++] = (uint8_t)(e->handle & 0xFFU);
+        rsp[off++] = (uint8_t)((e->handle >> 8) & 0xFFU);
+        for (k = 0U; k < vlen; ++k) rsp[off++] = e->value[k];
     }
-    if (first) {
+    if (rec_len == 0U) {
         bt_att_send_error(conn_idx, ATT_OP_READ_BY_TYPE_REQ,
                           start_h, ATT_ERR_ATTRIBUTE_NOT_FOUND);
         return;
@@ -901,7 +1144,7 @@ static void bt_att_handle_read_by_type(uint8_t conn_idx,
 /**
  * @brief Handle ATT Read Request (opcode 0x0A)
  *
- * Returns the value of the named attribute.
+ * Returns the value of the named attribute, cut to the MTU less one.
  *
  * @param conn_idx  Connection table index
  * @param pdu       ATT PDU bytes (opcode + handle LE)
@@ -910,10 +1153,9 @@ static void bt_att_handle_read_by_type(uint8_t conn_idx,
 static void bt_att_handle_read(uint8_t conn_idx, const uint8_t *pdu,
                                uint16_t len)
 {
-    uint16_t       h;
-    bt_att_entry_t table[ATT_HANDLE_MAX];
-    uint8_t        n_attrs;
-    uint8_t        i;
+    uint16_t h;
+    uint8_t  n_attrs;
+    uint8_t  i;
 
     if (len < 3U) {
         bt_att_send_error(conn_idx, ATT_OP_READ_REQ, 0U,
@@ -922,41 +1164,37 @@ static void bt_att_handle_read(uint8_t conn_idx, const uint8_t *pdu,
     }
     h = (uint16_t)(pdu[1] | ((uint16_t)pdu[2] << 8));
     TIKU_BT_PRINTF("p10.att: Read handle 0x%04x\n", h);
-    n_attrs = bt_att_snapshot(table);
+    n_attrs = bt_att_snapshot(bt_att_table);
     for (i = 0U; i < n_attrs; ++i) {
-        if (table[i].handle != h) continue;
+        const bt_att_entry_t *e = &bt_att_table[i];
+        if (e->handle != h) continue;
         {
-            uint8_t  rsp[ATT_MTU_DEFAULT];
-            uint8_t  copy;
-            uint8_t  k;
+            uint8_t  rsp[BT_ATT_MTU_MAX];
+            uint16_t room = (uint16_t)(bt_att_mtu(conn_idx) - 1U);
             uint16_t produced = 0U;
+            uint16_t k;
 
             rsp[0] = ATT_OP_READ_RSP;
 
             /* Value source priority: CCCD ref → char read callback →
              * char static value → entry static value. */
-            if (table[i].cccd_ref != (uint16_t *)0) {
-                rsp[1] = (uint8_t)(*table[i].cccd_ref & 0xFFU);
-                rsp[2] = (uint8_t)((*table[i].cccd_ref >> 8) & 0xFFU);
+            if (e->cccd_ref != (uint16_t *)0) {
+                rsp[1] = (uint8_t)(*e->cccd_ref & 0xFFU);
+                rsp[2] = (uint8_t)((*e->cccd_ref >> 8) & 0xFFU);
                 produced = 2U;
-            } else if (table[i].char_ref != (const tiku_bt_char_t *)0
-                       && table[i].char_ref->on_read != (tiku_bt_char_read_t)0) {
-                if (table[i].char_ref->on_read(
-                        table[i].char_ref->user, &rsp[1],
-                        (uint16_t)(sizeof rsp - 1U), &produced) != 0) {
+            } else if (e->char_ref != (const tiku_bt_char_t *)0
+                       && e->char_ref->on_read != (tiku_bt_char_read_t)0) {
+                if (e->char_ref->on_read(e->char_ref->user, &rsp[1], room,
+                                         &produced) != 0) {
                     bt_att_send_error(conn_idx, ATT_OP_READ_REQ, h,
                                       ATT_ERR_READ_NOT_PERMITTED);
                     return;
                 }
-                if (produced > (uint16_t)(sizeof rsp - 1U)) {
-                    produced = (uint16_t)(sizeof rsp - 1U);
-                }
+                if (produced > room) produced = room;
             } else {
-                copy = table[i].value_len;
-                if ((uint16_t)copy + 1U > (uint16_t)sizeof rsp)
-                    copy = (uint8_t)(sizeof rsp - 1U);
-                for (k = 0U; k < copy; ++k) rsp[1U + k] = table[i].value[k];
-                produced = copy;
+                produced = e->value_len;
+                if (produced > room) produced = room;
+                for (k = 0U; k < produced; ++k) rsp[1U + k] = e->value[k];
             }
             (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
                               L2CAP_CID_ATT, rsp,
@@ -987,11 +1225,10 @@ static void bt_att_handle_read(uint8_t conn_idx, const uint8_t *pdu,
 static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
                                 uint16_t len, uint8_t with_rsp)
 {
-    uint16_t       h;
-    bt_att_entry_t table[ATT_HANDLE_MAX];
-    uint8_t        n_attrs;
-    uint8_t        i;
-    uint8_t        rsp;
+    uint16_t h;
+    uint8_t  n_attrs;
+    uint8_t  i;
+    uint8_t  rsp;
     if (len < 3U) {
         if (with_rsp) {
             bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, 0U,
@@ -1002,16 +1239,17 @@ static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
     h = (uint16_t)(pdu[1] | ((uint16_t)pdu[2] << 8));
     TIKU_BT_PRINTF("p11.att: Write handle 0x%04x len=%u\n",
                     h, (unsigned)(len - 3U));
-    n_attrs = bt_att_snapshot(table);
+    n_attrs = bt_att_snapshot(bt_att_table);
     for (i = 0U; i < n_attrs; ++i) {
-        if (table[i].handle != h) continue;
+        const bt_att_entry_t *e = &bt_att_table[i];
+        if (e->handle != h) continue;
 
         /* CCCD write: 2 bytes little-endian, store + ack. */
-        if (table[i].cccd_ref != (uint16_t *)0) {
+        if (e->cccd_ref != (uint16_t *)0) {
             uint16_t new_val = (len >= 5U)
                 ? (uint16_t)(pdu[3] | ((uint16_t)pdu[4] << 8))
                 : 0U;
-            *table[i].cccd_ref = new_val;
+            *e->cccd_ref = new_val;
             TIKU_BT_PRINTF("p12: CCCD set to 0x%04x "
                             "(notify=%u indicate=%u)\n",
                             new_val,
@@ -1026,12 +1264,10 @@ static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
         }
 
         /* User char with on_write. */
-        if (table[i].char_ref != (const tiku_bt_char_t *)0
-            && table[i].char_ref->on_write
-                != (tiku_bt_char_write_t)0) {
-            int wrc = table[i].char_ref->on_write(
-                table[i].char_ref->user, &pdu[3],
-                (uint16_t)(len - 3U));
+        if (e->char_ref != (const tiku_bt_char_t *)0
+            && e->char_ref->on_write != (tiku_bt_char_write_t)0) {
+            int wrc = e->char_ref->on_write(e->char_ref->user, &pdu[3],
+                                            (uint16_t)(len - 3U));
             if (wrc != 0) {
                 if (with_rsp) {
                     bt_att_send_error(conn_idx, ATT_OP_WRITE_REQ, h,
@@ -1062,9 +1298,9 @@ static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
 /**
  * @brief Handle ATT Find Information Request (opcode 0x04)
  *
- * Returns {handle, UUID-16} pairs for attributes in the requested
- * range. Used by clients to discover descriptors when Characteristic
- * Declaration values don't reveal them.
+ * Returns {handle, UUID} pairs in the requested range, all 16-bit
+ * (format 1) or all 128-bit (format 2), as many as the MTU holds: how a
+ * client finds descriptors the declarations do not name.
  *
  * @param conn_idx  Connection table index
  * @param pdu       ATT PDU bytes
@@ -1074,12 +1310,12 @@ static void bt_att_handle_find_info(uint8_t conn_idx,
                                     const uint8_t *pdu, uint16_t len)
 {
     uint16_t start_h, end_h;
-    bt_att_entry_t table[ATT_HANDLE_MAX];
-    uint8_t        n_attrs;
-    uint8_t        rsp[32];
-    uint8_t        off = 2U;
-    uint8_t        i;
-    int            first = 1;
+    uint8_t  n_attrs;
+    uint8_t  rsp[BT_ATT_MTU_MAX];
+    uint16_t mtu = bt_att_mtu(conn_idx);
+    uint16_t off = 2U;
+    uint8_t  i;
+    uint8_t  format = 0U;
 
     if (len < 5U) {
         bt_att_send_error(conn_idx, ATT_OP_FIND_INFORMATION_REQ, 0U,
@@ -1090,20 +1326,31 @@ static void bt_att_handle_find_info(uint8_t conn_idx,
     end_h   = (uint16_t)(pdu[3] | ((uint16_t)pdu[4] << 8));
     TIKU_BT_PRINTF("p10.att: Find Information range "
                     "0x%04x..0x%04x\n", start_h, end_h);
-    n_attrs = bt_att_snapshot(table);
+    n_attrs = bt_att_snapshot(bt_att_table);
 
     rsp[0] = ATT_OP_FIND_INFORMATION_RSP;
-    rsp[1] = 0x01U;                  /* format: 16-bit UUIDs */
     for (i = 0U; i < n_attrs; ++i) {
-        if (table[i].handle < start_h || table[i].handle > end_h) continue;
-        if (off + 4U > sizeof rsp) break;
-        rsp[off++] = (uint8_t)(table[i].handle & 0xFFU);
-        rsp[off++] = (uint8_t)((table[i].handle >> 8) & 0xFFU);
-        rsp[off++] = (uint8_t)(table[i].uuid & 0xFFU);
-        rsp[off++] = (uint8_t)((table[i].uuid >> 8) & 0xFFU);
-        first = 0;
+        const bt_att_entry_t *e = &bt_att_table[i];
+        uint8_t f = (e->uuid128 != (const uint8_t *)0) ? 0x02U : 0x01U;
+        uint8_t ulen = (f == 0x02U) ? 16U : 2U;
+        uint8_t k;
+
+        if (e->handle < start_h || e->handle > end_h) continue;
+        if (format == 0U) {
+            format = f;
+            rsp[1] = f;
+        } else if (f != format) {
+            break;                       /* one UUID format per reply */
+        }
+        if (off + 2U + ulen > mtu) break;
+        rsp[off++] = (uint8_t)(e->handle & 0xFFU);
+        rsp[off++] = (uint8_t)((e->handle >> 8) & 0xFFU);
+        for (k = 0U; k < ulen; ++k) {
+            rsp[off++] = (f == 0x02U) ? e->uuid128[k]
+                                      : (uint8_t)(e->uuid >> (8U * k));
+        }
     }
-    if (first) {
+    if (format == 0U) {
         bt_att_send_error(conn_idx, ATT_OP_FIND_INFORMATION_REQ,
                           start_h, ATT_ERR_ATTRIBUTE_NOT_FOUND);
         return;
@@ -1195,10 +1442,21 @@ static void bt_handle_att(uint8_t conn_idx, const uint8_t *pdu,
         break;
     case ATT_OP_HANDLE_VALUE_NOTIFY:
         if (len >= 3) {
+            /* The value as text (non-printables as '.'), its first 40
+             * bytes: TIKU_PRINTF has no %.*s. */
+            char     txt[41];
+            uint16_t k;
+            uint16_t n = (uint16_t)(len - 3U);
+            if (n > 40U) n = 40U;
+            for (k = 0U; k < n; ++k) {
+                uint8_t c = pdu[3U + k];
+                txt[k] = (c >= 0x20U && c < 0x7FU) ? (char)c : '.';
+            }
+            txt[n] = '\0';
             TIKU_BT_PRINTF("p13.att: *** Notify handle=0x%04x "
-                            "%u B ***\n",
+                            "%u B *** \"%s\"\n",
                             (uint16_t)(pdu[1] | (pdu[2] << 8)),
-                            (unsigned)(len - 3U));
+                            (unsigned)(len - 3U), txt);
         }
         break;
     default:
@@ -1230,10 +1488,66 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
  * [0]    HCI_PKT_TYPE_ACL
  * [1..2] handle(12) | PB(2) | BC(2)  little-endian
  * [3..4] data_total_length            little-endian
- * [5..6] L2CAP payload length         little-endian
- * [7..8] L2CAP CID                    little-endian
- * [9..]  L2CAP payload
+ * [5..]  this packet's part of the L2CAP PDU: a start packet (PB=10 from a
+ *        controller) opens with the L2CAP length(2) and CID(2), and a
+ *        PDU longer than the link layer's payload goes on in continuing
+ *        packets (PB=01), which the stack joins before dispatching.
  */
+
+/**
+ * @brief Answer one LE signalling command (CID 5): a Connection Parameter
+ *        Update Request is declined (the link keeps its parameters), the
+ *        other requests (disconnection, the credit-based connections and
+ *        their reconfiguration) get a Command Reject; the rest is dropped.
+ */
+static void bt_l2cap_signal(uint8_t conn_idx, const uint8_t *cmd,
+                            uint16_t len)
+{
+    uint8_t rsp[6];
+
+    if (len < 4U) return;
+    if (cmd[0] != 0x06U && cmd[0] != 0x12U && cmd[0] != 0x14U
+        && cmd[0] != 0x17U && cmd[0] != 0x19U) {
+        return;                       /* a response or an indication */
+    }
+    rsp[1] = cmd[1];                                  /* identifier */
+    rsp[3] = 0x00U;
+    if (cmd[0] == 0x12U) {
+        rsp[0] = 0x13U;            /* Connection Parameter Update Response */
+        rsp[2] = 0x02U;
+        rsp[4] = 0x01U;            /* result: rejected */
+        rsp[5] = 0x00U;
+    } else {
+        rsp[0] = 0x01U;            /* Command Reject */
+        rsp[2] = 0x02U;
+        rsp[4] = 0x00U;            /* reason: command not understood */
+        rsp[5] = 0x00U;
+    }
+    (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
+                      L2CAP_CID_LE_SIGNALING, rsp, sizeof rsp);
+}
+
+/**
+ * @brief Hand one whole L2CAP PDU (header first) to its channel's handler.
+ */
+static void bt_l2cap_dispatch(uint8_t conn_idx, const uint8_t *pdu,
+                              uint16_t len)
+{
+    uint16_t l2cap_len = (uint16_t)(pdu[0] | ((uint16_t)pdu[1] << 8));
+    uint16_t cid       = (uint16_t)(pdu[2] | ((uint16_t)pdu[3] << 8));
+
+    if ((uint16_t)(4U + l2cap_len) > len) return;
+    if (cid == L2CAP_CID_ATT) {
+        bt_handle_att(conn_idx, &pdu[4], l2cap_len);
+    } else if (cid == L2CAP_CID_SMP) {
+        bt_handle_smp(conn_idx, &pdu[4], l2cap_len);
+    } else if (cid == L2CAP_CID_LE_SIGNALING) {
+        bt_l2cap_signal(conn_idx, &pdu[4], l2cap_len);
+    } else {
+        TIKU_BT_PRINTF("acl: dropping CID 0x%04x (only ATT, SMP and "
+                        "signalling handled)\n", cid);
+    }
+}
 
 /**
  * @brief Decode one HCI ACL data packet and dispatch by L2CAP CID
@@ -1244,33 +1558,69 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
 static void bt_handle_acl_pkt(const uint8_t *pkt, int len)
 {
     uint16_t handle;
-    uint16_t cid;
+    uint16_t data_len;
+    uint8_t  pb;
     int      conn_idx;
-    uint16_t l2cap_len;
-    if (len < 9) return;
 
-    handle    = (uint16_t)((pkt[1] | ((uint16_t)pkt[2] << 8)) & 0x0FFFU);
-    l2cap_len = (uint16_t)(pkt[5] | ((uint16_t)pkt[6] << 8));
-    cid       = (uint16_t)(pkt[7] | ((uint16_t)pkt[8] << 8));
-    conn_idx  = bt_conn_find(handle);
+    if (len < 5) return;
+    handle   = (uint16_t)((pkt[1] | ((uint16_t)pkt[2] << 8)) & 0x0FFFU);
+    pb       = (uint8_t)((pkt[2] >> 4) & 0x03U);
+    data_len = (uint16_t)(pkt[3] | ((uint16_t)pkt[4] << 8));
+    conn_idx = bt_conn_find(handle);
     if (conn_idx < 0) {
         TIKU_BT_PRINTF("acl: dropping pkt for unknown handle 0x%04x\n",
                         handle);
         return;
     }
-    if (9 + (int)l2cap_len > len) {
-        TIKU_BT_PRINTF("acl: truncated L2CAP frame "
-                        "(len=%d expected=%d)\n", len, 9 + (int)l2cap_len);
+    if (5 + (int)data_len > len) {
+        TIKU_BT_PRINTF("acl: truncated packet (len=%d expected=%d)\n",
+                        len, 5 + (int)data_len);
         return;
     }
+    {
+        uint8_t *rx = bt_state.conns[conn_idx].rx_buf;
+        uint16_t i;
 
-    if (cid == L2CAP_CID_ATT) {
-        bt_handle_att((uint8_t)conn_idx, &pkt[9], l2cap_len);
-    } else if (cid == L2CAP_CID_SMP) {
-        bt_handle_smp((uint8_t)conn_idx, &pkt[9], l2cap_len);
-    } else {
-        TIKU_BT_PRINTF("acl: dropping CID 0x%04x (only ATT + SMP "
-                        "handled today)\n", cid);
+        if (pb == 0x01U) {
+            /* Continuing: append to the PDU this link has open. */
+            uint16_t need = bt_state.conns[conn_idx].rx_need;
+            uint16_t have = bt_state.conns[conn_idx].rx_len;
+
+            if (need == 0U) return;          /* no start seen: drop */
+            if ((uint32_t)have + data_len > need) {
+                TIKU_BT_PRINTF("acl: continuation overruns its PDU\n");
+                bt_state.conns[conn_idx].rx_need = 0U;
+                return;
+            }
+            for (i = 0U; i < data_len; ++i) rx[have + i] = pkt[5U + i];
+            have = (uint16_t)(have + data_len);
+            bt_state.conns[conn_idx].rx_len = have;
+            if (have == need) {
+                bt_state.conns[conn_idx].rx_need = 0U;
+                bt_l2cap_dispatch((uint8_t)conn_idx, rx, need);
+            }
+            return;
+        }
+        /* A start packet: the L2CAP header leads it. */
+        bt_state.conns[conn_idx].rx_need = 0U;
+        if (data_len < 4U) return;
+        {
+            uint16_t whole = (uint16_t)(4U + (pkt[5] |
+                                              ((uint16_t)pkt[6] << 8)));
+
+            if (whole <= data_len) {
+                bt_l2cap_dispatch((uint8_t)conn_idx, &pkt[5], data_len);
+                return;
+            }
+            if (whole > BT_L2CAP_MAX) {
+                TIKU_BT_PRINTF("acl: dropping a %u-byte L2CAP PDU (max "
+                                "%u)\n", whole, (unsigned)BT_L2CAP_MAX);
+                return;
+            }
+            for (i = 0U; i < data_len; ++i) rx[i] = pkt[5U + i];
+            bt_state.conns[conn_idx].rx_len  = data_len;
+            bt_state.conns[conn_idx].rx_need = whole;
+        }
     }
 }
 
@@ -1289,6 +1639,133 @@ static void bt_handle_acl_pkt(const uint8_t *pkt, int len)
  * @param len  Length of @p pkt in bytes
  */
 static void bt_handle_hci_event(const uint8_t *pkt, int len);  /* fwd */
+
+/**
+ * @brief Give the controller the CPU (its transport's wait) or sleep, for
+ *        up to @p ms while the stack expects a packet.
+ */
+static void bt_transport_wait(uint16_t ms)
+{
+    if (g_bt_transport != 0 && g_bt_transport->wait != 0) {
+        g_bt_transport->wait(ms);
+    } else {
+        tiku_common_delay_ms(ms);
+    }
+}
+
+/*
+ * Command replies a nested waiter takes while an outer one still waits: the
+ * inner loop keeps them here and the outer one finds its own.  Kept only
+ * while a waiter waits; a waiter drops stale entries for its opcode before
+ * it sends.
+ */
+#define BT_STASH_N            2U
+#define BT_STASH_LEN          64U
+static struct {
+    uint8_t len;                 /* 0: free */
+    uint8_t pkt[BT_STASH_LEN];
+} bt_stash[BT_STASH_N];
+static uint8_t bt_stash_next;    /* the slot the next put fills */
+static uint8_t bt_waiting;       /* command waits in flight */
+
+/** @brief 1 when @p pkt is the @p evt reply (Complete or Status) to @p op. */
+static int bt_reply_is(const uint8_t *pkt, int n, uint8_t evt, uint16_t op)
+{
+    /* Command Complete: 04 0E len ncmd op(2) status...; Command Status:
+     * 04 0F len status ncmd op(2). */
+    int at = (evt == HCI_EVT_COMMAND_STATUS) ? 5 : 4;
+    return n >= at + 2 && pkt[0] == HCI_PKT_TYPE_EVENT && pkt[1] == evt
+           && pkt[at] == (uint8_t)(op & 0xFFU)
+           && pkt[at + 1] == (uint8_t)((op >> 8) & 0xFFU);
+}
+
+/** @brief Forget stashed @p evt replies to @p op. */
+static void bt_stash_drop(uint8_t evt, uint16_t op)
+{
+    uint8_t i;
+    for (i = 0U; i < BT_STASH_N; ++i) {
+        if (bt_reply_is(bt_stash[i].pkt, bt_stash[i].len, evt, op)) {
+            bt_stash[i].len = 0U;
+        }
+    }
+}
+
+/**
+ * @brief Take a stashed @p evt reply to @p op into @p out (cut to
+ *        @p out_max). @return 1 when one was there
+ */
+static int bt_stash_take(uint8_t evt, uint16_t op, uint8_t *out,
+                         uint16_t out_max, int *out_n)
+{
+    uint8_t i;
+    for (i = 0U; i < BT_STASH_N; ++i) {
+        if (bt_reply_is(bt_stash[i].pkt, bt_stash[i].len, evt, op)) {
+            uint8_t k;
+            uint8_t n = bt_stash[i].len;
+            if (n > out_max) n = (uint8_t)out_max;
+            for (k = 0U; k < n; ++k) out[k] = bt_stash[i].pkt[k];
+            *out_n = n;
+            bt_stash[i].len = 0U;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/**
+ * @brief Take one packet from the controller and hand it on.
+ *
+ * Events go to bt_handle_hci_event() and ACL packets to bt_handle_acl_pkt(),
+ * except @p wait_op's reply, a Command Complete or Command Status as
+ * @p wait_evt says, which is copied to @p out (cut to @p out_max).  The
+ * packet is read into the buffer of this nesting depth.
+ *
+ * @return 2 when @p wait_op's reply was copied, 1 when a packet was handled,
+ *         0 when none was pending or the nesting is too deep, <0 on a
+ *         transport error
+ */
+static int bt_rx_one(uint8_t wait_evt, uint16_t wait_op, uint8_t *out,
+                     uint16_t out_max, int *out_n)
+{
+    uint8_t *pkt;
+    int      n;
+
+    if (bt_rx_depth >= BT_RX_DEPTH) return 0;
+    pkt = bt_rx_buf[bt_rx_depth];
+    n = tiku_bt_recv(pkt, (uint16_t)BT_PKT_MAX);
+    if (n <= 0) return n;
+    if (wait_op != 0U && bt_reply_is(pkt, n, wait_evt, wait_op)) {
+        int i;
+        if (n > (int)out_max) n = (int)out_max;
+        for (i = 0; i < n; ++i) out[i] = pkt[i];
+        *out_n = n;
+        return 2;
+    }
+    /* Another command's reply while a wait is in flight is an outer
+     * waiter's: keep it (no handler wants a reply). */
+    if (bt_waiting != 0U && n >= 6 && pkt[0] == HCI_PKT_TYPE_EVENT
+        && (pkt[1] == HCI_EVT_COMMAND_COMPLETE
+            || pkt[1] == HCI_EVT_COMMAND_STATUS)) {
+        uint8_t k;
+        uint8_t keep = (uint8_t)((n > (int)BT_STASH_LEN) ? (int)BT_STASH_LEN
+                                                         : n);
+        for (k = 0U; k < keep; ++k) bt_stash[bt_stash_next].pkt[k] = pkt[k];
+        bt_stash[bt_stash_next].len = keep;
+        bt_stash_next = (uint8_t)((bt_stash_next + 1U) % BT_STASH_N);
+        return 1;
+    }
+    bt_rx_depth++;
+    if (pkt[0] == HCI_PKT_TYPE_EVENT) {
+        bt_handle_hci_event(pkt, n);
+    } else if (pkt[0] == HCI_PKT_TYPE_ACL) {
+        bt_handle_acl_pkt(pkt, n);
+    } else {
+        TIKU_BT_PRINTF("poll: dropping unknown packet type 0x%02x "
+                        "(%d B)\n", pkt[0], n);
+    }
+    bt_rx_depth--;
+    return 1;
+}
 
 /*
  * Builds the 4-byte HCI command packet (1 byte type + 3 byte header
@@ -1317,8 +1794,10 @@ static int bt_hci_cmd_response(uint16_t opcode, const uint8_t *params,
                                uint16_t out_max, int *out_n)
 {
     unsigned int polls;
+    unsigned int others = 0U;
     int          tx_rc;
 
+    *out_n = 0;
     if (plen > 252U) return TIKU_DRV_ERR_INVALID;
     bt_scratch_cmd[0] = 0x01U;                     /* HCI cmd type */
     bt_scratch_cmd[1] = (uint8_t)(opcode & 0xFFU);
@@ -1328,42 +1807,86 @@ static int bt_hci_cmd_response(uint16_t opcode, const uint8_t *params,
         uint8_t i;
         for (i = 0U; i < plen; ++i) bt_scratch_cmd[4U + i] = params[i];
     }
+    bt_stash_drop(HCI_EVT_COMMAND_COMPLETE, opcode);
     tx_rc = tiku_bt_send(bt_scratch_cmd, (uint16_t)(4U + plen));
     if (tx_rc != TIKU_DRV_OK) return tx_rc;
 
-    /* ~1 s budget: 200 polls × 5 ms. Long enough for slow commands
-     * like Reset; short enough that a missed event surfaces fast. */
-    for (polls = 0U; polls < 200U; ++polls) {
-        int n = tiku_bt_recv(out_evt, out_max);
-        if (n > 0) {
-            /* Discriminate Command Complete (evt 0x0E) carrying the
-             * opcode just sent; ignore anything else (vendor events,
-             * stale Number_Of_Completed_Packets, etc.). */
-            if (n >= 6 && out_evt[0] == HCI_PKT_TYPE_EVENT
-                && out_evt[1] == HCI_EVT_COMMAND_COMPLETE
-                && out_evt[4] == (uint8_t)(opcode & 0xFFU)
-                && out_evt[5] == (uint8_t)((opcode >> 8) & 0xFFU)) {
-                *out_n = n;
-                return TIKU_DRV_OK;
-            }
-            /* Someone else's event — route through the dispatchers so
-             * an async LE Connection Complete / Disconnection / Adv
-             * Report arriving during a command flight is still
-             * delivered. */
-            if (out_evt[0] == HCI_PKT_TYPE_EVENT) {
-                bt_handle_hci_event(out_evt, n);
-            } else if (out_evt[0] == HCI_PKT_TYPE_ACL) {
-                bt_handle_acl_pkt(out_evt, n);
-            }
+    /* ~1 s budget: 200 waits x 5 ms. Long enough for slow commands
+     * like Reset; short enough that a missed event surfaces fast.
+     * Other packets arriving meanwhile (adverts, an LE Connection
+     * Complete, ACL) go to their handlers without spending the
+     * budget, up to a bound that keeps a busy room from holding the
+     * caller here.  A handler that waits on a command of its own
+     * stashes this reply if it comes then. */
+    bt_waiting++;
+    for (polls = 0U; polls < 200U && others < 256U; ) {
+        int r = bt_rx_one(HCI_EVT_COMMAND_COMPLETE, opcode, out_evt,
+                          out_max, out_n);
+        if (r == 2 || bt_stash_take(HCI_EVT_COMMAND_COMPLETE, opcode,
+                                    out_evt, out_max, out_n)) {
+            bt_waiting--;
+            return TIKU_DRV_OK;
+        }
+        if (r > 0) {
+            ++others;
             continue;
         }
-        if (g_bt_transport != 0 && g_bt_transport->wait != 0) {
-            g_bt_transport->wait(5U);
-        } else {
-            tiku_common_delay_ms(5U);
-        }
+        bt_transport_wait(5U);
+        ++polls;
     }
+    bt_waiting--;
     *out_n = 0;
+    return TIKU_DRV_ERR_TIMEOUT;
+}
+
+/**
+ * @brief Issue an HCI command answered by Command Status (it reports its
+ *        result later, in an event of its own) and wait ~1 s for that.
+ *
+ * @param status  Receives the Command Status status (0: started)
+ * @return TIKU_DRV_OK when the Command Status came, else a transport error
+ *         or TIKU_DRV_ERR_TIMEOUT
+ */
+static int bt_hci_cmd_status(uint16_t opcode, const uint8_t *params,
+                             uint8_t plen, uint8_t *status)
+{
+    unsigned int polls;
+    unsigned int others = 0U;
+    uint8_t      evt[8];
+    int          n = 0;
+    int          tx_rc;
+
+    *status = 0xFFU;
+    if (plen > 252U) return TIKU_DRV_ERR_INVALID;
+    bt_scratch_cmd[0] = 0x01U;
+    bt_scratch_cmd[1] = (uint8_t)(opcode & 0xFFU);
+    bt_scratch_cmd[2] = (uint8_t)((opcode >> 8) & 0xFFU);
+    bt_scratch_cmd[3] = plen;
+    if (plen > 0U) {
+        uint8_t i;
+        for (i = 0U; i < plen; ++i) bt_scratch_cmd[4U + i] = params[i];
+    }
+    bt_stash_drop(HCI_EVT_COMMAND_STATUS, opcode);
+    tx_rc = tiku_bt_send(bt_scratch_cmd, (uint16_t)(4U + plen));
+    if (tx_rc != TIKU_DRV_OK) return tx_rc;
+    bt_waiting++;
+    for (polls = 0U; polls < 200U && others < 256U; ) {
+        int r = bt_rx_one(HCI_EVT_COMMAND_STATUS, opcode, evt, sizeof evt,
+                          &n);
+        if (r == 2 || bt_stash_take(HCI_EVT_COMMAND_STATUS, opcode, evt,
+                                    sizeof evt, &n)) {
+            bt_waiting--;
+            *status = evt[3];
+            return TIKU_DRV_OK;
+        }
+        if (r > 0) {
+            ++others;
+            continue;
+        }
+        bt_transport_wait(5U);
+        ++polls;
+    }
+    bt_waiting--;
     return TIKU_DRV_ERR_TIMEOUT;
 }
 
@@ -1374,7 +1897,7 @@ static int bt_hci_cmd_response(uint16_t opcode, const uint8_t *params,
 /* TRNG wrapper for SMP entropy (Nb nonce). Sits inside the Phase 14
  * block because it's only consumed by the pairing state machine.
  * Returns 0 on success. */
-#if PLATFORM_RP2350 || PLATFORM_ESP32C61
+#if PLATFORM_RP2350 || PLATFORM_ESP32C61 || PLATFORM_AMBIQ
 static int bt_rand_bytes(uint8_t *out, size_t n)
 {
     if (out == (uint8_t *)0) return TIKU_TRNG_ERR_INVALID;
@@ -1450,6 +1973,19 @@ static int bt_aes128_ecb(const uint8_t key[16], const uint8_t in[16],
     int      n  = 0;
     int      rc;
     uint8_t  i;
+#if (TIKU_BT_SW_CRYPTO + 0)
+    if (bt_state.sw_aes) {
+        /* No LE Encrypt in the controller: the kit's AES, which takes
+         * the same MSB-first block order. */
+        tiku_kits_crypto_aes128_ctx_t ctx;
+        if (tiku_kits_crypto_aes128_init(&ctx, key) != TIKU_KITS_CRYPTO_OK
+            || tiku_kits_crypto_aes128_encrypt(&ctx, in, out)
+               != TIKU_KITS_CRYPTO_OK) {
+            return TIKU_DRV_ERR_INVALID;
+        }
+        return TIKU_DRV_OK;
+    }
+#endif
     /* Reverse key/plaintext to LE wire form for HCI_LE_Encrypt. */
     for (i = 0U; i < 16U; ++i) params[i]       = key[15U - i];
     for (i = 0U; i < 16U; ++i) params[16U + i] = in[15U - i];
@@ -2001,48 +2537,136 @@ static void bt_smp_send_failed(uint8_t conn_idx, uint8_t reason)
 static int bt_bond_find_by_addr(uint8_t addr_type, const uint8_t addr_le[6],
                                 tiku_bt_bond_record_t *out);
 
-/*
- * replies with Command Status then later a LE Meta subevent 0x08
- * carrying the 64-byte public key. Synchronous Command Status check
- * *  only; the actual pubkey arrives async via bt_handle_le_meta.
- */
+#if (TIKU_BT_SW_CRYPTO + 0)
+/* The private key of a key pair the stack made itself (big-endian), for
+ * a controller without P-256. */
+static uint8_t bt_sw_priv[32];
+
+static void bt_handle_le_meta(const uint8_t *pkt, int len);   /* fwd */
 
 /**
- * Issue HCI_LE_Read_Local_P256_Public_Key (no params). The chip
+ * @brief Make the local P-256 key pair here and hand the public key on as
+ *        the controller's LE Read Local P-256 Public Key Complete would.
+ */
+static int bt_sw_p256_pubkey(void)
+{
+    uint8_t seed[32], pub[65], evt[5 + 64];
+    uint8_t k;
+
+    if (bt_rand_bytes(seed, 32U) != 0) return TIKU_DRV_ERR_INVALID;
+    tiku_watchdog_kick();
+    if (tiku_kits_crypto_p256_ecdh_keypair(seed, bt_sw_priv, pub)
+        != TIKU_KITS_CRYPTO_P256_OK) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    tiku_watchdog_kick();
+    /* 04 3E 42 08 status, then X || Y little-endian (the kit's point is
+     * 04 || X || Y big-endian). */
+    evt[0] = HCI_PKT_TYPE_EVENT;
+    evt[1] = HCI_EVT_LE_META;
+    evt[2] = 66U;
+    evt[3] = LE_SUBEVT_READ_LOCAL_P256_PUBKEY_CPL;
+    evt[4] = 0x00U;
+    for (k = 0U; k < 32U; ++k) {
+        evt[5U + k]  = pub[32U - k];
+        evt[37U + k] = pub[64U - k];
+    }
+    bt_handle_le_meta(evt, (int)sizeof evt);
+    return TIKU_DRV_OK;
+}
+
+/**
+ * @brief The DHKey from the stack's own private key and the peer's public
+ *        key (X || Y little-endian), handed on as LE Generate DHKey
+ *        Complete would be.
+ */
+static int bt_sw_p256_dhkey(const uint8_t peer_pubkey[64])
+{
+    uint8_t point[65], sx[32], evt[5 + 32];
+    uint8_t k;
+
+    point[0] = 0x04U;
+    for (k = 0U; k < 32U; ++k) {
+        point[1U + k]  = peer_pubkey[31U - k];
+        point[33U + k] = peer_pubkey[63U - k];
+    }
+    tiku_watchdog_kick();
+    if (tiku_kits_crypto_p256_ecdh_shared(bt_sw_priv, point, sx)
+        != TIKU_KITS_CRYPTO_P256_OK) {
+        return TIKU_DRV_ERR_INVALID;             /* not a point on P-256 */
+    }
+    tiku_watchdog_kick();
+    evt[0] = HCI_PKT_TYPE_EVENT;
+    evt[1] = HCI_EVT_LE_META;
+    evt[2] = 34U;
+    evt[3] = LE_SUBEVT_GENERATE_DHKEY_COMPLETE;
+    evt[4] = 0x00U;
+    for (k = 0U; k < 32U; ++k) evt[5U + k] = sx[31U - k];
+    bt_handle_le_meta(evt, (int)sizeof evt);
+    return TIKU_DRV_OK;
+}
+#endif /* TIKU_BT_SW_CRYPTO */
+
+/**
+ * @brief Start the local P-256 public key: the controller's (its Complete
+ *        event follows), or the stack's own when the controller refuses
+ *        the command, from then on for both keys.
  */
 static int bt_smp_request_local_pubkey(void)
 {
-    /* Read_Local_P256_Public_Key has no params and replies with
-     * Command Status. Send raw rather than via bt_hci_cmd_response
-     * (which polls for Command Complete). */
-    uint8_t cmd[4];
-    cmd[0] = HCI_PKT_TYPE_CMD;
-    cmd[1] = (uint8_t)(HCI_OP_LE_READ_LOCAL_P256_PUBKEY & 0xFFU);
-    cmd[2] = (uint8_t)((HCI_OP_LE_READ_LOCAL_P256_PUBKEY >> 8) & 0xFFU);
-    cmd[3] = 0U;
-    return tiku_bt_send(cmd, sizeof cmd);
+    uint8_t st = 0xFFU;
+
+    if (!bt_state.sw_p256) {
+        if (bt_hci_cmd_status(HCI_OP_LE_READ_LOCAL_P256_PUBKEY,
+                              (const uint8_t *)0, 0U, &st) == TIKU_DRV_OK
+            && st == 0x00U) {
+            return TIKU_DRV_OK;
+        }
+#if (TIKU_BT_SW_CRYPTO + 0)
+        TIKU_BT_PRINTF("p14.smp: the controller has no P-256 (status "
+                        "0x%02x): the stack makes the keys\n", st);
+        bt_state.sw_p256 = 1U;
+#else
+        TIKU_BT_PRINTF("p14.smp: the controller has no P-256 (status "
+                        "0x%02x)\n", st);
+        return TIKU_DRV_ERR_NOT_PRESENT;
+#endif
+    }
+#if (TIKU_BT_SW_CRYPTO + 0)
+    return bt_sw_p256_pubkey();
+#else
+    return TIKU_DRV_ERR_NOT_PRESENT;
+#endif
 }
 
-/*
- * and key_type=0 (private key from prior P256_Public_Key). Replies
- * with Command Status then later LE Meta subevent 0x09 carrying the
- * *  32-byte DHKey.
- */
-
 /**
- * Issue HCI_LE_Generate_DHKey_V2 with the peer's 64-byte public key
+ * @brief Start the DHKey with the peer's 64-byte public key: LE Generate
+ *        DHKey v2 (or v1 on a controller without it), or the stack's own.
  */
 static int bt_smp_request_dhkey(const uint8_t peer_pubkey[64])
 {
-    uint8_t cmd[4 + 65];
+    uint8_t params[65];
+    uint8_t st = 0xFFU;
     uint8_t i;
-    cmd[0] = HCI_PKT_TYPE_CMD;
-    cmd[1] = (uint8_t)(HCI_OP_LE_GENERATE_DHKEY_V2 & 0xFFU);
-    cmd[2] = (uint8_t)((HCI_OP_LE_GENERATE_DHKEY_V2 >> 8) & 0xFFU);
-    cmd[3] = 65U;
-    for (i = 0U; i < 64U; ++i) cmd[4U + i] = peer_pubkey[i];
-    cmd[68] = 0x00U;   /* key_type = 0 (use prior P256 private key) */
-    return tiku_bt_send(cmd, sizeof cmd);
+
+#if (TIKU_BT_SW_CRYPTO + 0)
+    if (bt_state.sw_p256) {
+        return bt_sw_p256_dhkey(peer_pubkey);
+    }
+#endif
+    for (i = 0U; i < 64U; ++i) params[i] = peer_pubkey[i];
+    params[64] = 0x00U;   /* key_type = 0 (use prior P256 private key) */
+    if (bt_hci_cmd_status(HCI_OP_LE_GENERATE_DHKEY_V2, params, 65U, &st)
+        == TIKU_DRV_OK && st == 0x00U) {
+        return TIKU_DRV_OK;
+    }
+    if (bt_hci_cmd_status(HCI_OP_LE_GENERATE_DHKEY_V1, params, 64U, &st)
+        == TIKU_DRV_OK && st == 0x00U) {
+        return TIKU_DRV_OK;
+    }
+    TIKU_BT_PRINTF("p14.smp: LE Generate DHKey refused (status 0x%02x)\n",
+                    st);
+    return TIKU_DRV_ERR_INVALID;
 }
 
 /*
@@ -2053,26 +2677,49 @@ static int bt_smp_request_dhkey(const uint8_t peer_pubkey[64])
  */
 
 /**
+ * @brief Na and Nb, the initiator's nonce and the responder's, by which
+ *        end of the link this is.
+ */
+static void bt_smp_nonces(uint8_t conn_idx, uint8_t Na[16], uint8_t Nb[16])
+{
+    const uint8_t *mine   = bt_state.smp[conn_idx].local_nonce;
+    const uint8_t *theirs = bt_state.smp[conn_idx].peer_nonce;
+    uint8_t i;
+    for (i = 0U; i < 16U; ++i) {
+        Na[i] = bt_state.smp[conn_idx].initiator ? mine[i] : theirs[i];
+        Nb[i] = bt_state.smp[conn_idx].initiator ? theirs[i] : mine[i];
+    }
+}
+
+/**
+ * @brief The address blocks of the initiator (A) and the responder (B):
+ *        this end's public address and the peer's.
+ */
+static void bt_smp_addrs(uint8_t conn_idx, uint8_t A[7], uint8_t B[7])
+{
+    uint8_t *peer = bt_state.smp[conn_idx].initiator ? B : A;
+    uint8_t *mine = bt_state.smp[conn_idx].initiator ? A : B;
+    bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
+                      bt_state.conns[conn_idx].info.peer_addr, peer);
+    bt_smp_addr_block(0x00U /* public */, bt_state.bd_addr, mine);
+}
+
+static int bt_smp_init_send_ea(uint8_t conn_idx);              /* fwd */
+
+/**
  * Derive MacKey + LTK via f5 once {DHKey, peer_nonce, local_nonce}
  */
 static int bt_smp_try_derive_keys(uint8_t conn_idx)
 {
     uint8_t Na[16], Nb[16];
     uint8_t A_init[7], A_resp[7];
-    uint8_t i;
     int     rc;
     if (!bt_state.smp[conn_idx].have_dhkey)        return 0;
     if (!bt_state.smp[conn_idx].pending_f5)        return 0;
     if (!bt_state.smp[conn_idx].have_peer_random)  return 0;
 
-    for (i = 0U; i < 16U; ++i) Na[i] = bt_state.smp[conn_idx].peer_nonce[i];
-    for (i = 0U; i < 16U; ++i) Nb[i] = bt_state.smp[conn_idx].local_nonce[i];
-
-    /* Peripheral: A_init = central (peer), A_resp = local. */
-    bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
-                      bt_state.conns[conn_idx].info.peer_addr, A_init);
-    bt_smp_addr_block(0x00U /* public */,
-                      bt_state.bd_addr, A_resp);
+    bt_smp_nonces(conn_idx, Na, Nb);
+    bt_smp_addrs(conn_idx, A_init, A_resp);
 
     rc = bt_smp_f5(bt_state.smp[conn_idx].dhkey,
                    Na, Nb, A_init, A_resp,
@@ -2085,6 +2732,12 @@ static int bt_smp_try_derive_keys(uint8_t conn_idx)
     }
     bt_state.smp[conn_idx].pending_f5 = 0U;
     TIKU_BT_PRINTF("p14.smp: f5 derived MacKey + LTK\n");
+    /* The initiator checks first: its Ea goes out once the keys are in. */
+    if (bt_state.smp[conn_idx].initiator
+        && bt_smp_init_send_ea(conn_idx) != TIKU_DRV_OK) {
+        bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+        return -1;
+    }
     return 0;
 }
 
@@ -2177,6 +2830,355 @@ static void bt_smp_try_send_pubkey_confirm(uint8_t conn_idx)
 }
 
 /*---------------------------------------------------------------------------*/
+/* SMP initiator (this end is the central)                                   */
+/*---------------------------------------------------------------------------*/
+/*
+ * LE Secure Connections Just Works from the initiator's side:
+ *   Pairing Request -> Response; Public Key PKa -> PKb (DHKey started);
+ *   Cb arrives -> Na goes out; Nb arrives, Cb = f4(PKbx, PKax, Nb, 0)
+ *   checked; f5 gives MacKey + LTK; Ea = f6(.., Na, Nb, .., IOcapA, A, B)
+ *   out; Eb checked; the bond is kept and LE Enable Encryption starts
+ *   the link encryption with the LTK.
+ */
+
+/** @brief Send one SMP PDU on @p conn_idx's link. */
+static void bt_smp_send(uint8_t conn_idx, const uint8_t *pdu, uint16_t len)
+{
+    (void)bt_send_acl(bt_state.conns[conn_idx].info.handle, L2CAP_CID_SMP,
+                      pdu, len);
+}
+
+/** @brief Clear @p conn_idx's pairing session for a fresh start. */
+static void bt_smp_session_reset(uint8_t conn_idx)
+{
+    bt_state.smp[conn_idx].state             = SMP_IDLE;
+    bt_state.smp[conn_idx].have_pubkey       = 0U;
+    bt_state.smp[conn_idx].have_dhkey        = 0U;
+    bt_state.smp[conn_idx].have_peer_pubkey  = 0U;
+    bt_state.smp[conn_idx].have_peer_random  = 0U;
+    bt_state.smp[conn_idx].pending_pubkey_tx = 0U;
+    bt_state.smp[conn_idx].pending_f5        = 0U;
+    bt_state.smp[conn_idx].initiator         = 0U;
+    bt_state.smp[conn_idx].got_response      = 0U;
+    bt_state.smp[conn_idx].pka_sent          = 0U;
+    bt_state.smp[conn_idx].dhkey_requested   = 0U;
+}
+
+/**
+ * @brief Ask for the DHKey once both public keys are in: a controller
+ *        refuses it (Command Disallowed) until its own key pair exists.
+ */
+static int bt_smp_try_request_dhkey(uint8_t conn_idx)
+{
+    if (!bt_state.smp[conn_idx].have_pubkey
+        || !bt_state.smp[conn_idx].have_peer_pubkey
+        || bt_state.smp[conn_idx].dhkey_requested) {
+        return TIKU_DRV_OK;
+    }
+    bt_state.smp[conn_idx].dhkey_requested = 1U;
+    return bt_smp_request_dhkey(bt_state.smp[conn_idx].peer_pubkey);
+}
+
+/**
+ * @brief Start encryption on @p conn_idx's link with @p ltk (LE Secure
+ *        Connections: Rand and EDIV 0); Encryption Change reports it.
+ */
+static int bt_smp_start_encryption(uint8_t conn_idx, const uint8_t ltk[16])
+{
+    uint8_t params[28];
+    uint8_t st = 0xFFU;
+    uint8_t k;
+    uint16_t handle = bt_state.conns[conn_idx].info.handle;
+
+    params[0] = (uint8_t)(handle & 0xFFU);
+    params[1] = (uint8_t)((handle >> 8) & 0xFFU);
+    for (k = 0U; k < 10U; ++k) params[2U + k] = 0U;   /* Rand, EDIV */
+    for (k = 0U; k < 16U; ++k) params[12U + k] = ltk[k];
+    if (bt_hci_cmd_status(HCI_OP_LE_ENABLE_ENCRYPTION, params,
+                          sizeof params, &st) != TIKU_DRV_OK
+        || st != 0x00U) {
+        TIKU_BT_PRINTF("p14.smp: LE Enable Encryption refused "
+                        "(status 0x%02x)\n", st);
+        return TIKU_DRV_ERR_INVALID;
+    }
+    bt_state.smp[conn_idx].state = SMP_ENCRYPTING;
+    TIKU_BT_PRINTF("p14.smp: encryption requested (handle=0x%04x)\n",
+                    handle);
+    return TIKU_DRV_OK;
+}
+
+/**
+ * @brief As the central, start pairing on @p conn_idx's link: the Pairing
+ *        Request goes out and the local P-256 key is started.
+ */
+static int bt_smp_init_start(uint8_t conn_idx)
+{
+    uint8_t req[7];
+    int     k;
+
+    bt_smp_session_reset(conn_idx);
+    bt_state.smp[conn_idx].initiator = 1U;
+    for (k = 0; k < 6; ++k) {
+        bt_state.smp[conn_idx].peer_addr_le[k] =
+            bt_state.conns[conn_idx].info.peer_addr[5 - k];
+    }
+    bt_state.smp[conn_idx].peer_addr_type =
+        bt_state.conns[conn_idx].info.peer_addr_type;
+    if (bt_rand_bytes(bt_state.smp[conn_idx].local_nonce, 16U) != 0) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    /* IOCap NoInputNoOutput (Just Works), no OOB, SC + Bonding, a 16-byte
+     * key, and no keys distributed either way. */
+    req[0] = SMP_OP_PAIRING_REQUEST;
+    req[1] = 0x03U;
+    req[2] = 0x00U;
+    req[3] = (uint8_t)(SMP_AUTHREQ_SC | 0x01U);
+    req[4] = 16U;
+    req[5] = 0x00U;
+    req[6] = 0x00U;
+    bt_state.smp[conn_idx].own_iocap[0] = req[1];
+    bt_state.smp[conn_idx].own_iocap[1] = req[2];
+    bt_state.smp[conn_idx].own_iocap[2] = req[3];
+    bt_state.smp[conn_idx].state = SMP_WAITING_PUBKEY;
+    bt_smp_send(conn_idx, req, sizeof req);
+    TIKU_BT_PRINTF("p14.smp: Pairing Request sent (LE-SC Just-Works, "
+                    "initiator)\n");
+    if (bt_smp_request_local_pubkey() != TIKU_DRV_OK) {
+        bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+        return TIKU_DRV_ERR_INVALID;
+    }
+    return TIKU_DRV_OK;
+}
+
+/** @brief Send PKa once the Pairing Response and the local key are in. */
+static void bt_smp_init_try_send_pka(uint8_t conn_idx)
+{
+    uint8_t pdu[65];
+    uint8_t i;
+
+    if (!bt_state.smp[conn_idx].got_response
+        || !bt_state.smp[conn_idx].have_pubkey
+        || bt_state.smp[conn_idx].pka_sent) {
+        return;
+    }
+    pdu[0] = SMP_OP_PAIRING_PUBLIC_KEY;
+    for (i = 0U; i < 64U; ++i) {
+        pdu[1U + i] = bt_state.smp[conn_idx].local_pubkey[i];
+    }
+    bt_smp_send(conn_idx, pdu, sizeof pdu);
+    bt_state.smp[conn_idx].pka_sent = 1U;
+    TIKU_BT_PRINTF("p14.smp: sent local Public Key (PKa)\n");
+}
+
+/** @brief Send the initiator's DHKey check Ea. */
+static int bt_smp_init_send_ea(uint8_t conn_idx)
+{
+    static const uint8_t R0[16] = {0};
+    uint8_t Na[16], Nb[16], A[7], B[7], iocap[3], pdu[17];
+    int     rc;
+
+    bt_smp_nonces(conn_idx, Na, Nb);
+    bt_smp_addrs(conn_idx, A, B);
+    iocap[0] = bt_state.smp[conn_idx].own_iocap[2];   /* AuthReq */
+    iocap[1] = bt_state.smp[conn_idx].own_iocap[1];   /* OOB     */
+    iocap[2] = bt_state.smp[conn_idx].own_iocap[0];   /* IOCap   */
+    rc = bt_smp_f6(bt_state.smp[conn_idx].mackey, Na, Nb, R0, iocap, A, B,
+                   &pdu[1]);
+    if (rc != TIKU_DRV_OK) return rc;
+    pdu[0] = SMP_OP_PAIRING_DHKEY_CHECK;
+    bt_smp_send(conn_idx, pdu, sizeof pdu);
+    TIKU_BT_PRINTF("p14.smp: sent DH Check Ea\n");
+    return TIKU_DRV_OK;
+}
+
+/**
+ * @brief The central asks for security: with a bond for this peer the
+ *        stored key encrypts the link, else pairing starts.
+ */
+static void bt_smp_init_secure(uint8_t conn_idx)
+{
+    tiku_bt_bond_record_t rec;
+    uint8_t addr_le[6];
+    int     k;
+
+    if (bt_state.smp[conn_idx].state != SMP_IDLE) return;  /* under way */
+    for (k = 0; k < 6; ++k) {
+        addr_le[k] = bt_state.conns[conn_idx].info.peer_addr[5 - k];
+    }
+    if (bt_bond_find_by_addr(bt_state.conns[conn_idx].info.peer_addr_type,
+                             addr_le, &rec) == TIKU_DRV_OK) {
+        for (k = 0; k < 16; ++k) bt_state.smp[conn_idx].ltk[k] = rec.ltk[k];
+        TIKU_BT_PRINTF("p14.smp: bonded peer: encrypting with the stored "
+                        "LTK\n");
+        (void)bt_smp_start_encryption(conn_idx, rec.ltk);
+        return;
+    }
+    (void)bt_smp_init_start(conn_idx);
+}
+
+/**
+ * @brief Handle one SMP PDU on a link where this end is the central.
+ */
+static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
+                                    uint16_t len)
+{
+    uint8_t i;
+
+    switch (pdu[0]) {
+    case SMP_OP_SECURITY_REQUEST:
+        TIKU_BT_PRINTF("p14.smp: Security Request from the peripheral\n");
+        bt_smp_init_secure(conn_idx);
+        return;
+
+    case SMP_OP_PAIRING_RESPONSE:
+        if (len < 7U || bt_state.smp[conn_idx].state != SMP_WAITING_PUBKEY
+            || bt_state.smp[conn_idx].got_response) {
+            break;
+        }
+        if ((pdu[3] & SMP_AUTHREQ_SC) == 0U) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_PAIRING_NOT_SUPPORTED);
+            return;
+        }
+        bt_state.smp[conn_idx].peer_iocap[0] = pdu[1];   /* IOCap   */
+        bt_state.smp[conn_idx].peer_iocap[1] = pdu[2];   /* OOB     */
+        bt_state.smp[conn_idx].peer_iocap[2] = pdu[3];   /* AuthReq */
+        bt_state.smp[conn_idx].got_response  = 1U;
+        TIKU_BT_PRINTF("p14.smp: Pairing Response in\n");
+        bt_smp_init_try_send_pka(conn_idx);
+        return;
+
+    case SMP_OP_PAIRING_PUBLIC_KEY:
+        if (len < 65U || !bt_state.smp[conn_idx].pka_sent
+            || bt_state.smp[conn_idx].have_peer_pubkey) {
+            break;
+        }
+        for (i = 0U; i < 64U; ++i) {
+            bt_state.smp[conn_idx].peer_pubkey[i] = pdu[1U + i];
+        }
+        bt_state.smp[conn_idx].have_peer_pubkey = 1U;
+        bt_state.smp[conn_idx].state = SMP_WAITING_CONFIRM;
+        TIKU_BT_PRINTF("p14.smp: received peer Public Key (PKb)\n");
+        if (bt_smp_try_request_dhkey(conn_idx) != TIKU_DRV_OK) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+        }
+        return;
+
+    case SMP_OP_PAIRING_CONFIRM:
+        if (len < 17U
+            || bt_state.smp[conn_idx].state != SMP_WAITING_CONFIRM) {
+            break;
+        }
+        for (i = 0U; i < 16U; ++i) {
+            bt_state.smp[conn_idx].peer_confirm[i] = pdu[1U + i];
+        }
+        {
+            uint8_t out[17];
+            out[0] = SMP_OP_PAIRING_RANDOM;
+            for (i = 0U; i < 16U; ++i) {
+                out[1U + i] = bt_state.smp[conn_idx].local_nonce[i];
+            }
+            bt_state.smp[conn_idx].state = SMP_WAITING_RANDOM;
+            bt_smp_send(conn_idx, out, sizeof out);
+            TIKU_BT_PRINTF("p14.smp: Cb in, sent Pairing Random Na\n");
+        }
+        return;
+
+    case SMP_OP_PAIRING_RANDOM: {
+        uint8_t cb[16];
+        if (len < 17U
+            || bt_state.smp[conn_idx].state != SMP_WAITING_RANDOM) {
+            break;
+        }
+        for (i = 0U; i < 16U; ++i) {
+            bt_state.smp[conn_idx].peer_nonce[i] = pdu[1U + i];
+        }
+        bt_state.smp[conn_idx].have_peer_random = 1U;
+        /* The responder committed to Nb in Cb = f4(PKbx, PKax, Nb, 0). */
+        if (bt_smp_f4(bt_state.smp[conn_idx].peer_pubkey,
+                      bt_state.smp[conn_idx].local_pubkey,
+                      bt_state.smp[conn_idx].peer_nonce, 0x00U, cb)
+            != TIKU_DRV_OK) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+            return;
+        }
+        for (i = 0U; i < 16U; ++i) {
+            if (cb[i] != bt_state.smp[conn_idx].peer_confirm[i]) {
+                bt_smp_send_failed(conn_idx, SMP_ERR_CONFIRM_VALUE_FAILED);
+                return;
+            }
+        }
+        TIKU_BT_PRINTF("p14.smp: Nb in, Cb checks\n");
+        bt_state.smp[conn_idx].state      = SMP_WAITING_DHCHECK;
+        bt_state.smp[conn_idx].pending_f5 = 1U;
+        (void)bt_smp_try_derive_keys(conn_idx);   /* Ea goes out from it */
+        return;
+    }
+
+    case SMP_OP_PAIRING_DHKEY_CHECK: {
+        static const uint8_t R0[16] = {0};
+        uint8_t Na[16], Nb[16], A[7], B[7], iocap[3], eb[16];
+        if (len < 17U
+            || bt_state.smp[conn_idx].state != SMP_WAITING_DHCHECK
+            || bt_state.smp[conn_idx].pending_f5) {
+            break;
+        }
+        bt_smp_nonces(conn_idx, Na, Nb);
+        bt_smp_addrs(conn_idx, A, B);
+        iocap[0] = bt_state.smp[conn_idx].peer_iocap[2];  /* AuthReq */
+        iocap[1] = bt_state.smp[conn_idx].peer_iocap[1];  /* OOB     */
+        iocap[2] = bt_state.smp[conn_idx].peer_iocap[0];  /* IOCap   */
+        if (bt_smp_f6(bt_state.smp[conn_idx].mackey, Nb, Na, R0, iocap,
+                      B, A, eb) != TIKU_DRV_OK) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+            return;
+        }
+        for (i = 0U; i < 16U; ++i) {
+            if (eb[i] != pdu[1U + i]) {
+                bt_smp_send_failed(conn_idx, SMP_ERR_DHKEY_CHECK_FAILED);
+                return;
+            }
+        }
+        TIKU_BT_PRINTF("p14.smp: Eb checks: paired\n");
+        {
+            tiku_bt_bond_record_t rec;
+            uint8_t k;
+            rec.magic          = TIKU_BT_BOND_MAGIC;
+            rec.peer_addr_type = bt_state.smp[conn_idx].peer_addr_type;
+            for (k = 0U; k < 6U; ++k) {
+                rec.peer_addr[k] = bt_state.conns[conn_idx].info.peer_addr[k];
+            }
+            rec._pad = 0U;
+            for (k = 0U; k < 16U; ++k) {
+                rec.ltk[k] = bt_state.smp[conn_idx].ltk[k];
+            }
+            rec.flags = (uint32_t)SMP_AUTHREQ_SC;
+            (void)tiku_bt_bond_save(0U, &rec);
+            TIKU_BT_PRINTF("p14.smp: bond saved slot 0\n");
+        }
+        if (bt_smp_start_encryption(conn_idx, bt_state.smp[conn_idx].ltk)
+            != TIKU_DRV_OK) {
+            bt_smp_session_reset(conn_idx);
+        }
+        return;
+    }
+
+    case SMP_OP_PAIRING_FAILED:
+        if (len >= 2U) {
+            TIKU_BT_PRINTF("p14.smp: peer sent Pairing Failed "
+                            "reason=0x%02x\n", pdu[1]);
+        }
+        bt_smp_session_reset(conn_idx);
+        return;
+
+    default:
+        break;
+    }
+    TIKU_BT_PRINTF("p14.smp: unexpected opcode 0x%02x (state=%u)\n", pdu[0],
+                    bt_state.smp[conn_idx].state);
+    bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+}
+
+/*---------------------------------------------------------------------------*/
 /* SMP main handler                                                          */
 /*---------------------------------------------------------------------------*/
 /**
@@ -2193,6 +3195,10 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
                           uint16_t len)
 {
     if (len < 1U) return;
+    if (bt_state.conns[conn_idx].info.role == 0U) {   /* this end: central */
+        bt_handle_smp_initiator(conn_idx, pdu, len);
+        return;
+    }
     switch (pdu[0]) {
     case SMP_OP_PAIRING_REQUEST: {
         if (len < 7U) {
@@ -2255,13 +3261,8 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
         }
+        bt_smp_session_reset(conn_idx);           /* responder's side */
         bt_state.smp[conn_idx].state             = SMP_WAITING_PUBKEY;
-        bt_state.smp[conn_idx].have_pubkey       = 0U;
-        bt_state.smp[conn_idx].have_dhkey        = 0U;
-        bt_state.smp[conn_idx].have_peer_pubkey  = 0U;
-        bt_state.smp[conn_idx].have_peer_random  = 0U;
-        bt_state.smp[conn_idx].pending_pubkey_tx = 0U;
-        bt_state.smp[conn_idx].pending_f5        = 0U;
         if (bt_smp_request_local_pubkey() != TIKU_DRV_OK) {
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
@@ -2288,10 +3289,9 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
         }
         bt_state.smp[conn_idx].have_peer_pubkey  = 1U;
         bt_state.smp[conn_idx].pending_pubkey_tx = 1U;
-        /* Kick chip-side DHKey computation immediately so it overlaps
-         * with the SMP confirm-exchange. */
-        if (bt_smp_request_dhkey(bt_state.smp[conn_idx].peer_pubkey)
-            != TIKU_DRV_OK) {
+        /* Kick chip-side DHKey computation as soon as the local key is in
+         * too, so it overlaps with the SMP confirm-exchange. */
+        if (bt_smp_try_request_dhkey(conn_idx) != TIKU_DRV_OK) {
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
         }
@@ -2558,7 +3558,7 @@ static uint8_t bt_strlen_capped(const char *s, uint8_t cap)
 }
 
 /**
- * @brief Issue the three-step LE advertising-bring-up command sequence
+ * @brief Issue the LE advertising-bring-up command sequence
  *
  * Each command's Command Complete event is awaited and the status
  * byte checked; a non-zero status anywhere aborts the chain. Caller
@@ -2568,11 +3568,15 @@ static uint8_t bt_strlen_capped(const char *s, uint8_t cap)
  *                  record. Need NOT be NUL-terminated; @p name_len is
  *                  authoritative.
  * @param name_len  Length of @p name in bytes (1..26).
- * @return TIKU_DRV_OK on success, TIKU_DRV_ERR_INVALID if any of the
- *         three Command Complete events reports a non-zero status,
+ * @param adv_type  0x00 ADV_IND (connectable) or 0x03 ADV_NONCONN_IND
+ * @param uuid128   A 128-bit service UUID for the scan response of a
+ *                  connectable advert, or NULL
+ * @return TIKU_DRV_OK on success, TIKU_DRV_ERR_INVALID if any
+ *         Command Complete event reports a non-zero status,
  *         or a transport error from bt_hci_cmd_response().
  */
-static int bt_advertise_setup(const char *name, uint8_t name_len)
+static int bt_advertise_setup(const char *name, uint8_t name_len,
+                              uint8_t adv_type, const uint8_t *uuid128)
 {
     int     rc;
     int     n;
@@ -2604,7 +3608,7 @@ static int bt_advertise_setup(const char *name, uint8_t name_len)
         const uint8_t params[15] = {
             0xA0U, 0x00U,                     /* interval_min LE */
             0xF0U, 0x00U,                     /* interval_max LE */
-            0x00U,                            /* adv type ADV_IND */
+            adv_type,                         /* ADV_IND / NONCONN */
             0x00U,                            /* own_addr_type public */
             0x00U,                            /* peer_addr_type */
             0x00U, 0x00U, 0x00U, 0x00U,
@@ -2622,7 +3626,8 @@ static int bt_advertise_setup(const char *name, uint8_t name_len)
             return (rc == TIKU_DRV_OK) ? TIKU_DRV_ERR_INVALID : rc;
         }
         TIKU_BT_PRINTF("p7.A: LE_Set_Adv_Params OK "
-                        "(100..150ms, ADV_IND)\n");
+                        "(100..150ms, %s)\n",
+                        adv_type == 0x00U ? "ADV_IND" : "ADV_NONCONN_IND");
     }
 
     /* Step 2: LE_Set_Advertising_Data (32 bytes: 1 len + 31 data). */
@@ -2662,6 +3667,29 @@ static int bt_advertise_setup(const char *name, uint8_t name_len)
         }
         TIKU_BT_PRINTF("p7.B: LE_Set_Adv_Data OK (%u B used "
                         "of 31)\n", off);
+    }
+
+    /* Step 2b: a connectable advert's scan response: the service UUID
+     * as a Complete List of 128-bit Service UUIDs (18 bytes), or
+     * nothing, which clears one an earlier advert set. */
+    if (adv_type == 0x00U) {
+        uint8_t payload[32] = {0};
+        if (uuid128 != (const uint8_t *)0) {
+            uint8_t k;
+            payload[0] = 18U;            /* Scan_Response_Data_Length */
+            payload[1] = 17U;            /* AD length: type + 16 bytes */
+            payload[2] = 0x07U;          /* Complete List, 128-bit     */
+            for (k = 0U; k < 16U; ++k) payload[3U + k] = uuid128[k];
+        }
+        rc = bt_hci_cmd_response(HCI_OP_LE_SET_SCAN_RSP_DATA,
+                                 payload, sizeof payload,
+                                 evt, sizeof evt, &n);
+        if (rc != TIKU_DRV_OK || n < 7 || evt[6] != 0x00U) {
+            TIKU_BT_PRINTF("p7.B: LE_Set_Scan_Rsp_Data FAIL rc=%d "
+                            "status=0x%02x\n", rc,
+                            (n >= 7) ? evt[6] : 0xFFU);
+            return (rc == TIKU_DRV_OK) ? TIKU_DRV_ERR_INVALID : rc;
+        }
     }
 
     /* Step 3: LE_Set_Advertising_Enable(1). */
@@ -2862,12 +3890,19 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
      *   [17..18] conn_latency        (2 LE)
      *   [19..20] supervision_timeout (2 LE, 10 ms units)
      *   [21]   master_clock_accuracy (1) -- unused here
+     * The Enhanced Connection Complete (0x0A), which a controller may
+     * send instead, puts the local and peer resolvable private
+     * addresses (6 + 6) before the interval.
      */
-    if (pkt[3] == LE_SUBEVT_CONNECTION_COMPLETE && len >= 22) {
+    if ((pkt[3] == LE_SUBEVT_CONNECTION_COMPLETE && len >= 22)
+        || (pkt[3] == LE_SUBEVT_ENH_CONNECTION_COMPLETE && len >= 34)) {
         uint8_t  status = pkt[4];
         uint16_t handle = (uint16_t)(pkt[5] | ((uint16_t)pkt[6] << 8));
+        int      at     = (pkt[3] == LE_SUBEVT_CONNECTION_COMPLETE) ? 15
+                                                                    : 27;
         int      idx;
 
+        bt_state.connecting = 0U;        /* the outcome is in */
         if (status != 0x00U) {
             TIKU_BT_PRINTF("p9: LE Connection Complete FAIL "
                             "status=0x%02x handle=0x%04x\n", status, handle);
@@ -2887,14 +3922,17 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
             c->peer_addr_type      = pkt[8];
             for (k = 0; k < 6; ++k) c->peer_addr[k] = pkt[14 - k];
             c->conn_interval_units =
-                (uint16_t)(pkt[15] | ((uint16_t)pkt[16] << 8));
+                (uint16_t)(pkt[at] | ((uint16_t)pkt[at + 1] << 8));
             c->conn_latency        =
-                (uint16_t)(pkt[17] | ((uint16_t)pkt[18] << 8));
+                (uint16_t)(pkt[at + 2] | ((uint16_t)pkt[at + 3] << 8));
             c->supv_timeout_units  =
-                (uint16_t)(pkt[19] | ((uint16_t)pkt[20] << 8));
+                (uint16_t)(pkt[at + 4] | ((uint16_t)pkt[at + 5] << 8));
         }
-        bt_state.conns[idx].in_use  = 1U;
-        bt_state.conns[idx].att_mtu = ATT_MTU_DEFAULT;
+        bt_state.conns[idx].in_use    = 1U;
+        bt_state.conns[idx].att_mtu   = ATT_MTU_DEFAULT;
+        bt_state.conns[idx].tx_octets = BT_LL_OCTETS_MIN;
+        bt_state.conns[idx].rx_need   = 0U;
+        bt_smp_session_reset((uint8_t)idx);
         /* When advertising as ADV_IND, the chip auto-stops on
          * connection (per Core Spec). Reflect that in the local state. */
         bt_state.advertising = 0U;
@@ -2928,6 +3966,23 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         return;
     }
 
+    /* LE Data Length Change: handle(2), then the payload the link
+     * layer now sends per PDU (2) and its airtime, and the same two for
+     * receiving.  Outgoing ACL fragments are cut to the TX payload. */
+    if (pkt[3] == LE_SUBEVT_DATA_LENGTH_CHANGE && len >= 14) {
+        uint16_t handle = (uint16_t)((pkt[4] | ((uint16_t)pkt[5] << 8))
+                                     & 0x0FFFU);
+        uint16_t tx     = (uint16_t)(pkt[6] | ((uint16_t)pkt[7] << 8));
+        int      idx    = bt_conn_find(handle);
+
+        if (idx >= 0 && tx >= BT_LL_OCTETS_MIN && tx <= 251U) {
+            bt_state.conns[idx].tx_octets = tx;
+        }
+        TIKU_BT_PRINTF("p9: data length handle=0x%04x tx=%u B\n",
+                        handle, tx);
+        return;
+    }
+
     /* Phase 14: chip-side P-256 pubkey readback complete. Payload:
      *   [4]    status
      *   [5..68] 64-byte public key (LE byte order, X || Y) */
@@ -2953,9 +4008,19 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
                     }
                 }
                 bt_state.smp[i].have_pubkey = 1U;
-                /* If the peer pubkey is already in hand, the local
-                 * pubkey + Pairing Confirm are owed now. */
-                bt_smp_try_send_pubkey_confirm((uint8_t)i);
+                if (bt_smp_try_request_dhkey((uint8_t)i) != TIKU_DRV_OK) {
+                    bt_smp_send_failed((uint8_t)i,
+                                       SMP_ERR_UNSPECIFIED_REASON);
+                    break;
+                }
+                /* The initiator sends its key once the Pairing Response
+                 * is in; the responder its key + Pairing Confirm once
+                 * the peer's key is. */
+                if (bt_state.smp[i].initiator) {
+                    bt_smp_init_try_send_pka((uint8_t)i);
+                } else {
+                    bt_smp_try_send_pubkey_confirm((uint8_t)i);
+                }
                 break;
             }
         }
@@ -3026,6 +4091,10 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
 
             bt_scan_cache_add(evt_type, addr_type, addr,
                               data, data_len, rssi);
+            if (bt_state.adv_hook != (tiku_bt_adv_hook_t)0) {
+                bt_state.adv_hook(evt_type, addr_type, addr, data,
+                                  data_len, rssi);
+            }
 
             off += 9 + (int)data_len + 1;
         }
@@ -3049,6 +4118,19 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
 {
     if (len < 3 || pkt[0] != HCI_PKT_TYPE_EVENT) return;
 
+    /* Number Of Completed Packets: Num_Handles, then a handle and a count
+     * for each; a count is ACL buffers the controller has freed. */
+    if (pkt[1] == HCI_EVT_NUM_COMPLETED_PACKETS && len >= 4) {
+        uint8_t i;
+        for (i = 0U; i < pkt[3] && 7 + 4 * (int)i < len; ++i) {
+            uint16_t c = (uint16_t)(pkt[6U + 4U * i]
+                                    | ((uint16_t)pkt[7U + 4U * i] << 8));
+            bt_state.acl_inflight = (c >= bt_state.acl_inflight)
+                ? 0U : (uint8_t)(bt_state.acl_inflight - c);
+        }
+        return;
+    }
+
     if (pkt[1] == HCI_EVT_DISCONNECTION_COMPLETE && len >= 6) {
         /* Layout: status(1) + handle(2 LE) + reason(1) */
         uint8_t  status = pkt[3];
@@ -3056,15 +4138,21 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
         uint8_t  reason = pkt[6];
         int      idx    = bt_conn_find(handle);
         if (idx >= 0) {
-            bt_state.conns[idx].in_use = 0U;
+            bt_state.conns[idx].in_use  = 0U;
+            bt_state.conns[idx].rx_need = 0U;
+            /* The controller drops a closed link's unsent packets, which
+             * frees their buffers without a Number Of Completed Packets.
+             * The subscriptions were that client's: the next one starts
+             * unsubscribed. */
+            if (bt_any_connection() == 0) {
+                uint8_t k;
+                bt_state.acl_inflight = 0U;
+                for (k = 0U; k < bt_state.cccd_count; ++k) {
+                    bt_state.cccd_value[k] = 0U;
+                }
+            }
             /* Phase 14: clear any in-flight SMP session for the link. */
-            bt_state.smp[idx].state             = SMP_IDLE;
-            bt_state.smp[idx].have_pubkey       = 0U;
-            bt_state.smp[idx].have_dhkey        = 0U;
-            bt_state.smp[idx].have_peer_pubkey  = 0U;
-            bt_state.smp[idx].have_peer_random  = 0U;
-            bt_state.smp[idx].pending_pubkey_tx = 0U;
-            bt_state.smp[idx].pending_f5        = 0U;
+            bt_smp_session_reset((uint8_t)idx);
             TIKU_BT_PRINTF("p9: *** disconnected handle=0x%04x "
                             "reason=0x%02x status=0x%02x ***\n",
                             handle, reason, status);
@@ -3074,14 +4162,16 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
          * disappears from scans after every connect/disconnect
          * cycle. Restart with whatever name was last in use; falls
          * back to "TikuPico" if advertise was never set up. */
-        if (bt_state.adv_name_len > 0U && bt_any_connection() == 0) {
+        if (bt_state.adv_wanted && bt_state.adv_name_len > 0U
+            && bt_any_connection() == 0) {
             char nz[TIKU_BT_ADV_NAME_MAX + 1];
             uint8_t i;
             for (i = 0U; i < bt_state.adv_name_len; ++i) nz[i] = bt_state.adv_name[i];
             nz[bt_state.adv_name_len] = '\0';
             TIKU_BT_PRINTF("p7: auto-readvertise after disconnect "
                            "(name=\"%s\")\n", nz);
-            (void)tiku_bt_advertise_start(nz);
+            (void)bt_advertise_begin(nz, bt_state.adv_type,
+                                     bt_state.adv_uuid128);
         }
         return;
     }
@@ -3162,6 +4252,8 @@ int tiku_bt_init(void)
 {
     bt_state.ready         = 0U;
     bt_state.advertising   = 0U;
+    bt_state.adv_wanted    = 0U;
+    bt_state.connecting    = 0U;
     bt_state.adv_name_len  = 0U;
     bt_state.scanning      = 0U;
     bt_state.scan_count    = 0U;
@@ -3172,10 +4264,15 @@ int tiku_bt_init(void)
     {
         uint8_t k;
         for (k = 0U; k < TIKU_BT_CONN_MAX; ++k) {
-            bt_state.conns[k].in_use  = 0U;
-            bt_state.conns[k].att_mtu = ATT_MTU_DEFAULT;
+            bt_state.conns[k].in_use    = 0U;
+            bt_state.conns[k].att_mtu   = ATT_MTU_DEFAULT;
+            bt_state.conns[k].tx_octets = BT_LL_OCTETS_MIN;
+            bt_state.conns[k].rx_need   = 0U;
         }
     }
+    bt_state.acl_len      = 0U;
+    bt_state.acl_num      = 0U;
+    bt_state.acl_inflight = 0U;
     /* user_svc_count is not cleared on re-init -- services
      * registered at boot survive a re-init, which matches the
      * convention used by tiku_drv_registry. */
@@ -3253,10 +4350,10 @@ int tiku_bt_init(void)
                 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0x00, 0x20
             };
             /* Connection Complete, Advertising Report, Connection Update
-             * Complete, Remote Features, LTK Request, P-256 Public Key,
-             * DHKey: sub-events 1-5, 8 and 9. */
+             * Complete, Remote Features, LTK Request, Data Length Change,
+             * P-256 Public Key, DHKey: sub-events 1-5 and 7-9. */
             static const uint8_t le_mask[8] = {
-                0x9F, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                0xDF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
             };
 
             if (bt_hci_cmd_response(HCI_OP_SET_EVENT_MASK, mask, 8U,
@@ -3270,6 +4367,32 @@ int tiku_bt_init(void)
                 TIKU_BT_PRINTF("p6.D: LE_Set_Event_Mask refused\n");
             }
         }
+
+        /* ACL flow control: the payload one HCI ACL packet carries and the
+         * packets the controller buffers.  A controller whose LE links
+         * share the BR/EDR buffers answers LE_Read_Buffer_Size with 0, and
+         * Read_Buffer_Size then gives them (ACL length(2), SCO length(1),
+         * ACL count(2), SCO count(2)).  Unknown leaves the sends unpaced. */
+        if (bt_hci_cmd_response(HCI_OP_LE_READ_BUFFER_SIZE,
+                                (const uint8_t *)0, 0U,
+                                evt, sizeof evt, &n) == TIKU_DRV_OK
+            && n >= 10 && evt[6] == 0U) {
+            bt_state.acl_len = (uint16_t)(evt[7] | ((uint16_t)evt[8] << 8));
+            bt_state.acl_num = evt[9];
+        }
+        if (bt_state.acl_len == 0U
+            && bt_hci_cmd_response(HCI_OP_READ_BUFFER_SIZE,
+                                   (const uint8_t *)0, 0U,
+                                   evt, sizeof evt, &n) == TIKU_DRV_OK
+            && n >= 14 && evt[6] == 0U) {
+            uint16_t num = (uint16_t)(evt[10] | ((uint16_t)evt[11] << 8));
+            bt_state.acl_len = (uint16_t)(evt[7] | ((uint16_t)evt[8] << 8));
+            bt_state.acl_num = (uint8_t)((num > 255U) ? 255U : num);
+        }
+        if (bt_state.acl_len == 0U) bt_state.acl_num = 0U;
+        TIKU_BT_PRINTF("p6.D: ACL buffers %u x %u B\n",
+                        (unsigned)bt_state.acl_num,
+                        (unsigned)bt_state.acl_len);
 
         if (bt_hci_cmd_response(HCI_OP_READ_LOCAL_VERSION,
                                 (const uint8_t *)0, 0U,
@@ -3311,6 +4434,24 @@ int tiku_bt_init(void)
                             bt_state.bd_addr[2], bt_state.bd_addr[3],
                             bt_state.bd_addr[4], bt_state.bd_addr[5]);
         }
+
+        /* SMP's AES: the controller's LE Encrypt when it answers one,
+         * else the stack's own.  P-256 is found out at the first
+         * pairing, from the controller's answer to the key request. */
+        bt_state.sw_aes  = 0U;
+        bt_state.sw_p256 = 0U;
+#if (TIKU_BT_SW_CRYPTO + 0)
+        {
+            static const uint8_t blk[32] = {0};
+            if (bt_hci_cmd_response(HCI_OP_LE_ENCRYPT, blk, 32U,
+                                    evt, sizeof evt, &n) != TIKU_DRV_OK
+                || n < 23 || evt[6] != 0U) {
+                bt_state.sw_aes = 1U;
+            }
+            TIKU_BT_PRINTF("p6.D: SMP AES from the %s\n",
+                            bt_state.sw_aes ? "stack" : "controller");
+        }
+#endif
     }
 
 #ifdef BT_SMP_SELFTEST
@@ -3363,7 +4504,12 @@ const char *tiku_bt_fw_version(void)
 /* GAP advertising — public API                                              */
 /*---------------------------------------------------------------------------*/
 
-int tiku_bt_advertise_start(const char *name)
+/**
+ * @brief Start advertising @p name as @p adv_type, with @p uuid128 in a
+ *        connectable advert's scan response (NULL: none).
+ */
+static int bt_advertise_begin(const char *name, uint8_t adv_type,
+                              const uint8_t *uuid128)
 {
     uint8_t name_len;
     int     rc;
@@ -3379,9 +4525,104 @@ int tiku_bt_advertise_start(const char *name)
         (void)tiku_bt_advertise_stop();
     }
 
-    rc = bt_advertise_setup(name, name_len);
-    if (rc == TIKU_DRV_OK) bt_state.advertising = 1U;
+    rc = bt_advertise_setup(name, name_len, adv_type, uuid128);
+    if (rc == TIKU_DRV_OK) {
+        bt_state.advertising = 1U;
+        bt_state.adv_wanted  = 1U;
+        bt_state.adv_type    = adv_type;
+        bt_state.adv_uuid128 = uuid128;
+        /* An advertiser's connection arrives as an event: the runner must
+         * be polling for it. */
+        bt_wake_runner();
+    }
     return rc;
+}
+
+int tiku_bt_advertise_start(const char *name)
+{
+    return bt_advertise_begin(name, 0x00U, (const uint8_t *)0);
+}
+
+int tiku_bt_advertise_service(const char *name, const uint8_t *uuid128)
+{
+    return bt_advertise_begin(name, 0x00U, uuid128);
+}
+
+int tiku_bt_advertise_beacon(const char *name)
+{
+    return bt_advertise_begin(name, 0x03U, (const uint8_t *)0);
+}
+
+int tiku_bt_advertise_raw(uint8_t adv_type, uint16_t interval_ms,
+                          const uint8_t *ad, uint8_t ad_len)
+{
+    uint8_t  params[15] = {0};
+    uint8_t  payload[32] = {0};
+    uint8_t  evt[64];
+    uint8_t  en = 1U;
+    uint16_t iv;
+    uint8_t  k;
+    int      n;
+    int      rc;
+
+    if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
+    if (ad_len > 31U || (ad == (const uint8_t *)0 && ad_len != 0U)) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    if (bt_state.advertising) {
+        (void)tiku_bt_advertise_stop();
+    }
+    /* Interval in 0.625 ms units, both ends of the range; then the
+     * caller's type, the public address, all three channels. */
+    iv = bt_ms_to_chip_units(interval_ms);
+    if (iv < 0x0020U) iv = 0x0020U;
+    params[0] = (uint8_t)(iv & 0xFFU);
+    params[1] = (uint8_t)((iv >> 8) & 0xFFU);
+    params[2] = params[0];
+    params[3] = params[1];
+    params[4] = adv_type;
+    params[13] = 0x07U;
+    rc = bt_hci_cmd_response(HCI_OP_LE_SET_ADV_PARAMS, params, sizeof params,
+                             evt, sizeof evt, &n);
+    if (rc != TIKU_DRV_OK || n < 7 || evt[6] != 0x00U) {
+        return (rc == TIKU_DRV_OK) ? TIKU_DRV_ERR_INVALID : rc;
+    }
+    payload[0] = ad_len;
+    for (k = 0U; k < ad_len; ++k) payload[1U + k] = ad[k];
+    rc = bt_hci_cmd_response(HCI_OP_LE_SET_ADV_DATA, payload, sizeof payload,
+                             evt, sizeof evt, &n);
+    if (rc != TIKU_DRV_OK || n < 7 || evt[6] != 0x00U) {
+        return (rc == TIKU_DRV_OK) ? TIKU_DRV_ERR_INVALID : rc;
+    }
+    rc = bt_hci_cmd_response(HCI_OP_LE_SET_ADV_ENABLE, &en, 1U,
+                             evt, sizeof evt, &n);
+    if (rc != TIKU_DRV_OK || n < 7 || evt[6] != 0x00U) {
+        return (rc == TIKU_DRV_OK) ? TIKU_DRV_ERR_INVALID : rc;
+    }
+    bt_state.advertising = 1U;
+    bt_state.adv_wanted  = 0U;           /* no re-advertise of a raw set */
+    bt_wake_runner();
+    return TIKU_DRV_OK;
+}
+
+void tiku_bt_set_adv_hook(tiku_bt_adv_hook_t fn)
+{
+    bt_state.adv_hook = fn;
+}
+
+int tiku_bt_adv_tx_power(int8_t *dbm)
+{
+    uint8_t evt[16];
+    int     n;
+    int     rc;
+
+    if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
+    rc = bt_hci_cmd_response(HCI_OP_LE_READ_ADV_TX_POWER, (const uint8_t *)0,
+                             0U, evt, sizeof evt, &n);
+    if (rc != TIKU_DRV_OK) return rc;
+    if (n < 8 || evt[6] != 0x00U) return TIKU_DRV_ERR_INVALID;
+    *dbm = (int8_t)evt[7];
+    return TIKU_DRV_OK;
 }
 
 int tiku_bt_advertise_stop(void)
@@ -3396,6 +4637,7 @@ int tiku_bt_advertise_stop(void)
     rc = bt_hci_cmd_response(HCI_OP_LE_SET_ADV_ENABLE, &en, 1U,
                              evt, sizeof evt, &n);
     bt_state.advertising = 0U;
+    bt_state.adv_wanted  = 0U;
     if (rc != TIKU_DRV_OK || n < 7) return rc;
     /* status byte non-zero usually means "already disabled" — fine. */
     return TIKU_DRV_OK;
@@ -3424,6 +4666,45 @@ int tiku_bt_is_advertising(void)
 static void bt_wake_runner(void)
 {
     (void)tiku_process_post(&tiku_bt_runner, TIKU_EVENT_POLL, NULL);
+}
+
+/*---------------------------------------------------------------------------*/
+/* Power                                                                     */
+/*---------------------------------------------------------------------------*/
+
+int tiku_bt_power(uint8_t on)
+{
+#if (TIKU_BT_ON_DEMAND + 0)
+    return tiku_bt_controller_power(on);
+#else
+    (void)on;
+    return TIKU_DRV_ERR_NOT_PRESENT;
+#endif
+}
+
+void tiku_bt_shutdown(void)
+{
+    uint8_t k;
+
+    if (bt_state.ready) {
+        uint8_t evt[16];
+        int     n;
+        (void)bt_hci_cmd_response(HCI_OP_RESET, (const uint8_t *)0, 0U,
+                                  evt, sizeof evt, &n);
+    }
+    bt_state.ready        = 0U;
+    bt_state.advertising  = 0U;
+    bt_state.adv_wanted   = 0U;
+    bt_state.connecting   = 0U;
+    bt_state.adv_name_len = 0U;
+    bt_state.scanning     = 0U;
+    bt_state.acl_inflight = 0U;
+    for (k = 0U; k < TIKU_BT_CONN_MAX; ++k) {
+        bt_state.conns[k].in_use  = 0U;
+        bt_state.conns[k].rx_need = 0U;
+        bt_state.smp[k].state     = SMP_IDLE;
+    }
+    bt_wake_runner();       /* back to waiting for an event */
 }
 
 int tiku_bt_scan_start(uint8_t active, uint16_t interval_ms,
@@ -3561,6 +4842,35 @@ uint8_t tiku_bt_connections(tiku_bt_connection_t *out,
     return n;
 }
 
+int tiku_bt_pair(uint16_t handle)
+{
+    int     idx = -1;
+    uint8_t i;
+
+    if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
+    if (handle == 0xFFFFU) {
+        for (i = 0U; i < TIKU_BT_CONN_MAX && idx < 0; ++i) {
+            if (bt_state.conns[i].in_use) idx = (int)i;
+        }
+        if (idx < 0) return TIKU_DRV_ERR_NOT_PRESENT;
+    } else {
+        idx = bt_conn_find(handle);
+        if (idx < 0) return TIKU_DRV_ERR_INVALID;
+    }
+    if (bt_state.conns[idx].info.role == 0U) {
+        /* The central pairs afresh; the new key replaces a bond. */
+        return bt_smp_init_start((uint8_t)idx);
+    }
+    {
+        /* The peripheral asks the central to pair (SC + Bonding). */
+        uint8_t sec_req[2];
+        sec_req[0] = SMP_OP_SECURITY_REQUEST;
+        sec_req[1] = (uint8_t)(SMP_AUTHREQ_SC | 0x01U);
+        bt_smp_send((uint8_t)idx, sec_req, sizeof sec_req);
+    }
+    return TIKU_DRV_OK;
+}
+
 int tiku_bt_disconnect(uint16_t handle)
 {
     int     idx;
@@ -3674,6 +4984,7 @@ int tiku_bt_connect_to(const uint8_t peer_addr[6],
     }
     (void)evt; (void)n;
     if (rc == TIKU_DRV_OK) {
+        bt_state.connecting = 1U;
         TIKU_BT_PRINTF("p13: LE_Create_Connection requested "
                         "(peer %02x:%02x:%02x:%02x:%02x:%02x "
                         "type=%s)\n",
@@ -3703,11 +5014,12 @@ int tiku_bt_client_write(uint16_t conn_handle, uint16_t attr_handle,
     if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
     if (bt_conn_find(conn_handle) < 0) return TIKU_DRV_ERR_INVALID;
     if (value == (const uint8_t *)0) return TIKU_DRV_ERR_INVALID;
-    if ((uint32_t)len + 3U > (uint32_t)ATT_MTU_DEFAULT) {
+    if ((uint32_t)len + 3U
+        > (uint32_t)bt_att_mtu((uint8_t)bt_conn_find(conn_handle))) {
         return TIKU_DRV_ERR_INVALID;
     }
     {
-        uint8_t  pdu[ATT_MTU_DEFAULT];
+        uint8_t  pdu[BT_ATT_MTU_MAX];
         uint16_t i;
         pdu[0] = ATT_OP_WRITE_REQ;
         pdu[1] = (uint8_t)(attr_handle & 0xFFU);
@@ -3768,35 +5080,71 @@ int tiku_bt_register_service(const tiku_bt_service_t *svc)
 int tiku_bt_notify(uint16_t char_uuid, const uint8_t *value,
                          uint16_t len)
 {
-    bt_att_entry_t table[ATT_HANDLE_MAX];
-    uint8_t        n_attrs;
-    int            char_idx;
-    int            cccd_slot = -1;
-    uint8_t        conn_idx;
-    uint8_t        k;
+    uint8_t n_attrs;
+    int     char_idx;
 
     if (bt_state.ready == 0U || value == (const uint8_t *)0) {
         return TIKU_DRV_ERR_INVALID;
     }
-    /* The PDU is opcode(1) + value_handle(2) + value(N); must fit in
-     * the negotiated ATT MTU. Today this caps at the default MTU. */
-    if ((uint16_t)len + 3U > (uint16_t)ATT_MTU_DEFAULT) {
-        return TIKU_DRV_ERR_INVALID;
-    }
-
-    n_attrs = bt_att_snapshot(table);
-    char_idx = bt_att_find_char_value(table, n_attrs, char_uuid);
+    n_attrs = bt_att_snapshot(bt_att_table);
+    char_idx = bt_att_find_char_value(bt_att_table, n_attrs, char_uuid);
     if (char_idx < 0) return TIKU_DRV_ERR_INVALID;
+    return tiku_bt_notify_char(bt_att_table[char_idx].char_ref, value, len);
+}
 
+/** @brief The CCCD slot of characteristic @p c, or -1 if it has none. */
+static int bt_cccd_find(const tiku_bt_char_t *c)
+{
+    uint8_t k;
     for (k = 0U; k < bt_state.cccd_count; ++k) {
-        if (bt_state.cccd_char_uuid[k] == char_uuid) {
-            cccd_slot = (int)k;
-            break;
+        if (bt_state.cccd_char[k] == c) return (int)k;
+    }
+    return -1;
+}
+
+int tiku_bt_subscribed(const tiku_bt_char_t *c)
+{
+    int slot = bt_cccd_find(c);
+    return (slot >= 0 && (bt_state.cccd_value[slot] & 0x0001U) != 0U
+            && bt_any_connection()) ? 1 : 0;
+}
+
+uint16_t tiku_bt_notify_max(void)
+{
+    uint8_t  i;
+
+    for (i = 0U; i < TIKU_BT_CONN_MAX; ++i) {
+        if (bt_state.conns[i].in_use) {
+            /* 3 bytes of notification header, 4 of L2CAP: one ACL packet
+             * the link layer carries whole. */
+            uint16_t m    = (uint16_t)(bt_att_mtu(i) - 3U);
+            uint16_t frag = (uint16_t)(bt_acl_frag_max((int)i) - 7U);
+            return (m < frag) ? m : frag;
         }
     }
+    return 0U;
+}
+
+int tiku_bt_notify_char(const tiku_bt_char_t *c, const uint8_t *value,
+                        uint16_t len)
+{
+    int     char_idx;
+    int     cccd_slot;
+    uint8_t n_attrs;
+    uint8_t conn_idx;
+
+    if (bt_state.ready == 0U || value == (const uint8_t *)0
+        || c == (const tiku_bt_char_t *)0) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    n_attrs = bt_att_snapshot(bt_att_table);
+    char_idx = bt_att_find_char(bt_att_table, n_attrs, c);
+    if (char_idx < 0) return TIKU_DRV_ERR_INVALID;
+
     /* No CCCD allocated for this char (it wasn't NOTIFY/INDICATE
      * capable, or no client read it yet to trigger allocation).
      * Treat as "no subscriber" -- silent no-op. */
+    cccd_slot = bt_cccd_find(c);
     if (cccd_slot < 0) return TIKU_DRV_OK;
     if ((bt_state.cccd_value[cccd_slot] & 0x0001U) == 0U) {
         return TIKU_DRV_OK;
@@ -3805,22 +5153,53 @@ int tiku_bt_notify(uint16_t char_uuid, const uint8_t *value,
     /* Broadcast to every connection (today CONN_MAX=1, loop is forward-
      * compatible). CCCD is per-char today; per-{char, conn} is a
      * Phase 13+ refinement once multi-link bonding is supported. */
-    for (conn_idx = 0U;
-         conn_idx < TIKU_BT_CONN_MAX;
-         ++conn_idx) {
-        uint8_t  pdu[ATT_MTU_DEFAULT];
+    for (conn_idx = 0U; conn_idx < TIKU_BT_CONN_MAX; ++conn_idx) {
+        uint8_t  pdu[BT_ATT_MTU_MAX];
         uint16_t value_handle;
         uint16_t i;
+
         if (bt_state.conns[conn_idx].in_use == 0U) continue;
-        value_handle = table[char_idx].handle;
+        if ((uint32_t)len + 3U > (uint32_t)bt_att_mtu(conn_idx)) {
+            return TIKU_DRV_ERR_INVALID;
+        }
+        /* A notification waits for no controller buffer: with none free
+         * now, take what the controller has sent back once, then refuse
+         * and let the caller retry. */
+        if (bt_state.acl_num != 0U
+            && bt_state.acl_inflight >= bt_state.acl_num) {
+            (void)bt_rx_one(0U, 0U, (uint8_t *)0, 0U, (int *)0);
+            if (bt_state.acl_inflight >= bt_state.acl_num) {
+                return TIKU_BT_ERR_BUSY;
+            }
+        }
+        value_handle = bt_att_table[char_idx].handle;
         pdu[0] = ATT_OP_HANDLE_VALUE_NOTIFY;
         pdu[1] = (uint8_t)(value_handle & 0xFFU);
         pdu[2] = (uint8_t)((value_handle >> 8) & 0xFFU);
         for (i = 0U; i < len; ++i) pdu[3U + i] = value[i];
-        (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
-                          L2CAP_CID_ATT, pdu, (uint16_t)(3U + len));
+        if (bt_send_acl(bt_state.conns[conn_idx].info.handle,
+                        L2CAP_CID_ATT, pdu, (uint16_t)(3U + len))
+            != TIKU_DRV_OK) {
+            return TIKU_DRV_ERR_IO;
+        }
     }
     return TIKU_DRV_OK;
+}
+
+int tiku_bt_security(void)
+{
+    uint8_t i;
+
+    for (i = 0U; i < TIKU_BT_CONN_MAX; ++i) {
+        if (bt_state.conns[i].in_use == 0U) continue;
+        switch (bt_state.smp[i].state) {
+        case SMP_IDLE:       return 0;
+        case SMP_ENCRYPTING: return 2;
+        case SMP_ENCRYPTED:  return 3;
+        default:             return 1;
+        }
+    }
+    return 0;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -3895,6 +5274,7 @@ void tiku_bt_poll(void)
     if (bt_state.ready == 0U) return;
     if (bt_state.scanning == 0U
         && bt_state.advertising == 0U
+        && bt_state.connecting == 0U
         && bt_any_connection() == 0) {
         /* Nothing on-air that could produce events. The empty-ring
          * recv() costs one bp_read32 (~30 us) plus the runner-loop
@@ -3902,23 +5282,9 @@ void tiku_bt_poll(void)
         return;
     }
     {
-        uint8_t pkt[260];
         uint8_t i;
         for (i = 0U; i < 8U; ++i) {
-            int n = tiku_bt_recv(pkt, sizeof pkt);
-            if (n <= 0) break;
-            switch (pkt[0]) {
-            case HCI_PKT_TYPE_EVENT:
-                bt_handle_hci_event(pkt, n);
-                break;
-            case HCI_PKT_TYPE_ACL:
-                bt_handle_acl_pkt(pkt, n);
-                break;
-            default:
-                TIKU_BT_PRINTF("poll: dropping unknown packet type "
-                                "0x%02x (%d B)\n", pkt[0], n);
-                break;
-            }
+            if (bt_rx_one(0U, 0U, (uint8_t *)0, 0U, (int *)0) <= 0) break;
         }
     }
 }
@@ -3940,6 +5306,7 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
 
     TIKU_PROCESS_BEGIN();
 
+    (void)ev;
     (void)data;
 
     while (1) {
@@ -3950,6 +5317,7 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
         if (bt_state.ready
             && (bt_state.scanning
                 || bt_state.advertising
+                || bt_state.connecting
                 || bt_any_connection())) {
             PT_WAIT_UNTIL_TIMEOUT(process_pt, &rx_drain_timer, 0, 1U);
         } else {
@@ -3966,13 +5334,14 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
          * check lives inside bt_demo_push_uptime / tiku_bt_notify, so
          * even an armed timer is harmless without a real client. */
         if (bt_any_connection()) {
+            /* By expiry, not by its event: while a link is up the wait
+             * above runs on the drain timer, and a demo-timer event that
+             * lands in it is spent there. */
             if (bt_demo_notify_armed == 0U) {
                 tiku_timer_set_event(&bt_demo_notify_timer,
                                      TIKU_CLOCK_SECOND);
                 bt_demo_notify_armed = 1U;
-            } else if (ev == TIKU_EVENT_TIMER
-                       && (struct tiku_timer *)data
-                          == &bt_demo_notify_timer) {
+            } else if (tiku_timer_expired(&bt_demo_notify_timer)) {
                 bt_demo_push_uptime();
                 tiku_timer_set_event(&bt_demo_notify_timer,
                                      TIKU_CLOCK_SECOND);
@@ -4001,8 +5370,7 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
  * stub doesn't carry secret material); Phase 14 should add one
  * alongside real key storage.
  */
-static __attribute__((section(".persistent")))
-    tiku_bt_bond_record_t bt_bond_nvm[TIKU_BT_BOND_MAX];
+static TIKU_DURABLE tiku_bt_bond_record_t bt_bond_nvm[TIKU_BT_BOND_MAX];
 
 int tiku_bt_bond_save(uint8_t slot, const tiku_bt_bond_record_t *rec)
 {
