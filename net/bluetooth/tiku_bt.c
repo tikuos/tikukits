@@ -59,6 +59,8 @@
 #include <arch/esp32c61/tiku_trng_arch.h>
 #elif PLATFORM_AMBIQ
 #include <arch/ambiq/tiku_trng_arch.h>
+#elif PLATFORM_NORDIC
+#include <arch/nordic/tiku_trng_arch.h>
 #endif
 
 #ifndef TIKU_BT_PRINTF
@@ -117,6 +119,7 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define HCI_OP_READ_BD_ADDR             0x1009U
 #define HCI_OP_READ_BUFFER_SIZE         0x1005U
 #define HCI_OP_LE_READ_BUFFER_SIZE      0x2002U
+#define HCI_OP_LE_SET_RANDOM_ADDR       0x2005U
 #define HCI_OP_LE_SET_ADV_PARAMS        0x2006U
 #define HCI_OP_LE_READ_ADV_TX_POWER     0x2007U
 #define HCI_OP_LE_SET_ADV_DATA          0x2008U
@@ -333,6 +336,7 @@ static struct {
      * BD_ADDRs from any vendor have at least one non-zero byte (the
      * OUI). Avoids an extra info_ready flag. */
     uint8_t                 bd_addr[6];       /* MSB-first print order */
+    uint8_t                 addr_type;        /* 0 public, 1 random static */
     tiku_bt_version_t version;
 
     /* Phase 7 — GAP advertising state. The name is cached because
@@ -1905,6 +1909,43 @@ static int bt_hci_cmd_status(uint16_t opcode, const uint8_t *params,
     return TIKU_DRV_ERR_TIMEOUT;
 }
 
+/**
+ * @brief A controller with no public address answers BD_ADDR with zeros:
+ *        the host takes a random static one, the same every boot (from the
+ *        device's unique id) so a central's bond holds, and sets it with
+ *        LE Set Random Address.  The identity stays unset if it is refused.
+ *        It differs from what the board's own BLE paths derive from that
+ *        id: a client caches a server's handles by address, and theirs are
+ *        other servers.
+ */
+static void bt_random_static_addr(uint8_t *evt, uint16_t cap)
+{
+    uint8_t le[6];
+    int     i, n;
+
+    bt_state.addr_type = 0U;
+    for (i = 0; i < 6; ++i) {
+        if (bt_state.bd_addr[i] != 0U) return;  /* a public address */
+    }
+    (void)tiku_common_unique_id(le, 6U);
+    le[0] ^= 0x5AU;                              /* not the board's own */
+    le[5] |= 0xC0U;                              /* random static */
+    if (bt_hci_cmd_response(HCI_OP_LE_SET_RANDOM_ADDR, le, 6U,
+                            evt, cap, &n) != TIKU_DRV_OK
+        || n < 7 || evt[6] != 0U) {
+        TIKU_BT_PRINTF("p6.D: no public address, and the random one was "
+                        "refused\n");
+        return;
+    }
+    for (i = 0; i < 6; ++i) bt_state.bd_addr[i] = le[5 - i];
+    bt_state.addr_type = 1U;
+    TIKU_BT_PRINTF("p6.D: no public address: random static "
+                    "%02x:%02x:%02x:%02x:%02x:%02x\n",
+                    bt_state.bd_addr[0], bt_state.bd_addr[1],
+                    bt_state.bd_addr[2], bt_state.bd_addr[3],
+                    bt_state.bd_addr[4], bt_state.bd_addr[5]);
+}
+
 /*===========================================================================*/
 /* Phase 14 -- LE Secure Connections Just-Works pairing + bonding            */
 /*===========================================================================*/
@@ -1912,7 +1953,7 @@ static int bt_hci_cmd_status(uint16_t opcode, const uint8_t *params,
 /* TRNG wrapper for SMP entropy (Nb nonce). Sits inside the Phase 14
  * block because it's only consumed by the pairing state machine.
  * Returns 0 on success. */
-#if PLATFORM_RP2350 || PLATFORM_ESP32C61 || PLATFORM_AMBIQ
+#if PLATFORM_RP2350 || PLATFORM_ESP32C61 || PLATFORM_AMBIQ || PLATFORM_NORDIC
 static int bt_rand_bytes(uint8_t *out, size_t n)
 {
     if (out == (uint8_t *)0) return TIKU_TRNG_ERR_INVALID;
@@ -2718,7 +2759,7 @@ static void bt_smp_addrs(uint8_t conn_idx, uint8_t A[7], uint8_t B[7])
     uint8_t *mine = bt_state.smp[conn_idx].initiator ? A : B;
     bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
                       bt_state.conns[conn_idx].info.peer_addr, peer);
-    bt_smp_addr_block(0x00U /* public */, bt_state.bd_addr, mine);
+    bt_smp_addr_block(bt_state.addr_type, bt_state.bd_addr, mine);
 }
 
 static int bt_smp_init_send_ea(uint8_t conn_idx);              /* fwd */
@@ -2780,7 +2821,7 @@ static int bt_smp_send_dhkey_check(uint8_t conn_idx)
     for (i = 0U; i < 16U; ++i) Nb[i] = bt_state.smp[conn_idx].local_nonce[i];
     bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
                       bt_state.conns[conn_idx].info.peer_addr, A_init);
-    bt_smp_addr_block(0x00U, bt_state.bd_addr, A_resp);
+    bt_smp_addr_block(bt_state.addr_type, bt_state.bd_addr, A_resp);
     /* Eb = f6(MacKey, Nb, Na, 0, IOcapB, B, A): own nonce first per
      * spec 2.2.8; IOcapB as on the wire, which f6 turns MSB first. */
     for (i = 0U; i < 3U; ++i) IOcap_b[i] = bt_state.smp[conn_idx].own_iocap[i];
@@ -3226,7 +3267,7 @@ static void bt_smp_resp_check_ea(uint8_t conn_idx)
     for (i = 0U; i < 16U; ++i) Nb[i] = bt_state.smp[conn_idx].local_nonce[i];
     bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
                       bt_state.conns[conn_idx].info.peer_addr, A_init);
-    bt_smp_addr_block(0x00U, bt_state.bd_addr, A_resp);
+    bt_smp_addr_block(bt_state.addr_type, bt_state.bd_addr, A_resp);
     /* Expected Ea = f6(MacKey, Na, Nb, 0, IOcapA, A_init, A_resp),
      * IOcapA the initiator's Pairing Request bytes as on the wire. */
     if (bt_smp_f6(bt_state.smp[conn_idx].mackey, Na, Nb, R0,
@@ -3645,7 +3686,8 @@ static int bt_advertise_setup(const char *name, uint8_t name_len,
      *   interval_min = 0x00A0 (100 ms, 0.625 ms units)
      *   interval_max = 0x00F0 (150 ms)
      *   adv_type     = 0x00 ADV_IND (connectable, scannable, undirected)
-     *   own_addr_type= 0x00 public (chip's BD_ADDR)
+     *   own_addr_type= public, or random static where the controller
+     *                  has no public address
      *   peer_*       = 0 (only used for directed advertising)
      *   channel_map  = 0x07 (all three advertising channels 37/38/39)
      *   filter       = 0x00 accept all
@@ -3655,7 +3697,7 @@ static int bt_advertise_setup(const char *name, uint8_t name_len,
             0xA0U, 0x00U,                     /* interval_min LE */
             0xF0U, 0x00U,                     /* interval_max LE */
             adv_type,                         /* ADV_IND / NONCONN */
-            0x00U,                            /* own_addr_type public */
+            bt_state.addr_type,               /* own_addr_type */
             0x00U,                            /* peer_addr_type */
             0x00U, 0x00U, 0x00U, 0x00U,
             0x00U, 0x00U,                     /* peer_addr (zeros) */
@@ -4265,14 +4307,14 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
             TIKU_BT_PRINTF("p14.smp: *** link encrypted ***\n");
             /* The identity keys a fresh pairing promised, now that the
              * link is encrypted: an all-zero IRK (this end never uses a
-             * private address) and the public address. */
+             * private address) and the identity address. */
             if ((bt_state.smp[idx].own_respkd & SMP_KEYDIST_ID) != 0U) {
                 uint8_t key[17] = {0};
                 uint8_t k;
                 key[0] = SMP_OP_IDENTITY_INFO;
                 bt_smp_send((uint8_t)idx, key, sizeof key);
                 key[0] = SMP_OP_IDENTITY_ADDR_INFO;
-                key[1] = 0x00U;                         /* public */
+                key[1] = bt_state.addr_type;            /* public/static */
                 for (k = 0U; k < 6U; ++k) key[2U + k] = bt_state.bd_addr[5U - k];
                 bt_smp_send((uint8_t)idx, key, 8U);
                 bt_state.smp[idx].own_respkd = 0U;
@@ -4523,6 +4565,7 @@ int tiku_bt_init(void)
                             bt_state.bd_addr[2], bt_state.bd_addr[3],
                             bt_state.bd_addr[4], bt_state.bd_addr[5]);
         }
+        bt_random_static_addr(evt, sizeof evt);
 
         /* SMP's AES: the controller's LE Encrypt when it answers one,
          * else the stack's own.  P-256 is found out at the first
@@ -4552,6 +4595,11 @@ int tiku_bt_init(void)
 #endif
 
     return TIKU_DRV_OK;
+}
+
+uint8_t tiku_bt_addr_type(void)
+{
+    return bt_state.addr_type;
 }
 
 /** Return 1 once bring-up cached a non-zero BD_ADDR (= identity is real). */
@@ -5048,7 +5096,7 @@ int tiku_bt_connect_to(const uint8_t peer_addr[6],
     params[5]  = peer_addr_type;
     /* Reverse MSB-first display order to wire LSB-first. */
     for (k = 0; k < 6; ++k) params[6 + k] = peer_addr[5 - k];
-    params[12] = 0x00U;                         /* own_addr_type pub */
+    params[12] = bt_state.addr_type;            /* own_addr_type     */
     params[13] = 0x18U; params[14] = 0x00U;    /* conn_interval_min */
     params[15] = 0x28U; params[16] = 0x00U;    /* conn_interval_max */
     params[17] = 0x00U; params[18] = 0x00U;    /* latency           */
