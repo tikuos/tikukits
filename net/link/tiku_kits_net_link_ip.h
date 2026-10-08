@@ -16,7 +16,7 @@
 #ifndef TIKU_KITS_NET_LINK_IP_H_
 #define TIKU_KITS_NET_LINK_IP_H_
 
-#include <kernel/link/tiku_link.h>
+#include <services/link/tiku_link.h>
 #include <kernel/timers/tiku_timer.h>
 
 #include "../ipv4/tiku_kits_net_tcp.h"

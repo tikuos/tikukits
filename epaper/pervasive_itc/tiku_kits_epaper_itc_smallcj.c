@@ -62,7 +62,7 @@
 #include <kernel/cpu/tiku_common.h>
 
 #if defined(TIKU_SHELL_ENABLE) && (TIKU_SHELL_ENABLE == 1)
-#include <kernel/shell/tiku_shell_io.h>
+#include <shell/tiku_shell_io.h>
 #define EPD_DBG(...) SHELL_PRINTF(__VA_ARGS__)
 #else
 #define EPD_DBG(...) do {} while (0)
