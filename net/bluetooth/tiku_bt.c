@@ -57,6 +57,8 @@
 #include <arch/arm-rp2350/tiku_trng_arch.h>
 #elif PLATFORM_ESP32C61
 #include <arch/esp32c61/tiku_trng_arch.h>
+#elif PLATFORM_ESP32C5
+#include <arch/esp32c5/tiku_trng_arch.h>
 #elif PLATFORM_AMBIQ
 #include <arch/ambiq/tiku_trng_arch.h>
 #elif PLATFORM_NORDIC
@@ -1953,7 +1955,8 @@ static void bt_random_static_addr(uint8_t *evt, uint16_t cap)
 /* TRNG wrapper for SMP entropy (Nb nonce). Sits inside the Phase 14
  * block because it's only consumed by the pairing state machine.
  * Returns 0 on success. */
-#if PLATFORM_RP2350 || PLATFORM_ESP32C61 || PLATFORM_AMBIQ || PLATFORM_NORDIC
+#if PLATFORM_RP2350 || PLATFORM_ESP32C61 || PLATFORM_ESP32C5 || \
+    PLATFORM_AMBIQ || PLATFORM_NORDIC
 static int bt_rand_bytes(uint8_t *out, size_t n)
 {
     if (out == (uint8_t *)0) return TIKU_TRNG_ERR_INVALID;
