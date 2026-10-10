@@ -3011,6 +3011,7 @@ static int bt_smp_init_start(uint8_t conn_idx)
     TIKU_BT_PRINTF("p14.smp: Pairing Request sent (LE-SC Just-Works, "
                     "initiator)\n");
     if (bt_smp_request_local_pubkey() != TIKU_DRV_OK) {
+        TIKU_BT_PRINTF("p14.smp: no local P-256 key pair\n");
         bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
         return TIKU_DRV_ERR_INVALID;
     }
@@ -3391,6 +3392,7 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
         }
         /* Pull entropy and pre-arm chip-side P-256 public key fetch. */
         if (bt_rand_bytes(bt_state.smp[conn_idx].local_nonce, 16U) != 0) {
+            TIKU_BT_PRINTF("p14.smp: no entropy for the nonce\n");
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
         }
@@ -3399,6 +3401,7 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             (uint8_t)(((len >= 7U) ? pdu[6] : 0U) & SMP_KEYDIST_ID);
         bt_state.smp[conn_idx].state             = SMP_WAITING_PUBKEY;
         if (bt_smp_request_local_pubkey() != TIKU_DRV_OK) {
+            TIKU_BT_PRINTF("p14.smp: no local P-256 key pair\n");
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
         }
