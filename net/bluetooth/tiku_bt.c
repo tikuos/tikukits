@@ -5858,8 +5858,12 @@ static void bt_sc_remember(uint8_t conn_idx)
     rec = bt_bond_nvm[slot];
     flags = rec.flags & 0xFFUL;
     if (bt_state.conns[conn_idx].sc_cccd & 0x0002U) {
-        flags |= BT_BOND_F_SC |
-                 ((uint32_t)bt_gatt_digest() << BT_BOND_DIGEST_POS);
+        /* An unconfirmed indication leaves the layout the peer last saw. */
+        uint32_t digest = (bt_state.conns[conn_idx].sc_waiting &&
+                           (rec.flags & BT_BOND_F_SC))
+                              ? (rec.flags >> BT_BOND_DIGEST_POS)
+                              : (uint32_t)bt_gatt_digest();
+        flags |= BT_BOND_F_SC | (digest << BT_BOND_DIGEST_POS);
     }
     if (flags != rec.flags) {
         rec.flags = flags;
@@ -5902,7 +5906,8 @@ static void bt_sc_confirmed(uint8_t conn_idx)
 /**
  * @brief On a bonded link's encryption: a peer that asked for Service
  *        Changed has its CCCD back, and hears of a layout that differs from
- *        the one its bond records.
+ *        the one its bond records.  A peer that subscribed before its first
+ *        encryption, as macOS does, has that kept in its new bond.
  */
 static void bt_sc_on_encrypted(uint8_t conn_idx)
 {
@@ -5911,7 +5916,10 @@ static void bt_sc_on_encrypted(uint8_t conn_idx)
 
     if (slot < 0) return;
     flags = bt_bond_nvm[slot].flags;
-    if (!(flags & BT_BOND_F_SC)) return;
+    if (!(flags & BT_BOND_F_SC)) {
+        bt_sc_remember(conn_idx);
+        return;
+    }
     bt_state.conns[conn_idx].sc_cccd |= 0x0002U;
     if ((uint16_t)(flags >> BT_BOND_DIGEST_POS) != bt_gatt_digest()) {
         bt_sc_indicate(conn_idx);
