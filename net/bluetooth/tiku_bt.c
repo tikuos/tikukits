@@ -187,6 +187,8 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define ATT_OP_WRITE_RSP                0x13U
 #define ATT_OP_WRITE_CMD                0x52U
 #define ATT_OP_HANDLE_VALUE_NOTIFY      0x1BU
+#define ATT_OP_HANDLE_VALUE_IND         0x1DU
+#define ATT_OP_HANDLE_VALUE_CONF        0x1EU
 
 /* ATT error codes used in Error Response (0x01) PDUs. */
 #define ATT_ERR_INVALID_HANDLE          0x01U
@@ -251,6 +253,15 @@ typedef enum {
 #define UUID_GATT_SERVICE               0x1801U
 #define UUID_DEVICE_NAME                0x2A00U
 #define UUID_APPEARANCE                 0x2A01U
+#define UUID_SERVICE_CHANGED            0x2A05U
+
+/* Service Changed in the GATT service: its value handle, which the
+ * indication names, and its CCCD's.  A bond keeps the peer's choice to be
+ * told (BT_BOND_F_SC) and, in its top 16 bits, the digest of the layout it
+ * last saw; a changed digest on a bonded reconnect is indicated. */
+#define BT_SC_VALUE_HANDLE              0x0008U
+#define BT_BOND_F_SC                    (1UL << 8)
+#define BT_BOND_DIGEST_POS              16U
 
 /* Demo "Tiku Stats" service + uptime characteristic. Vendor-allocated
  * 16-bit UUIDs in the 0xF000+ space (reserved for vendor use per
@@ -261,6 +272,7 @@ typedef enum {
 
 /* Characteristic property bits (Core Spec Vol 3 Part G 3.3.1.1). */
 #define ATT_PROP_READ                   0x02U
+#define ATT_PROP_INDICATE               0x20U
 
 /* Default ATT MTU per spec (Core Spec Vol 3 Part F 3.4.2). The chip's
  * BT firmware may permit larger via Exchange MTU; this caps at 23 for
@@ -375,6 +387,12 @@ static struct {
         uint16_t                   rx_need;
         uint16_t                   rx_len;
         uint8_t                    rx_buf[BT_L2CAP_MAX];
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+        /* The peer's Service Changed CCCD (bit 1: indications), and
+         * whether an indication waits for its confirmation. */
+        uint16_t                   sc_cccd;
+        uint8_t                    sc_waiting;
+#endif
     } conns[TIKU_BT_CONN_MAX];
 
     /* ACL flow control: the payload one HCI ACL packet carries and the
@@ -638,9 +656,9 @@ static int bt_send_acl(uint16_t handle, uint16_t cid,
 /* Minimal ATT attribute table (phase 10)                                    */
 /*---------------------------------------------------------------------------*/
 /*
- * Six attributes covering the mandatory GAP service plus a stub GATT
- * service so generic clients (nRF Connect, lightblue) get something
- * sensible on first browse:
+ * Nine attributes covering the mandatory GAP service and the GATT service
+ * with Service Changed (six, the GATT service bare, when
+ * TIKU_BT_SERVICE_CHANGED is off), before any registered service:
  *
  *   0x0001  Primary Service          UUID=0x2800  value=0x1800 (GAP)
  *   0x0002  Characteristic Decl      UUID=0x2803  value=[READ, 0x0003, 0x2A00]
@@ -648,6 +666,9 @@ static int bt_send_acl(uint16_t handle, uint16_t cid,
  *   0x0004  Characteristic Decl      UUID=0x2803  value=[READ, 0x0005, 0x2A01]
  *   0x0005  Appearance               UUID=0x2A01  value=0x0000 (Unknown)
  *   0x0006  Primary Service          UUID=0x2800  value=0x1801 (GATT)
+ *   0x0007  Characteristic Decl      UUID=0x2803  value=[IND, 0x0008, 0x2A05]
+ *   0x0008  Service Changed          UUID=0x2A05  (indicated, not read)
+ *   0x0009  CCCD                     UUID=0x2902  per connection
  *
  * The attribute table is built dynamically when the first ATT
  * request arrives because attribute 0x0003 (Device Name) needs to
@@ -656,11 +677,12 @@ static int bt_send_acl(uint16_t handle, uint16_t cid,
  */
 
 /* Maximum attributes ever in the snapshot table. Sized for:
- *   - 6 built-in (GAP service + 2 chars × {decl+value} + GATT stub)
+ *   - 9 built-in (GAP service + 2 chars × {decl+value} + GATT service
+ *     with Service Changed: decl, value, CCCD)
  *   - For each user char: 2 (decl+value) or 3 (with CCCD)
  *   - 8 user chars * 3 = 24 worst case
- * 32 leaves headroom. */
-#define ATT_HANDLE_MAX                  32U
+ * 35 leaves headroom. */
+#define ATT_HANDLE_MAX                  35U
 
 /*
  * Built fresh in bt_att_snapshot every time an ATT request arrives.
@@ -695,6 +717,14 @@ typedef struct {
  * last, so a request handled while one waits to send rebuilds it the
  * same way without harm. */
 static bt_att_entry_t bt_att_table[ATT_HANDLE_MAX];
+
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+/* Service Changed: the helpers live beside the bond store at the bottom. */
+static void bt_sc_remember(uint8_t conn_idx);
+static void bt_sc_indicate(uint8_t conn_idx);
+static void bt_sc_confirmed(uint8_t conn_idx);
+static void bt_sc_on_encrypted(uint8_t conn_idx);
+#endif
 
 /* The Bluetooth Base UUID, little-endian: the 16-bit UUID xxxx is
  * 0000xxxx-0000-1000-8000-00805F9B34FB, its bytes at [12] and [13]. */
@@ -753,6 +783,18 @@ static const uint8_t att_val_char_appear[5] = {
     0x05U, 0x00U,            /* value handle 0x0005 LE */
     0x01U, 0x2AU,            /* char UUID    0x2A01 LE */
 };
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+static const uint8_t att_val_char_svc_changed[5] = {
+    ATT_PROP_INDICATE,       /* indicate only: the value is not read */
+    0x08U, 0x00U,            /* value handle 0x0008 LE */
+    0x05U, 0x2AU,            /* char UUID    0x2A05 LE */
+};
+/* The range a Service Changed indication names: every handle. */
+static const uint8_t att_val_svc_changed[4] = { 0x01U, 0x00U, 0xFFU, 0xFFU };
+/* The Service Changed CCCD row points here; the read and write handlers
+ * use the requesting connection's own value instead. */
+static uint16_t bt_sc_cccd_row;
+#endif
 
 /** Find or assign the CCCD slot for characteristic @p c. Returns -1 if
  *  the pool is exhausted. CCCD slots are created lazily on the first
@@ -834,9 +876,18 @@ static uint8_t bt_att_snapshot(bt_att_entry_t *out)
     bt_att_set_static(&out[n++], h++, UUID_APPEARANCE,
                       att_val_appearance, sizeof att_val_appearance);
 
-    /* GATT stub service: 1 attribute. */
+    /* GATT service: Service Changed, indicate only, and its CCCD. */
     bt_att_set_static(&out[n++], h++, UUID_PRIMARY_SERVICE,
                       att_val_gatt_svc, sizeof att_val_gatt_svc);
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+    bt_att_set_static(&out[n++], h++, UUID_CHARACTERISTIC,
+                      att_val_char_svc_changed,
+                      sizeof att_val_char_svc_changed);
+    bt_att_set_static(&out[n++], h++, UUID_SERVICE_CHANGED,
+                      att_val_svc_changed, sizeof att_val_svc_changed);
+    bt_att_set_static(&out[n++], h++, UUID_CCCD, (const uint8_t *)0, 2U);
+    out[n - 1U].cccd_ref = &bt_sc_cccd_row;
+#endif
 
     /* User services. */
     for (svc = 0U; svc < bt_state.user_svc_count; ++svc) {
@@ -1195,6 +1246,18 @@ static void bt_att_handle_read(uint8_t conn_idx, const uint8_t *pdu,
 
             /* Value source priority: CCCD ref → char read callback →
              * char static value → entry static value. */
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+            if (e->uuid == UUID_SERVICE_CHANGED && e->uuid128 == 0) {
+                bt_att_send_error(conn_idx, ATT_OP_READ_REQ, h,
+                                  ATT_ERR_READ_NOT_PERMITTED);
+                return;
+            }
+            if (e->cccd_ref == &bt_sc_cccd_row) {
+                rsp[1] = (uint8_t)(bt_state.conns[conn_idx].sc_cccd & 0xFFU);
+                rsp[2] = (uint8_t)(bt_state.conns[conn_idx].sc_cccd >> 8);
+                produced = 2U;
+            } else
+#endif
             if (e->cccd_ref != (uint16_t *)0) {
                 rsp[1] = (uint8_t)(*e->cccd_ref & 0xFFU);
                 rsp[2] = (uint8_t)((*e->cccd_ref >> 8) & 0xFFU);
@@ -1266,7 +1329,15 @@ static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
             uint16_t new_val = (len >= 5U)
                 ? (uint16_t)(pdu[3] | ((uint16_t)pdu[4] << 8))
                 : 0U;
-            *e->cccd_ref = new_val;
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+            if (e->cccd_ref == &bt_sc_cccd_row) {
+                bt_state.conns[conn_idx].sc_cccd = new_val;
+                bt_sc_remember(conn_idx);
+            } else
+#endif
+            {
+                *e->cccd_ref = new_val;
+            }
             TIKU_BT_PRINTF("p12: CCCD set to 0x%04x "
                             "(notify=%u indicate=%u)\n",
                             new_val,
@@ -1480,6 +1551,29 @@ static void bt_handle_att(uint8_t conn_idx, const uint8_t *pdu,
                             (unsigned)(len - 3U), txt);
         }
         break;
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+    case ATT_OP_HANDLE_VALUE_CONF:
+        bt_sc_confirmed(conn_idx);
+        break;
+#endif
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+    case ATT_OP_HANDLE_VALUE_IND:
+        /* As a client: every indication is confirmed.  A Service Changed
+         * one names the range to discover again. */
+        {
+            uint8_t conf = ATT_OP_HANDLE_VALUE_CONF;
+            (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
+                              L2CAP_CID_ATT, &conf, 1U);
+        }
+        if (len >= 7U) {
+            TIKU_BT_PRINTF("p13.att: *** Indication handle=0x%04x: "
+                           "services changed 0x%04x-0x%04x ***\n",
+                           (uint16_t)(pdu[1] | (pdu[2] << 8)),
+                           (uint16_t)(pdu[3] | (pdu[4] << 8)),
+                           (uint16_t)(pdu[5] | (pdu[6] << 8)));
+        }
+        break;
+#endif
     default:
         bt_att_send_error(conn_idx, pdu[0], 0U,
                           ATT_ERR_REQUEST_NOT_SUPPORTED);
@@ -4054,6 +4148,10 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         bt_state.conns[idx].att_mtu   = ATT_MTU_DEFAULT;
         bt_state.conns[idx].tx_octets = BT_LL_OCTETS_MIN;
         bt_state.conns[idx].rx_need   = 0U;
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+        bt_state.conns[idx].sc_cccd    = 0U;
+        bt_state.conns[idx].sc_waiting = 0U;
+#endif
         bt_smp_session_reset((uint8_t)idx);
         /* When advertising as ADV_IND, the chip auto-stops on
          * connection (per Core Spec). Reflect that in the local state. */
@@ -4326,6 +4424,9 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
                 bt_state.smp[idx].own_respkd = 0U;
                 TIKU_BT_PRINTF("p14.smp: identity keys sent\n");
             }
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+            bt_sc_on_encrypted((uint8_t)idx);
+#endif
         }
         return;
     }
@@ -4339,6 +4440,9 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
                         "status=0x%02x\n", handle, status);
         if (idx >= 0 && status == 0x00U) {
             bt_state.smp[idx].state = SMP_ENCRYPTED;
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+            bt_sc_on_encrypted((uint8_t)idx);
+#endif
         }
         return;
     }
@@ -5217,6 +5321,16 @@ int tiku_bt_register_service(const tiku_bt_service_t *svc)
         (uint8_t)(bt_state.user_svc_count + 1U);
     TIKU_BT_PRINTF("p11: service 0x%04x registered (%u chars)\n",
                     svc->uuid, svc->char_count);
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+    /* The handles after it moved: a peer that asked is told now, a bonded
+     * one that is away when it next encrypts the link. */
+    {
+        uint8_t i;
+        for (i = 0U; i < TIKU_BT_CONN_MAX; ++i) {
+            if (bt_state.conns[i].in_use) bt_sc_indicate(i);
+        }
+    }
+#endif
     return TIKU_DRV_OK;
 }
 
@@ -5543,7 +5657,24 @@ static uint8_t bt_bond_keep(const tiku_bt_bond_record_t *rec)
             tiku_mpu_lock_nvm(mpu_saved);
         }
     }
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+    {
+        /* The same key stored again (a bonded peer encrypting anew) keeps
+         * its Service Changed state; a new key is a new bond. */
+        tiku_bt_bond_record_t keep = *rec;
+        const tiku_bt_bond_record_t *b = &bt_bond_nvm[slot];
+        if (b->magic == TIKU_BT_BOND_MAGIC) {
+            for (k = 0U; k < 16U && b->ltk[k] == rec->ltk[k]; ++k) {
+            }
+            if (k == 16U) {
+                keep.flags = (rec->flags & 0xFFUL) | (b->flags & ~0xFFUL);
+            }
+        }
+        (void)tiku_bt_bond_save(slot, &keep);
+    }
+#else
     (void)tiku_bt_bond_save(slot, rec);
+#endif
     return slot;
 }
 
@@ -5640,3 +5771,150 @@ static int bt_bond_find_by_addr(uint8_t addr_type, const uint8_t addr_le[6],
     }
     return TIKU_DRV_ERR_NOT_PRESENT;
 }
+
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+/*---------------------------------------------------------------------------*/
+/* Service Changed                                                           */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief A 16-bit digest of the attribute layout a client discovers: each
+ *        attribute's handle and type, and the values of the service and
+ *        characteristic declarations (CRC-16/CCITT).  The Device Name's
+ *        value is left out: it follows the advertised name.
+ */
+static uint16_t bt_gatt_digest(void)
+{
+    uint16_t crc = 0xFFFFU;
+    uint8_t  n = bt_att_snapshot(bt_att_table), i, j, len, b;
+
+    for (i = 0U; i < n; ++i) {
+        const bt_att_entry_t *e = &bt_att_table[i];
+        uint8_t head[4];
+        const uint8_t *p;
+
+        head[0] = (uint8_t)e->handle;
+        head[1] = (uint8_t)(e->handle >> 8);
+        head[2] = (uint8_t)e->uuid;
+        head[3] = (uint8_t)(e->uuid >> 8);
+        for (j = 0U; j < 3U; ++j) {
+            if (j == 0U) {
+                p = head; len = 4U;
+            } else if (j == 1U) {
+                p = e->uuid128; len = (p != (const uint8_t *)0) ? 16U : 0U;
+            } else {
+                p = e->value;
+                len = (e->uuid == UUID_PRIMARY_SERVICE ||
+                       e->uuid == UUID_CHARACTERISTIC) ? e->value_len : 0U;
+            }
+            for (b = 0U; b < len; ++b) {
+                uint8_t bit;
+                crc ^= (uint16_t)((uint16_t)p[b] << 8);
+                for (bit = 0U; bit < 8U; ++bit) {
+                    crc = (crc & 0x8000U) ? (uint16_t)((crc << 1) ^ 0x1021U)
+                                          : (uint16_t)(crc << 1);
+                }
+            }
+        }
+    }
+    return crc;
+}
+
+/** @brief The bond slot of connection @p conn_idx's peer, or -1. */
+static int bt_bond_slot_of(uint8_t conn_idx)
+{
+    const tiku_bt_connection_t *c = &bt_state.conns[conn_idx].info;
+    uint8_t slot, k;
+
+    for (slot = 0U; slot < TIKU_BT_BOND_MAX; ++slot) {
+        const tiku_bt_bond_record_t *b = &bt_bond_nvm[slot];
+        if (b->magic != TIKU_BT_BOND_MAGIC ||
+            b->peer_addr_type != c->peer_addr_type) {
+            continue;
+        }
+        for (k = 0U; k < 6U && b->peer_addr[k] == c->peer_addr[k]; ++k) {
+        }
+        if (k == 6U) return (int)slot;
+    }
+    return -1;
+}
+
+/**
+ * @brief Keep, in the bond of an encrypted link (or one encrypting again),
+ *        whether its peer wants Service Changed and the layout it has seen.
+ */
+static void bt_sc_remember(uint8_t conn_idx)
+{
+    tiku_bt_bond_record_t rec;
+    uint32_t flags;
+    int slot;
+
+    if (bt_state.smp[conn_idx].state != SMP_ENCRYPTED &&
+        bt_state.smp[conn_idx].state != SMP_ENCRYPTING) {
+        return;
+    }
+    slot = bt_bond_slot_of(conn_idx);
+    if (slot < 0) return;
+    rec = bt_bond_nvm[slot];
+    flags = rec.flags & 0xFFUL;
+    if (bt_state.conns[conn_idx].sc_cccd & 0x0002U) {
+        flags |= BT_BOND_F_SC |
+                 ((uint32_t)bt_gatt_digest() << BT_BOND_DIGEST_POS);
+    }
+    if (flags != rec.flags) {
+        rec.flags = flags;
+        (void)tiku_bt_bond_save((uint8_t)slot, &rec);
+    }
+}
+
+/** @brief Indicate Service Changed, the whole range, to a peer that asked;
+ *         one at a time until it confirms. */
+static void bt_sc_indicate(uint8_t conn_idx)
+{
+    uint8_t pdu[7];
+    uint8_t k;
+
+    if (!(bt_state.conns[conn_idx].sc_cccd & 0x0002U) ||
+        bt_state.conns[conn_idx].sc_waiting) {
+        return;
+    }
+    pdu[0] = ATT_OP_HANDLE_VALUE_IND;
+    pdu[1] = (uint8_t)BT_SC_VALUE_HANDLE;
+    pdu[2] = (uint8_t)(BT_SC_VALUE_HANDLE >> 8);
+    for (k = 0U; k < 4U; ++k) pdu[3U + k] = att_val_svc_changed[k];
+    if (bt_send_acl(bt_state.conns[conn_idx].info.handle, L2CAP_CID_ATT,
+                    pdu, sizeof pdu) == TIKU_DRV_OK) {
+        bt_state.conns[conn_idx].sc_waiting = 1U;
+        TIKU_BT_PRINTF("p12: Service Changed indicated\n");
+    }
+}
+
+/** @brief The peer confirmed the indication: the layout it saw is now the
+ *         one its bond records. */
+static void bt_sc_confirmed(uint8_t conn_idx)
+{
+    if (!bt_state.conns[conn_idx].sc_waiting) return;
+    bt_state.conns[conn_idx].sc_waiting = 0U;
+    TIKU_BT_PRINTF("p12: Service Changed confirmed\n");
+    bt_sc_remember(conn_idx);
+}
+
+/**
+ * @brief On a bonded link's encryption: a peer that asked for Service
+ *        Changed has its CCCD back, and hears of a layout that differs from
+ *        the one its bond records.
+ */
+static void bt_sc_on_encrypted(uint8_t conn_idx)
+{
+    int slot = bt_bond_slot_of(conn_idx);
+    uint32_t flags;
+
+    if (slot < 0) return;
+    flags = bt_bond_nvm[slot].flags;
+    if (!(flags & BT_BOND_F_SC)) return;
+    bt_state.conns[conn_idx].sc_cccd |= 0x0002U;
+    if ((uint16_t)(flags >> BT_BOND_DIGEST_POS) != bt_gatt_digest()) {
+        bt_sc_indicate(conn_idx);
+    }
+}
+#endif /* TIKU_BT_SERVICE_CHANGED */
