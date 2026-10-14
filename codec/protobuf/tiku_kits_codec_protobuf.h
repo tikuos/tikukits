@@ -79,7 +79,7 @@
  * This allows small negative values to use fewer varint bytes.
  */
 #define TIKU_KITS_CODEC_PB_ZIGZAG_ENCODE(n) \
-    ((uint32_t)(((int32_t)(n) << 1) ^ ((int32_t)(n) >> 31)))
+    (((uint32_t)(int32_t)(n) << 1) ^ (uint32_t)((int32_t)(n) >> 31))
 
 /**
  * @brief ZigZag-decode an unsigned value to signed 32-bit integer.
