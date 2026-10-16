@@ -151,6 +151,12 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define HCI_EVT_LE_META                 0x3EU
 #define HCI_EVT_ENCRYPTION_KEY_REFRESH_COMPLETE 0x30U
 
+/* Connection Complete status: the link ended before its first packet. */
+#define HCI_STATUS_CONN_NOT_ESTABLISHED 0x3EU
+
+/* LE Create Connection requests sent again after that status. */
+#define BT_CONNECT_RETRIES              2U
+
 /* HCI packet types (byte 0 returned by tiku_bt_recv). */
 #define HCI_PKT_TYPE_CMD                0x01U
 #define HCI_PKT_TYPE_ACL                0x02U
@@ -361,8 +367,12 @@ static struct {
     char     adv_name[TIKU_BT_ADV_NAME_MAX];
 
     /* A central's LE Create Connection in flight: its Connection
-     * Complete (or failure) is still to come. */
+     * Complete (or failure) is still to come.  The peer it names, and
+     * the requests left to send again should the link not establish. */
     uint8_t                    connecting;
+    uint8_t                    conn_peer[6];     /* MSB-first print order */
+    uint8_t                    conn_peer_type;
+    uint8_t                    conn_retries;
 
     /* Phase 8 — GAP scanning state + dedup'd results cache. */
     uint8_t                    scanning;
@@ -725,6 +735,10 @@ static void bt_sc_indicate(uint8_t conn_idx);
 static void bt_sc_confirmed(uint8_t conn_idx);
 static void bt_sc_on_encrypted(uint8_t conn_idx);
 #endif
+
+/* The central's connect request: beside the GATT client at the bottom. */
+static int  bt_create_connection(void);
+static void bt_connect_again(void);
 
 /* The Bluetooth Base UUID, little-endian: the 16-bit UUID xxxx is
  * 0000xxxx-0000-1000-8000-00805F9B34FB, its bytes at [12] and [13]. */
@@ -4118,10 +4132,15 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
                                                                     : 27;
         int      idx;
 
+        uint8_t  was_connecting = bt_state.connecting;
+
         bt_state.connecting = 0U;        /* the outcome is in */
         if (status != 0x00U) {
             TIKU_BT_PRINTF("p9: LE Connection Complete FAIL "
                             "status=0x%02x handle=0x%04x\n", status, handle);
+            if (status == HCI_STATUS_CONN_NOT_ESTABLISHED && was_connecting) {
+                bt_connect_again();
+            }
             return;
         }
         idx = bt_conn_alloc();
@@ -4357,6 +4376,7 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
         uint16_t handle = (uint16_t)(pkt[4] | ((uint16_t)pkt[5] << 8));
         uint8_t  reason = pkt[6];
         int      idx    = bt_conn_find(handle);
+        uint8_t  central = (idx >= 0 && bt_state.conns[idx].info.role == 0U);
         if (idx >= 0) {
             bt_state.conns[idx].in_use  = 0U;
             bt_state.conns[idx].rx_need = 0U;
@@ -4376,6 +4396,11 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
             TIKU_BT_PRINTF("p9: *** disconnected handle=0x%04x "
                             "reason=0x%02x status=0x%02x ***\n",
                             handle, reason, status);
+            /* The ESP32 controller reports the link up at CONNECT_IND and
+             * ends it with this reason when the peer never answers. */
+            if (central && reason == HCI_STATUS_CONN_NOT_ESTABLISHED) {
+                bt_connect_again();
+            }
         }
         /* Auto-readvertise: ADV_IND advertising auto-stops on the
          * chip when the link comes up, so without this the device
@@ -5179,33 +5204,37 @@ int tiku_bt_disconnect(uint16_t handle)
 /* GATT client (phase 13)                                                    */
 /*---------------------------------------------------------------------------*/
 
-int tiku_bt_connect_to(const uint8_t peer_addr[6],
-                             uint8_t peer_addr_type)
+/**
+ * @brief Send HCI_LE_Create_Connection for the peer in bt_state.conn_peer.
+ *
+ * The 25 parameter bytes (Core Spec Vol 4 Part E 7.8.12):
+ *   scan_interval = 0x0060 (60 ms)
+ *   scan_window   = 0x0030 (30 ms)
+ *   conn_interval 24..40 (30..50 ms)
+ *   latency       = 0
+ *   supv_timeout  = 500 (5 s)
+ *   ce_length     = 0
+ * The command replies with Command Status, so it goes out raw and the
+ * Connection Complete event reports the outcome.
+ *
+ * @return TIKU_DRV_OK, or the transport's error
+ */
+static int bt_create_connection(void)
 {
-    /* HCI_LE_Create_Connection has 25 bytes of parameters per Core
-     * Spec Vol 4 Part E 7.8.12. Defaults chosen to match what most
-     * sane BLE peripherals accept:
-     *   scan_interval = 0x0060 (60 ms)
-     *   scan_window   = 0x0030 (30 ms)
-     *   conn_interval 24..40 (30..50 ms)
-     *   latency       = 0
-     *   supv_timeout  = 500 (5 s)
-     *   ce_length     = 0
-     */
-    uint8_t params[25];
-    int     rc;
-    int     n;
-    uint8_t evt[64];
-    int     k;
+    uint8_t cmd[4 + 25];
+    uint8_t *params = &cmd[4];
+    int      k;
 
-    if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
-
+    cmd[0] = HCI_PKT_TYPE_CMD;
+    cmd[1] = (uint8_t)(HCI_OP_LE_CREATE_CONNECTION & 0xFFU);
+    cmd[2] = (uint8_t)((HCI_OP_LE_CREATE_CONNECTION >> 8) & 0xFFU);
+    cmd[3] = 25U;
     params[0]  = 0x60U; params[1]  = 0x00U;    /* scan_interval LE  */
     params[2]  = 0x30U; params[3]  = 0x00U;    /* scan_window LE    */
     params[4]  = 0x00U;                         /* filter_policy     */
-    params[5]  = peer_addr_type;
+    params[5]  = bt_state.conn_peer_type;
     /* Reverse MSB-first display order to wire LSB-first. */
-    for (k = 0; k < 6; ++k) params[6 + k] = peer_addr[5 - k];
+    for (k = 0; k < 6; ++k) params[6 + k] = bt_state.conn_peer[5 - k];
     params[12] = bt_state.addr_type;            /* own_addr_type     */
     params[13] = 0x18U; params[14] = 0x00U;    /* conn_interval_min */
     params[15] = 0x28U; params[16] = 0x00U;    /* conn_interval_max */
@@ -5213,23 +5242,38 @@ int tiku_bt_connect_to(const uint8_t peer_addr[6],
     params[19] = 0xF4U; params[20] = 0x01U;    /* supv_timeout 5s   */
     params[21] = 0x00U; params[22] = 0x00U;    /* min_ce_length     */
     params[23] = 0x00U; params[24] = 0x00U;    /* max_ce_length     */
+    return tiku_bt_send(cmd, sizeof cmd);
+}
 
-    /* This command replies with Command Status, not Command
-     * Complete -- so bt_hci_cmd_response would time out. Send raw
-     * and let the Connection Complete event fire asynchronously. */
-    {
-        uint8_t cmd[4 + 25];
-        cmd[0] = HCI_PKT_TYPE_CMD;
-        cmd[1] = (uint8_t)(HCI_OP_LE_CREATE_CONNECTION & 0xFFU);
-        cmd[2] = (uint8_t)((HCI_OP_LE_CREATE_CONNECTION >> 8) & 0xFFU);
-        cmd[3] = 25U;
-        {
-            uint8_t i;
-            for (i = 0U; i < 25U; ++i) cmd[4U + i] = params[i];
-        }
-        rc = tiku_bt_send(cmd, sizeof cmd);
+/**
+ * @brief Send the last LE Create Connection again, while retries remain.
+ *
+ * Called when a link this side requested ended before its first packet
+ * (status 0x3E): the peer did not hear, or did not answer, the CONNECT_IND.
+ */
+static void bt_connect_again(void)
+{
+    if (bt_state.conn_retries == 0U) return;
+    --bt_state.conn_retries;
+    if (bt_create_connection() == TIKU_DRV_OK) {
+        bt_state.connecting = 1U;
+        TIKU_BT_PRINTF("p9: LE_Create_Connection sent again (%u left)\n",
+                        bt_state.conn_retries);
     }
-    (void)evt; (void)n;
+}
+
+int tiku_bt_connect_to(const uint8_t peer_addr[6],
+                             uint8_t peer_addr_type)
+{
+    int rc;
+    int k;
+
+    if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
+
+    for (k = 0; k < 6; ++k) bt_state.conn_peer[k] = peer_addr[k];
+    bt_state.conn_peer_type = peer_addr_type;
+    bt_state.conn_retries   = BT_CONNECT_RETRIES;
+    rc = bt_create_connection();
     if (rc == TIKU_DRV_OK) {
         bt_state.connecting = 1U;
         TIKU_BT_PRINTF("p13: LE_Create_Connection requested "
