@@ -130,6 +130,11 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define HCI_OP_LE_SET_SCAN_PARAMS       0x200BU
 #define HCI_OP_LE_SET_SCAN_ENABLE       0x200CU
 #define HCI_OP_LE_CREATE_CONNECTION     0x200DU
+#define HCI_OP_LE_READ_LOCAL_FEATURES   0x2003U
+#define HCI_OP_LE_SET_DATA_LENGTH       0x2022U
+#define HCI_OP_LE_WRITE_DEFAULT_DATA_LENGTH 0x2024U
+#define HCI_OP_LE_SET_DEFAULT_PHY       0x2031U
+#define HCI_OP_LE_SET_PHY               0x2032U
 /* Phase 14: SMP crypto offload + encryption key management. The chip
  * has a dedicated AES-128 + P-256 ECDH engine reachable via these LE
  * controller HCI commands, which avoid a software AES/ECDH
@@ -171,6 +176,11 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define LE_SUBEVT_LONG_TERM_KEY_REQUEST         0x05U
 #define LE_SUBEVT_READ_LOCAL_P256_PUBKEY_CPL    0x08U
 #define LE_SUBEVT_GENERATE_DHKEY_COMPLETE       0x09U
+#define LE_SUBEVT_PHY_UPDATE_COMPLETE           0x0CU
+
+/* LE features (LE Read Local Supported Features, its first two octets). */
+#define LE_FEAT_DATA_LENGTH             (1U << 5)
+#define LE_FEAT_2M_PHY                  (1U << 8)
 
 /* L2CAP fixed-channel IDs (Core Spec Vol 3 Part A 2.1). */
 #define L2CAP_CID_ATT                   0x0004U
@@ -222,10 +232,25 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define SMP_OP_SIGNING_INFO             0x0AU
 #define SMP_KEYDIST_ID                  0x02U
 
+#define SMP_ERR_PASSKEY_ENTRY_FAILED    0x01U
 #define SMP_ERR_PAIRING_NOT_SUPPORTED   0x05U
 #define SMP_ERR_CONFIRM_VALUE_FAILED    0x04U
 #define SMP_ERR_DHKEY_CHECK_FAILED      0x0BU
 #define SMP_ERR_UNSPECIFIED_REASON      0x08U
+#define SMP_ERR_INVALID_PARAMETERS      0x0AU
+#define SMP_ERR_NUMERIC_COMPARISON_FAILED 0x0CU
+
+/* Association models (Core Spec Vol 3 Part H 2.3.5.1): Just Works, numeric
+ * comparison, and passkey entry by who types the passkey. */
+#define SMP_JUST_WORKS                  0U
+#define SMP_NUMERIC                     1U
+#define SMP_PASSKEY_INIT_TYPES          2U   /* the responder shows it */
+#define SMP_PASSKEY_RESP_TYPES          3U   /* the initiator shows it */
+#define SMP_PASSKEY_BOTH_TYPE           4U
+
+/* A passkey is confirmed a bit a round, its 20 bits from the least
+ * significant. */
+#define SMP_PASSKEY_ROUNDS              20U
 
 /* AuthReq bits (Pairing Request/Response octet 3). */
 #define SMP_AUTHREQ_BONDING_MASK        0x03U
@@ -335,8 +360,11 @@ static uint8_t      *bt_scratch_cmd;
 #define BT_ATT_MTU_MAX        247U
 #define BT_L2CAP_MAX          (4U + BT_ATT_MTU_MAX)
 
-/* LE's smallest link-layer payload, the length every link starts with. */
+/* LE's smallest link-layer payload, the length every link starts with, and
+ * its largest, with the time that takes on the 1M PHY in microseconds. */
 #define BT_LL_OCTETS_MIN      27U
+#define BT_LL_OCTETS_MAX      251U
+#define BT_LL_TIME_MAX        2120U
 
 /*
  * Packets come in through one of these by nesting depth.  A handler that
@@ -372,7 +400,27 @@ static struct {
     uint8_t                    connecting;
     uint8_t                    conn_peer[6];     /* MSB-first print order */
     uint8_t                    conn_peer_type;
+#if (TIKU_BT_CONNECT_RETRY + 0)
     uint8_t                    conn_retries;
+#endif
+#if (TIKU_BT_LINK_UPDATE + 0)
+    /* The controller's LE features, its first two octets (LE_FEAT_*). */
+    uint16_t                   le_feat;
+#endif
+#if (TIKU_BT_PRIVACY + 0)
+    /* The resolvable private address made last (MSB-first), whether the
+     * controller holds it, and the second it was made. */
+    uint8_t                    rpa[6];
+    uint8_t                    rpa_live;
+    uint32_t                   rpa_at;
+#endif
+#if (TIKU_BT_PASSKEY + 0)
+    /* What a pairing waits on the user for (TIKU_BT_AUTH_*), on which
+     * link, and the number it shows. */
+    uint8_t                    auth_need;
+    uint8_t                    auth_conn;
+    uint32_t                   auth_number;
+#endif
 
     /* Phase 8 — GAP scanning state + dedup'd results cache. */
     uint8_t                    scanning;
@@ -386,17 +434,24 @@ static struct {
      * because Exchange MTU only affects the requester's link. */
     struct {
         uint8_t                    in_use;
+        /* info.tx_octets is the payload the link layer sends per PDU (Data
+         * Length Change): every outgoing ACL fragment fits one, since the
+         * EM9305 does not split a packet the PDU cannot carry. */
         tiku_bt_connection_t info;
-        uint16_t                   att_mtu;
-        /* The payload the link layer sends per PDU (Data Length Change):
-         * every outgoing ACL fragment fits one, since the EM9305 does not
-         * split a packet the PDU cannot carry. */
-        uint16_t                   tx_octets;
         /* An L2CAP PDU arriving in ACL fragments: its length (0: none
          * open) and the bytes in so far. */
         uint16_t                   rx_need;
         uint16_t                   rx_len;
         uint8_t                    rx_buf[BT_L2CAP_MAX];
+#if (TIKU_BT_LINK_UPDATE + 0)
+        /* The data length, PHY and MTU requests are still to send. */
+        uint8_t                    upd_due;
+#endif
+#if (TIKU_BT_PRIVACY + 0)
+        /* The address this end used on the link, as pairing names it. */
+        uint8_t                    own_type;
+        uint8_t                    own_addr[6];      /* MSB-first */
+#endif
 #if (TIKU_BT_SERVICE_CHANGED + 0)
         /* The peer's Service Changed CCCD (bit 1: indications), and
          * whether an indication waits for its confirmation. */
@@ -470,7 +525,23 @@ static struct {
          * so, the least significant octet first. */
         uint8_t  peer_iocap[3];     /* the peer's, from its Request/Response */
         uint8_t  own_iocap[3];      /* ours, as sent                         */
-        uint8_t  own_respkd;        /* keys promised the initiator, to send  */
+        /* Keys to distribute once the link is encrypted (SMP_KEYDIST_ID):
+         * this end's, sent after the peer's when this end initiated. */
+        uint8_t  own_keys;
+#if (TIKU_BT_PRIVACY + 0)
+        uint8_t  peer_keys;         /* the peer's, still to come             */
+        uint8_t  have_irk;          /* its Identity Information is in        */
+        uint8_t  peer_irk[16];
+#endif
+#if (TIKU_BT_PASSKEY + 0)
+        uint8_t  method;            /* SMP_JUST_WORKS ... SMP_PASSKEY_*      */
+        uint8_t  round;             /* the passkey bit being confirmed       */
+        uint8_t  have_passkey;      /* shown, or typed                       */
+        uint8_t  confirm_sent;      /* this round's confirm is out           */
+        uint8_t  held_confirm;      /* a responder's Cai waits on the passkey */
+        uint8_t  user_ok;           /* the numbers compared, or no need      */
+        uint32_t passkey;
+#endif
         uint8_t  peer_check[16];    /* Ea, when it beats the DHKey           */
         uint8_t  have_peer_check;   /* 1 while that Ea waits for f5          */
         uint8_t  peer_addr_le[6];   /* LE-order copy of peer addr            */
@@ -576,8 +647,8 @@ static uint16_t bt_acl_frag_max(int conn_idx)
 {
     uint16_t m = BT_LL_OCTETS_MIN;
 
-    if (conn_idx >= 0 && bt_state.conns[conn_idx].tx_octets > m) {
-        m = bt_state.conns[conn_idx].tx_octets;
+    if (conn_idx >= 0 && bt_state.conns[conn_idx].info.tx_octets > m) {
+        m = bt_state.conns[conn_idx].info.tx_octets;
     }
     if (bt_state.acl_len != 0U && bt_state.acl_len < m) {
         m = bt_state.acl_len;
@@ -738,7 +809,9 @@ static void bt_sc_on_encrypted(uint8_t conn_idx);
 
 /* The central's connect request: beside the GATT client at the bottom. */
 static int  bt_create_connection(void);
+#if (TIKU_BT_CONNECT_RETRY + 0)
 static void bt_connect_again(void);
+#endif
 
 /* The Bluetooth Base UUID, little-endian: the 16-bit UUID xxxx is
  * 0000xxxx-0000-1000-8000-00805F9B34FB, its bytes at [12] and [13]. */
@@ -1010,7 +1083,7 @@ static int bt_att_find_char_value(const bt_att_entry_t *table,
 /** The ATT MTU of connection @p conn_idx: 23 until an exchange raises it. */
 static uint16_t bt_att_mtu(uint8_t conn_idx)
 {
-    uint16_t m = bt_state.conns[conn_idx].att_mtu;
+    uint16_t m = bt_state.conns[conn_idx].info.att_mtu;
     if (m < ATT_MTU_DEFAULT) m = ATT_MTU_DEFAULT;
     if (m > BT_ATT_MTU_MAX)  m = BT_ATT_MTU_MAX;
     return m;
@@ -1068,7 +1141,7 @@ static void bt_att_handle_mtu(uint8_t conn_idx, const uint8_t *pdu,
     /* The response goes out at the old MTU; the new one holds after. */
     (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
                       L2CAP_CID_ATT, rsp, sizeof rsp);
-    bt_state.conns[conn_idx].att_mtu = mtu;
+    bt_state.conns[conn_idx].info.att_mtu = mtu;
 }
 
 /*
@@ -1513,8 +1586,14 @@ static void bt_handle_att(uint8_t conn_idx, const uint8_t *pdu,
         break;
     case ATT_OP_EXCHANGE_MTU_RSP:
         if (len >= 3) {
-            TIKU_BT_PRINTF("p13.att: MTU Rsp server=%u\n",
-                            (uint16_t)(pdu[1] | (pdu[2] << 8)));
+            uint16_t server = (uint16_t)(pdu[1] | (pdu[2] << 8));
+            TIKU_BT_PRINTF("p13.att: MTU Rsp server=%u\n", server);
+#if (TIKU_BT_LINK_UPDATE + 0)
+            /* The link takes the smaller of the two, 23 at least. */
+            if (server > BT_ATT_MTU_MAX) server = BT_ATT_MTU_MAX;
+            if (server < ATT_MTU_DEFAULT) server = ATT_MTU_DEFAULT;
+            bt_state.conns[conn_idx].info.att_mtu = server;
+#endif
         }
         break;
     case ATT_OP_READ_RSP:
@@ -2454,6 +2533,170 @@ static int bt_smp_f6(const uint8_t W[16],
     return TIKU_DRV_OK;
 }
 
+#if (TIKU_BT_PASSKEY + 0)
+/**
+ * @brief g2, the numeric comparison value (Core Spec Vol 3 Part H 2.2.9):
+ *        AES-CMAC_X(U || V || Y) mod 2^32, then mod 10^6.
+ *
+ * @param U    the initiator's public key X (32 B, LE)
+ * @param V    the responder's public key X (32 B, LE)
+ * @param X    the initiator's nonce (16 B, LE)
+ * @param Y    the responder's nonce (16 B, LE)
+ * @param val  Receives the six-digit number
+ */
+static int bt_smp_g2(const uint8_t U[32], const uint8_t V[32],
+                     const uint8_t X[16], const uint8_t Y[16], uint32_t *val)
+{
+    uint8_t msg[80], xs[16], mac[16];
+    int     rc;
+
+    bt_smp_swap_buf(msg,       U, 32U);
+    bt_smp_swap_buf(msg + 32U, V, 32U);
+    bt_smp_swap_buf(msg + 64U, Y, 16U);
+    bt_smp_swap_buf(xs, X, 16U);
+    rc = bt_aes_cmac(xs, msg, sizeof msg, mac);
+    if (rc == TIKU_DRV_OK) {
+        *val = (((uint32_t)mac[12] << 24) | ((uint32_t)mac[13] << 16) |
+                ((uint32_t)mac[14] << 8) | (uint32_t)mac[15]) % 1000000UL;
+    }
+    return rc;
+}
+#endif
+
+#if (TIKU_BT_PRIVACY + 0)
+/**
+ * @brief ah, the hash of a resolvable private address (Core Spec Vol 3
+ *        Part H 2.2.2): the low 24 bits of e(IRK, 0^104 || prand).
+ *
+ * @param irk    16-byte IRK, least significant octet first (as SMP sends it)
+ * @param prand  the address's top three octets, MSB-first
+ * @param hash   Receives its bottom three octets, MSB-first
+ */
+static int bt_rpa_hash(const uint8_t irk[16], const uint8_t prand[3],
+                       uint8_t hash[3])
+{
+    uint8_t key[16], r[16] = {0}, out[16];
+    int     rc;
+
+    bt_smp_swap_buf(key, irk, 16U);
+    r[13] = prand[0];
+    r[14] = prand[1];
+    r[15] = prand[2];
+    rc = bt_aes128_ecb(key, r, out);
+    if (rc == TIKU_DRV_OK) {
+        hash[0] = out[13];
+        hash[1] = out[14];
+        hash[2] = out[15];
+    }
+    return rc;
+}
+
+/*
+ * This end's identity for privacy, durable so a bonded peer still resolves
+ * its private addresses after a reboot: its IRK (drawn from the TRNG the
+ * first time the radio is up), whether private addresses are on, and the
+ * seconds each one lasts.
+ */
+#define BT_LOCAL_MAGIC        0x49524B31UL      /* "IRK1" */
+#define BT_RPA_SECONDS        900U
+typedef struct {
+    uint32_t magic;
+    uint8_t  irk[16];         /* least significant octet first */
+    uint16_t rpa_s;
+    uint8_t  privacy;
+    uint8_t  _pad;
+} bt_local_t;
+static TIKU_DURABLE bt_local_t bt_local;
+
+/** @brief Draw this end's IRK the first time, and keep it. */
+static void bt_local_ready(void)
+{
+    bt_local_t l;
+    uint16_t   mpu_saved;
+
+    if (bt_local.magic == BT_LOCAL_MAGIC) return;
+    if (bt_rand_bytes(l.irk, 16U) != 0) {
+        TIKU_BT_PRINTF("privacy: no entropy for the IRK\n");
+        return;
+    }
+    l.magic   = BT_LOCAL_MAGIC;
+    l.rpa_s   = BT_RPA_SECONDS;
+    l.privacy = 0U;
+    l._pad    = 0U;
+    mpu_saved = tiku_mpu_unlock_nvm();
+    bt_local  = l;
+    tiku_mpu_lock_nvm(mpu_saved);
+}
+
+/** @brief The address type this end advertises, scans and connects with:
+ *         random while a private address is on air, else its identity's. */
+static uint8_t bt_own_type(void)
+{
+    if (bt_local.privacy && bt_state.rpa_live) return 1U;
+    return bt_state.addr_type;
+}
+
+/**
+ * @brief Put a fresh resolvable private address in the controller when
+ *        privacy is on and the last one is older than its time (or
+ *        @p force); with privacy off, put back a random static identity.
+ *        The controller refuses while advertising, scanning or connecting;
+ *        the last address stays then.
+ */
+static void bt_rpa_refresh(uint8_t force)
+{
+    uint8_t prand[3], hash[3], le[6], evt[16];
+    int     n;
+
+    if (!bt_local.privacy || bt_local.magic != BT_LOCAL_MAGIC) {
+        if (bt_state.rpa_live && bt_state.addr_type == 1U) {
+            for (n = 0; n < 6; ++n) le[n] = bt_state.bd_addr[5 - n];
+            (void)bt_hci_cmd_response(HCI_OP_LE_SET_RANDOM_ADDR, le, 6U,
+                                      evt, sizeof evt, &n);
+        }
+        bt_state.rpa_live = 0U;
+        return;
+    }
+    if (!force && bt_state.rpa_live
+        && (uint32_t)(tiku_clock_seconds() - bt_state.rpa_at)
+               < (uint32_t)bt_local.rpa_s) {
+        return;
+    }
+    if (bt_rand_bytes(prand, 3U) != 0) return;
+    /* The two top bits 01 mark it resolvable; the 22 random bits are
+     * neither all 0 nor all 1. */
+    prand[0] = (uint8_t)((prand[0] & 0x3FU) | 0x40U);
+    if ((prand[0] == 0x40U && prand[1] == 0x00U && prand[2] == 0x00U)
+        || (prand[0] == 0x7FU && prand[1] == 0xFFU && prand[2] == 0xFFU)) {
+        prand[2] ^= 0x01U;
+    }
+    if (bt_rpa_hash(bt_local.irk, prand, hash) != TIKU_DRV_OK) return;
+    le[0] = hash[2];
+    le[1] = hash[1];
+    le[2] = hash[0];
+    le[3] = prand[2];
+    le[4] = prand[1];
+    le[5] = prand[0];
+    if (bt_hci_cmd_response(HCI_OP_LE_SET_RANDOM_ADDR, le, 6U,
+                            evt, sizeof evt, &n) != TIKU_DRV_OK
+        || n < 7 || evt[6] != 0x00U) {
+        TIKU_BT_PRINTF("privacy: private address refused (status 0x%02x)\n",
+                        (n >= 7) ? evt[6] : 0xFFU);
+        return;
+    }
+    for (n = 0; n < 6; ++n) bt_state.rpa[n] = le[5 - n];
+    bt_state.rpa_live = 1U;
+    bt_state.rpa_at   = (uint32_t)tiku_clock_seconds();
+    TIKU_BT_PRINTF("privacy: private address "
+                    "%02x:%02x:%02x:%02x:%02x:%02x\n",
+                    bt_state.rpa[0], bt_state.rpa[1], bt_state.rpa[2],
+                    bt_state.rpa[3], bt_state.rpa[4], bt_state.rpa[5]);
+}
+#else
+#define bt_own_type()         (bt_state.addr_type)
+#define bt_rpa_refresh(force) ((void)0)
+#endif
+
 /*---------------------------------------------------------------------------*/
 /* SMP test vectors (Core Spec Vol 3 Part H 2.7)                             */
 /*---------------------------------------------------------------------------*/
@@ -2654,6 +2897,52 @@ static int bt_smp_selftest(void)
         }
     }
 
+#if (TIKU_BT_PASSKEY + 0)
+    /* ---- g2 sample vector: f4's U, V and X, f5's N2 as Y ---- */
+    {
+        static const uint8_t U[32] = {
+            0xE6,0x9D,0x35,0x0E,0x48,0x01,0x03,0xCC,
+            0xDB,0xFD,0xF4,0xAC,0x11,0x91,0xF4,0xEF,
+            0xB9,0xA5,0xF9,0xE9,0xA7,0x83,0x2C,0x5E,
+            0x2C,0xBE,0x97,0xF2,0xD2,0x03,0xB0,0x20,
+        };
+        static const uint8_t V[32] = {
+            0xFD,0xC5,0x7F,0xF4,0x49,0xDD,0x4F,0x6B,
+            0xFB,0x7C,0x9D,0xF1,0xC2,0x9A,0xCB,0x59,
+            0x2A,0xE7,0xD4,0xEE,0xFB,0xFC,0x0A,0x90,
+            0x9A,0xBB,0xF6,0x32,0x3D,0x8B,0x18,0x55,
+        };
+        static const uint8_t X[16] = {
+            0xAB,0xAE,0x2B,0x71,0xEC,0xB2,0xFF,0xFF,
+            0x3E,0x73,0x77,0xD1,0x54,0x84,0xCB,0xD5,
+        };
+        static const uint8_t Y[16] = {
+            0xCF,0xC4,0x3D,0xFF,0xF7,0x83,0x65,0x21,
+            0x6E,0x5F,0xA7,0x25,0xCC,0xE7,0xE8,0xA6,
+        };
+        uint32_t v = 0U;
+        int match = bt_smp_g2(U, V, X, Y, &v) == TIKU_DRV_OK
+                    && v == 0x2F9ED5BAUL % 1000000UL;
+        TIKU_BT_PRINTF("p14.selftest: g2 %s\n", match ? "PASS" : "FAIL");
+        if (!match) pass = 0;
+    }
+#endif
+#if (TIKU_BT_PRIVACY + 0)
+    /* ---- ah sample vector ---- */
+    {
+        static const uint8_t irk[16] = {
+            0x9B,0x7D,0x39,0x0A,0xA6,0x10,0x10,0x34,
+            0x05,0xAD,0xC8,0x57,0xA3,0x34,0x02,0xEC,
+        };
+        static const uint8_t prand[3] = { 0x70, 0x81, 0x94 };
+        uint8_t h[3] = {0};
+        int match = bt_rpa_hash(irk, prand, h) == TIKU_DRV_OK
+                    && h[0] == 0x0DU && h[1] == 0xFBU && h[2] == 0xAAU;
+        TIKU_BT_PRINTF("p14.selftest: ah %s\n", match ? "PASS" : "FAIL");
+        if (!match) pass = 0;
+    }
+#endif
+
     TIKU_BT_PRINTF("p14.selftest: %s\n", pass ? "ALL PASS" : "FAIL");
     return pass;
 }
@@ -2682,6 +2971,59 @@ static void bt_smp_addr_block(uint8_t addr_type,
     for (k = 0; k < 6; ++k) out[1 + k] = addr_msb[5 - k];
 }
 
+/** @brief This end's address block on @p conn_idx's link: the address it
+ *         used there. */
+static void bt_smp_own_block(uint8_t conn_idx, uint8_t out[7])
+{
+#if (TIKU_BT_PRIVACY + 0)
+    bt_smp_addr_block(bt_state.conns[conn_idx].own_type,
+                      bt_state.conns[conn_idx].own_addr, out);
+#else
+    (void)conn_idx;
+    bt_smp_addr_block(bt_state.addr_type, bt_state.bd_addr, out);
+#endif
+}
+
+/** @brief Clear @p conn_idx's pairing session for a fresh start. */
+static void bt_smp_session_reset(uint8_t conn_idx)
+{
+    bt_state.smp[conn_idx].state             = SMP_IDLE;
+    bt_state.smp[conn_idx].have_pubkey       = 0U;
+    bt_state.smp[conn_idx].have_dhkey        = 0U;
+    bt_state.smp[conn_idx].have_peer_pubkey  = 0U;
+    bt_state.smp[conn_idx].have_peer_random  = 0U;
+    bt_state.smp[conn_idx].pending_pubkey_tx = 0U;
+    bt_state.smp[conn_idx].pending_f5        = 0U;
+    bt_state.smp[conn_idx].initiator         = 0U;
+    bt_state.smp[conn_idx].got_response      = 0U;
+    bt_state.smp[conn_idx].pka_sent          = 0U;
+    bt_state.smp[conn_idx].dhkey_requested   = 0U;
+    bt_state.smp[conn_idx].own_keys          = 0U;
+    bt_state.smp[conn_idx].have_peer_check   = 0U;
+#if (TIKU_BT_PRIVACY + 0)
+    bt_state.smp[conn_idx].peer_keys         = 0U;
+    bt_state.smp[conn_idx].have_irk          = 0U;
+#endif
+#if (TIKU_BT_PASSKEY + 0)
+    bt_state.smp[conn_idx].method            = SMP_JUST_WORKS;
+    bt_state.smp[conn_idx].round             = 0U;
+    bt_state.smp[conn_idx].have_passkey      = 0U;
+    bt_state.smp[conn_idx].confirm_sent      = 0U;
+    bt_state.smp[conn_idx].held_confirm      = 0U;
+    bt_state.smp[conn_idx].user_ok           = 1U;
+    if (bt_state.auth_conn == conn_idx) {
+        bt_state.auth_need = TIKU_BT_AUTH_NONE;
+    }
+#endif
+}
+
+/** @brief Send one SMP PDU on @p conn_idx's link. */
+static void bt_smp_send(uint8_t conn_idx, const uint8_t *pdu, uint16_t len)
+{
+    (void)bt_send_acl(bt_state.conns[conn_idx].info.handle, L2CAP_CID_SMP,
+                      pdu, len);
+}
+
 /** Send SMP Pairing Failed and reset the session to IDLE. */
 static void bt_smp_send_failed(uint8_t conn_idx, uint8_t reason)
 {
@@ -2690,13 +3032,7 @@ static void bt_smp_send_failed(uint8_t conn_idx, uint8_t reason)
     rsp[1] = reason;
     (void)bt_send_acl(bt_state.conns[conn_idx].info.handle,
                       L2CAP_CID_SMP, rsp, sizeof rsp);
-    bt_state.smp[conn_idx].state            = SMP_IDLE;
-    bt_state.smp[conn_idx].have_pubkey      = 0U;
-    bt_state.smp[conn_idx].have_dhkey       = 0U;
-    bt_state.smp[conn_idx].have_peer_pubkey = 0U;
-    bt_state.smp[conn_idx].have_peer_random = 0U;
-    bt_state.smp[conn_idx].pending_pubkey_tx = 0U;
-    bt_state.smp[conn_idx].pending_f5       = 0U;
+    bt_smp_session_reset(conn_idx);
     TIKU_BT_PRINTF("p14.smp: pairing failed reason=0x%02x\n", reason);
 }
 
@@ -2705,6 +3041,13 @@ static void bt_smp_send_failed(uint8_t conn_idx, uint8_t reason)
 static int bt_bond_find_by_addr(uint8_t addr_type, const uint8_t addr_le[6],
                                 tiku_bt_bond_record_t *out);
 static uint8_t bt_bond_keep(const tiku_bt_bond_record_t *rec);
+#if (TIKU_BT_SERVICE_CHANGED + 0) || (TIKU_BT_PRIVACY + 0)
+static int bt_bond_slot_of(uint8_t conn_idx);
+#endif
+#if (TIKU_BT_PRIVACY + 0)
+static void bt_bond_identity(uint8_t conn_idx, uint8_t id_type,
+                             const uint8_t id_le[6]);
+#endif
 
 #if (TIKU_BT_SW_CRYPTO + 0)
 /* The private key of a key pair the stack made itself (big-endian), for
@@ -2870,8 +3213,237 @@ static void bt_smp_addrs(uint8_t conn_idx, uint8_t A[7], uint8_t B[7])
     uint8_t *mine = bt_state.smp[conn_idx].initiator ? A : B;
     bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
                       bt_state.conns[conn_idx].info.peer_addr, peer);
-    bt_smp_addr_block(bt_state.addr_type, bt_state.bd_addr, mine);
+    bt_smp_own_block(conn_idx, mine);
 }
+
+#if (TIKU_BT_PASSKEY + 0)
+/* The association model for the initiator's IO capability (row) and the
+ * responder's (column) when either asks for MITM protection (Core Spec
+ * Vol 3 Part H Table 2.8, LE Secure Connections). */
+static const uint8_t bt_smp_models[5][5] = {
+    { SMP_JUST_WORKS, SMP_JUST_WORKS, SMP_PASSKEY_RESP_TYPES,
+      SMP_JUST_WORKS, SMP_PASSKEY_RESP_TYPES },
+    { SMP_JUST_WORKS, SMP_NUMERIC, SMP_PASSKEY_RESP_TYPES,
+      SMP_JUST_WORKS, SMP_NUMERIC },
+    { SMP_PASSKEY_INIT_TYPES, SMP_PASSKEY_INIT_TYPES, SMP_PASSKEY_BOTH_TYPE,
+      SMP_JUST_WORKS, SMP_PASSKEY_INIT_TYPES },
+    { SMP_JUST_WORKS, SMP_JUST_WORKS, SMP_JUST_WORKS,
+      SMP_JUST_WORKS, SMP_JUST_WORKS },
+    { SMP_PASSKEY_INIT_TYPES, SMP_NUMERIC, SMP_PASSKEY_RESP_TYPES,
+      SMP_JUST_WORKS, SMP_NUMERIC },
+};
+
+/* This end's IO capability; TIKU_BT_IO_NONE pairs by Just Works. */
+static uint8_t bt_io_cap = TIKU_BT_IO_NONE;
+
+/* The AuthReq this end sends: SC and bonding, and MITM with an IO
+ * capability. */
+#define BT_SMP_AUTHREQ                                                    \
+    ((uint8_t)(SMP_AUTHREQ_SC | 0x01U                                     \
+               | ((bt_io_cap != TIKU_BT_IO_NONE) ? SMP_AUTHREQ_MITM : 0U)))
+
+#define BT_SMP_USER_OK(i)       (bt_state.smp[i].user_ok)
+#define BT_SMP_AUTHENTICATED(i) (bt_state.smp[i].method != SMP_JUST_WORKS)
+
+/** @brief 1 when @p conn_idx's pairing is by passkey entry. */
+static int bt_smp_by_passkey(uint8_t conn_idx)
+{
+    return bt_state.smp[conn_idx].method >= SMP_PASSKEY_INIT_TYPES;
+}
+
+/** @brief f4's Z on @p conn_idx's link: 0x80 and the passkey's bit for this
+ *         round in a passkey entry, else 0. */
+static uint8_t bt_smp_z(uint8_t conn_idx)
+{
+    if (!bt_smp_by_passkey(conn_idx)) return 0x00U;
+    return (uint8_t)(0x80U | ((bt_state.smp[conn_idx].passkey
+                               >> bt_state.smp[conn_idx].round) & 1U));
+}
+
+/** @brief The randomiser f6 takes on @p conn_idx's link: the passkey as a
+ *         128-bit number, least significant octet first, or zero. */
+static const uint8_t *bt_smp_r(uint8_t conn_idx)
+{
+    static uint8_t r[16];
+    uint32_t p = bt_smp_by_passkey(conn_idx) ? bt_state.smp[conn_idx].passkey
+                                             : 0UL;
+    r[0] = (uint8_t)p;
+    r[1] = (uint8_t)(p >> 8);
+    r[2] = (uint8_t)(p >> 16);
+    r[3] = (uint8_t)(p >> 24);
+    return r;
+}
+
+/** @brief Ask this end's user for @p need on @p conn_idx's link, and say
+ *         so on the console. */
+static void bt_auth_ask(uint8_t conn_idx, uint8_t need, uint32_t number)
+{
+    char    digits[7];
+    uint8_t k;
+
+    bt_state.auth_need   = need;
+    bt_state.auth_conn   = conn_idx;
+    bt_state.auth_number = number;
+    for (k = 6U; k > 0U; --k) {
+        digits[k - 1U] = (char)('0' + (char)(number % 10UL));
+        number /= 10UL;
+    }
+    digits[6] = '\0';
+    if (need == TIKU_BT_AUTH_DISPLAY) {
+        TIKU_BT_PRINTF("p14.smp: *** passkey %s: type it on the peer ***\n",
+                       digits);
+    } else if (need == TIKU_BT_AUTH_ENTER) {
+        TIKU_BT_PRINTF("p14.smp: *** type the passkey the peer shows "
+                       "(bt passkey <number>) ***\n");
+    } else {
+        TIKU_BT_PRINTF("p14.smp: *** does the peer show %s? (bt confirm "
+                       "yes|no) ***\n", digits);
+    }
+}
+
+/**
+ * @brief Take the association model of the pairing on @p conn_idx from both
+ *        IO capabilities (each 0..4) and their AuthReq octets ORed: a
+ *        passkey this end shows is drawn now, or its user asked for one.
+ * @return 0, or -1 without entropy for the passkey
+ */
+static int bt_smp_choose(uint8_t conn_idx, uint8_t init_io, uint8_t resp_io,
+                         uint8_t authreq)
+{
+    static const char *const names[] = {
+        "Just Works", "numeric comparison", "passkey entry",
+        "passkey entry", "passkey entry"
+    };
+    uint8_t m = ((authreq & SMP_AUTHREQ_MITM) != 0U)
+                    ? bt_smp_models[init_io][resp_io] : SMP_JUST_WORKS;
+
+    bt_state.smp[conn_idx].method  = m;
+    bt_state.smp[conn_idx].user_ok = (uint8_t)(m != SMP_NUMERIC);
+    TIKU_BT_PRINTF("p14.smp: pairing by %s\n", names[m]);
+    if (m < SMP_PASSKEY_INIT_TYPES) return 0;
+    if (m == SMP_PASSKEY_BOTH_TYPE
+        || (m == SMP_PASSKEY_INIT_TYPES) == (bt_state.smp[conn_idx].initiator
+                                             != 0U)) {
+        bt_auth_ask(conn_idx, TIKU_BT_AUTH_ENTER, 0UL);
+        return 0;
+    }
+    {
+        uint8_t b[4];
+        if (bt_rand_bytes(b, 4U) != 0) return -1;
+        bt_state.smp[conn_idx].passkey =
+            (((uint32_t)b[3] << 24) | ((uint32_t)b[2] << 16) |
+             ((uint32_t)b[1] << 8) | (uint32_t)b[0]) % 1000000UL;
+    }
+    bt_state.smp[conn_idx].have_passkey = 1U;
+    bt_auth_ask(conn_idx, TIKU_BT_AUTH_DISPLAY,
+                bt_state.smp[conn_idx].passkey);
+    return 0;
+}
+
+/**
+ * @brief Send this end's confirm for the passkey round under way: a fresh
+ *        nonce, and f4 over this end's key, the peer's, the nonce and the
+ *        round's passkey bit.
+ */
+static int bt_smp_pk_confirm(uint8_t conn_idx)
+{
+    uint8_t pdu[17];
+
+    if (bt_rand_bytes(bt_state.smp[conn_idx].local_nonce, 16U) != 0
+        || bt_smp_f4(bt_state.smp[conn_idx].local_pubkey,
+                     bt_state.smp[conn_idx].peer_pubkey,
+                     bt_state.smp[conn_idx].local_nonce,
+                     bt_smp_z(conn_idx), &pdu[1]) != TIKU_DRV_OK) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    pdu[0] = SMP_OP_PAIRING_CONFIRM;
+    bt_smp_send(conn_idx, pdu, sizeof pdu);
+    bt_state.smp[conn_idx].confirm_sent = 1U;
+    return TIKU_DRV_OK;
+}
+
+/**
+ * @brief Move a passkey entry on once its inputs are in.  The initiator's
+ *        confirm opens each round once both keys and the passkey are in; the
+ *        responder's answers the initiator's, held until the passkey is.
+ */
+static void bt_smp_pk_next(uint8_t conn_idx)
+{
+    if (!bt_smp_by_passkey(conn_idx) || !bt_state.smp[conn_idx].have_passkey) {
+        return;
+    }
+    if (bt_state.smp[conn_idx].initiator) {
+        if (bt_state.smp[conn_idx].state != SMP_WAITING_CONFIRM
+            || !bt_state.smp[conn_idx].have_peer_pubkey
+            || bt_state.smp[conn_idx].confirm_sent) {
+            return;
+        }
+    } else {
+        if (!bt_state.smp[conn_idx].held_confirm) return;
+        bt_state.smp[conn_idx].held_confirm = 0U;
+        bt_state.smp[conn_idx].state = SMP_WAITING_RANDOM;
+    }
+    if (bt_smp_pk_confirm(conn_idx) != TIKU_DRV_OK) {
+        bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+    }
+}
+
+/**
+ * @brief After a passkey round's nonces: 1 when another round follows (the
+ *        session is set up for it), 0 after the last.
+ */
+static int bt_smp_pk_more(uint8_t conn_idx)
+{
+    if (!bt_smp_by_passkey(conn_idx)
+        || bt_state.smp[conn_idx].round + 1U >= SMP_PASSKEY_ROUNDS) {
+        return 0;
+    }
+    bt_state.smp[conn_idx].round++;
+    bt_state.smp[conn_idx].confirm_sent     = 0U;
+    bt_state.smp[conn_idx].have_peer_random = 0U;
+    bt_state.smp[conn_idx].state            = SMP_WAITING_CONFIRM;
+    return 1;
+}
+
+/** @brief Numeric comparison: show g2 over both keys and nonces; the DHKey
+ *         check waits on the user's yes. */
+static void bt_smp_numeric(uint8_t conn_idx)
+{
+    uint8_t  Na[16], Nb[16];
+    uint8_t  init = bt_state.smp[conn_idx].initiator;
+    uint32_t v;
+
+    if (bt_state.smp[conn_idx].method != SMP_NUMERIC) return;
+    bt_smp_nonces(conn_idx, Na, Nb);
+    if (bt_smp_g2(init ? bt_state.smp[conn_idx].local_pubkey
+                       : bt_state.smp[conn_idx].peer_pubkey,
+                  init ? bt_state.smp[conn_idx].peer_pubkey
+                       : bt_state.smp[conn_idx].local_pubkey,
+                  Na, Nb, &v) != TIKU_DRV_OK) {
+        bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+        return;
+    }
+    bt_auth_ask(conn_idx, TIKU_BT_AUTH_CONFIRM, v);
+}
+
+/** @brief The pairing on @p conn_idx is done: nothing more to ask. */
+static void bt_auth_done(uint8_t conn_idx)
+{
+    if (bt_state.auth_conn == conn_idx) {
+        bt_state.auth_need = TIKU_BT_AUTH_NONE;
+    }
+}
+#else
+#define BT_SMP_AUTHREQ          ((uint8_t)(SMP_AUTHREQ_SC | 0x01U))
+#define BT_SMP_USER_OK(i)       1
+#define BT_SMP_AUTHENTICATED(i) 0
+#define bt_smp_z(i)             0x00U
+#define bt_smp_r(i)             bt_smp_r0
+#define bt_smp_pk_more(i)       0
+#define bt_smp_numeric(i)       ((void)0)
+#define bt_auth_done(i)         ((void)0)
+static const uint8_t bt_smp_r0[16];
+#endif
 
 static int bt_smp_init_send_ea(uint8_t conn_idx);              /* fwd */
 static void bt_smp_resp_check_ea(uint8_t conn_idx);            /* fwd */
@@ -2903,14 +3475,15 @@ static int bt_smp_try_derive_keys(uint8_t conn_idx)
     bt_state.smp[conn_idx].pending_f5 = 0U;
     TIKU_BT_PRINTF("p14.smp: f5 derived MacKey + LTK\n");
     /* The initiator checks first: its Ea goes out once the keys are in.
-     * A responder may already hold the initiator's Ea. */
-    if (bt_state.smp[conn_idx].initiator
+     * A responder may already hold the initiator's Ea.  Either waits for
+     * its user's yes to a numeric comparison. */
+    if (bt_state.smp[conn_idx].initiator && BT_SMP_USER_OK(conn_idx)
         && bt_smp_init_send_ea(conn_idx) != TIKU_DRV_OK) {
         bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
         return -1;
     }
     if (!bt_state.smp[conn_idx].initiator
-        && bt_state.smp[conn_idx].have_peer_check) {
+        && bt_state.smp[conn_idx].have_peer_check && BT_SMP_USER_OK(conn_idx)) {
         bt_smp_resp_check_ea(conn_idx);
     }
     return 0;
@@ -2924,7 +3497,6 @@ static int bt_smp_send_dhkey_check(uint8_t conn_idx)
     uint8_t Na[16], Nb[16];
     uint8_t A_init[7], A_resp[7];
     uint8_t Eb[16];
-    static const uint8_t R0[16] = {0};
     uint8_t IOcap_b[3];
     uint8_t i;
     int     rc;
@@ -2932,12 +3504,13 @@ static int bt_smp_send_dhkey_check(uint8_t conn_idx)
     for (i = 0U; i < 16U; ++i) Nb[i] = bt_state.smp[conn_idx].local_nonce[i];
     bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
                       bt_state.conns[conn_idx].info.peer_addr, A_init);
-    bt_smp_addr_block(bt_state.addr_type, bt_state.bd_addr, A_resp);
-    /* Eb = f6(MacKey, Nb, Na, 0, IOcapB, B, A): own nonce first per
-     * spec 2.2.8; IOcapB as on the wire, which f6 turns MSB first. */
+    bt_smp_own_block(conn_idx, A_resp);
+    /* Eb = f6(MacKey, Nb, Na, ra, IOcapB, B, A): own nonce first per
+     * spec 2.2.8, ra the passkey or 0; IOcapB as on the wire, which f6
+     * turns MSB first. */
     for (i = 0U; i < 3U; ++i) IOcap_b[i] = bt_state.smp[conn_idx].own_iocap[i];
     rc = bt_smp_f6(bt_state.smp[conn_idx].mackey,
-                   Nb, Na, R0, IOcap_b, A_resp, A_init, Eb);
+                   Nb, Na, bt_smp_r(conn_idx), IOcap_b, A_resp, A_init, Eb);
     if (rc != TIKU_DRV_OK) {
         TIKU_BT_PRINTF("p14.smp: f6(Eb) FAIL rc=%d\n", rc);
         return rc;
@@ -2973,6 +3546,13 @@ static void bt_smp_try_send_pubkey_confirm(uint8_t conn_idx)
         TIKU_BT_PRINTF("p14.smp: sent local Public Key\n");
     }
     bt_state.smp[conn_idx].pending_pubkey_tx = 0U;
+#if (TIKU_BT_PASSKEY + 0)
+    if (bt_smp_by_passkey(conn_idx)) {
+        /* Passkey entry: the initiator's confirm opens each round. */
+        bt_state.smp[conn_idx].state = SMP_WAITING_CONFIRM;
+        return;
+    }
+#endif
 
     /* Compute Cb = f4(PKbx, PKax, Nb, 0) and send Pairing Confirm.
      *   PKbx = local pubkey X (= U for the confirming side)
@@ -3013,31 +3593,6 @@ static void bt_smp_try_send_pubkey_confirm(uint8_t conn_idx)
  *   out; Eb checked; the bond is kept and LE Enable Encryption starts
  *   the link encryption with the LTK.
  */
-
-/** @brief Send one SMP PDU on @p conn_idx's link. */
-static void bt_smp_send(uint8_t conn_idx, const uint8_t *pdu, uint16_t len)
-{
-    (void)bt_send_acl(bt_state.conns[conn_idx].info.handle, L2CAP_CID_SMP,
-                      pdu, len);
-}
-
-/** @brief Clear @p conn_idx's pairing session for a fresh start. */
-static void bt_smp_session_reset(uint8_t conn_idx)
-{
-    bt_state.smp[conn_idx].state             = SMP_IDLE;
-    bt_state.smp[conn_idx].have_pubkey       = 0U;
-    bt_state.smp[conn_idx].have_dhkey        = 0U;
-    bt_state.smp[conn_idx].have_peer_pubkey  = 0U;
-    bt_state.smp[conn_idx].have_peer_random  = 0U;
-    bt_state.smp[conn_idx].pending_pubkey_tx = 0U;
-    bt_state.smp[conn_idx].pending_f5        = 0U;
-    bt_state.smp[conn_idx].initiator         = 0U;
-    bt_state.smp[conn_idx].got_response      = 0U;
-    bt_state.smp[conn_idx].pka_sent          = 0U;
-    bt_state.smp[conn_idx].dhkey_requested   = 0U;
-    bt_state.smp[conn_idx].own_respkd        = 0U;
-    bt_state.smp[conn_idx].have_peer_check   = 0U;
-}
 
 /**
  * @brief Ask for the DHKey once both public keys are in: a controller
@@ -3102,22 +3657,31 @@ static int bt_smp_init_start(uint8_t conn_idx)
     if (bt_rand_bytes(bt_state.smp[conn_idx].local_nonce, 16U) != 0) {
         return TIKU_DRV_ERR_INVALID;
     }
-    /* IOCap NoInputNoOutput (Just Works), no OOB, SC + Bonding, a 16-byte
-     * key, and no keys distributed either way. */
+    /* This end's IO capability (MITM asked for unless it is
+     * NoInputNoOutput), no OOB, SC + Bonding, a 16-byte key, and the
+     * identity keys both ways where the build keeps them. */
     req[0] = SMP_OP_PAIRING_REQUEST;
+#if (TIKU_BT_PASSKEY + 0)
+    req[1] = bt_io_cap;
+#else
     req[1] = 0x03U;
+#endif
     req[2] = 0x00U;
-    req[3] = (uint8_t)(SMP_AUTHREQ_SC | 0x01U);
+    req[3] = BT_SMP_AUTHREQ;
     req[4] = 16U;
+#if (TIKU_BT_PRIVACY + 0)
+    req[5] = SMP_KEYDIST_ID;
+    req[6] = SMP_KEYDIST_ID;
+#else
     req[5] = 0x00U;
     req[6] = 0x00U;
+#endif
     bt_state.smp[conn_idx].own_iocap[0] = req[1];
     bt_state.smp[conn_idx].own_iocap[1] = req[2];
     bt_state.smp[conn_idx].own_iocap[2] = req[3];
     bt_state.smp[conn_idx].state = SMP_WAITING_PUBKEY;
     bt_smp_send(conn_idx, req, sizeof req);
-    TIKU_BT_PRINTF("p14.smp: Pairing Request sent (LE-SC Just-Works, "
-                    "initiator)\n");
+    TIKU_BT_PRINTF("p14.smp: Pairing Request sent (LE-SC, initiator)\n");
     if (bt_smp_request_local_pubkey() != TIKU_DRV_OK) {
         TIKU_BT_PRINTF("p14.smp: no local P-256 key pair\n");
         bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
@@ -3149,7 +3713,6 @@ static void bt_smp_init_try_send_pka(uint8_t conn_idx)
 /** @brief Send the initiator's DHKey check Ea. */
 static int bt_smp_init_send_ea(uint8_t conn_idx)
 {
-    static const uint8_t R0[16] = {0};
     uint8_t Na[16], Nb[16], A[7], B[7], iocap[3], pdu[17];
     uint8_t k;
     int     rc;
@@ -3157,8 +3720,8 @@ static int bt_smp_init_send_ea(uint8_t conn_idx)
     bt_smp_nonces(conn_idx, Na, Nb);
     bt_smp_addrs(conn_idx, A, B);
     for (k = 0U; k < 3U; ++k) iocap[k] = bt_state.smp[conn_idx].own_iocap[k];
-    rc = bt_smp_f6(bt_state.smp[conn_idx].mackey, Na, Nb, R0, iocap, A, B,
-                   &pdu[1]);
+    rc = bt_smp_f6(bt_state.smp[conn_idx].mackey, Na, Nb, bt_smp_r(conn_idx),
+                   iocap, A, B, &pdu[1]);
     if (rc != TIKU_DRV_OK) return rc;
     pdu[0] = SMP_OP_PAIRING_DHKEY_CHECK;
     bt_smp_send(conn_idx, pdu, sizeof pdu);
@@ -3192,6 +3755,91 @@ static void bt_smp_init_secure(uint8_t conn_idx)
 }
 
 /**
+ * @brief Keep the bond the pairing on @p conn_idx agreed: its LTK under the
+ *        address the peer paired from; MITM marks a passkey or numeric
+ *        comparison.
+ */
+static void bt_smp_bond(uint8_t conn_idx)
+{
+    tiku_bt_bond_record_t rec;
+    uint8_t *p = (uint8_t *)&rec;
+    uint8_t k;
+
+    for (k = 0U; k < (uint8_t)sizeof rec; ++k) p[k] = 0U;
+    rec.magic          = TIKU_BT_BOND_MAGIC;
+    rec.peer_addr_type = bt_state.smp[conn_idx].peer_addr_type;
+    /* MSB-first display order, as the scan and connection lists show it. */
+    for (k = 0U; k < 6U; ++k) {
+        rec.peer_addr[k] = bt_state.conns[conn_idx].info.peer_addr[k];
+    }
+    for (k = 0U; k < 16U; ++k) rec.ltk[k] = bt_state.smp[conn_idx].ltk[k];
+    rec.flags = (uint32_t)(SMP_AUTHREQ_SC
+                           | (BT_SMP_AUTHENTICATED(conn_idx) ? SMP_AUTHREQ_MITM
+                                                             : 0U));
+    TIKU_BT_PRINTF("p14.smp: bond saved slot %u\n",
+                    (unsigned)bt_bond_keep(&rec));
+    bt_auth_done(conn_idx);
+}
+
+/**
+ * @brief Distribute this end's identity keys on the encrypted link: its IRK
+ *        (zeros in a build without TIKU_BT_PRIVACY) and identity address.
+ */
+static void bt_smp_send_keys(uint8_t conn_idx)
+{
+    uint8_t key[17] = {0};
+    uint8_t k;
+
+    key[0] = SMP_OP_IDENTITY_INFO;
+#if (TIKU_BT_PRIVACY + 0)
+    if (bt_local.magic == BT_LOCAL_MAGIC) {
+        for (k = 0U; k < 16U; ++k) key[1U + k] = bt_local.irk[k];
+    }
+#endif
+    bt_smp_send(conn_idx, key, sizeof key);
+    key[0] = SMP_OP_IDENTITY_ADDR_INFO;
+    key[1] = bt_state.addr_type;                /* public or static */
+    for (k = 0U; k < 6U; ++k) key[2U + k] = bt_state.bd_addr[5U - k];
+    bt_smp_send(conn_idx, key, 8U);
+    bt_state.smp[conn_idx].own_keys = 0U;
+    TIKU_BT_PRINTF("p14.smp: identity keys sent\n");
+}
+
+#if (TIKU_BT_PRIVACY + 0)
+/**
+ * @brief Take an identity key the peer distributes: its IRK, then its
+ *        identity address, which with the IRK goes into its bond.  This end,
+ *        when it initiated, sends its own keys after them.
+ */
+static void bt_smp_take_key(uint8_t conn_idx, const uint8_t *pdu,
+                            uint16_t len)
+{
+    uint8_t k;
+
+    if ((bt_state.smp[conn_idx].peer_keys & SMP_KEYDIST_ID) == 0U) {
+        TIKU_BT_PRINTF("p14.smp: key 0x%02x not asked for\n", pdu[0]);
+        return;
+    }
+    if (pdu[0] == SMP_OP_IDENTITY_INFO && len >= 17U) {
+        for (k = 0U; k < 16U; ++k) {
+            bt_state.smp[conn_idx].peer_irk[k] = pdu[1U + k];
+        }
+        bt_state.smp[conn_idx].have_irk = 1U;
+        return;
+    }
+    if (pdu[0] != SMP_OP_IDENTITY_ADDR_INFO || len < 8U
+        || !bt_state.smp[conn_idx].have_irk) {
+        return;
+    }
+    bt_bond_identity(conn_idx, pdu[1], &pdu[2]);
+    bt_state.smp[conn_idx].peer_keys = 0U;
+    if (bt_state.smp[conn_idx].initiator && bt_state.smp[conn_idx].own_keys) {
+        bt_smp_send_keys(conn_idx);
+    }
+}
+#endif
+
+/**
  * @brief Handle one SMP PDU on a link where this end is the central.
  */
 static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
@@ -3214,11 +3862,30 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
             bt_smp_send_failed(conn_idx, SMP_ERR_PAIRING_NOT_SUPPORTED);
             return;
         }
+#if (TIKU_BT_PASSKEY + 0)
+        if (pdu[1] > TIKU_BT_IO_KEYBOARD_DISPLAY) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_INVALID_PARAMETERS);
+            return;
+        }
+#endif
         bt_state.smp[conn_idx].peer_iocap[0] = pdu[1];   /* IOCap   */
         bt_state.smp[conn_idx].peer_iocap[1] = pdu[2];   /* OOB     */
         bt_state.smp[conn_idx].peer_iocap[2] = pdu[3];   /* AuthReq */
         bt_state.smp[conn_idx].got_response  = 1U;
+#if (TIKU_BT_PRIVACY + 0)
+        /* The identity keys agreed: the initiator's, then the responder's. */
+        bt_state.smp[conn_idx].own_keys  = (uint8_t)(pdu[5] & SMP_KEYDIST_ID);
+        bt_state.smp[conn_idx].peer_keys = (uint8_t)(pdu[6] & SMP_KEYDIST_ID);
+#endif
         TIKU_BT_PRINTF("p14.smp: Pairing Response in\n");
+#if (TIKU_BT_PASSKEY + 0)
+        if (bt_smp_choose(conn_idx, bt_state.smp[conn_idx].own_iocap[0],
+                          pdu[1], (uint8_t)(bt_state.smp[conn_idx].own_iocap[2]
+                                            | pdu[3])) != 0) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+            return;
+        }
+#endif
         bt_smp_init_try_send_pka(conn_idx);
         return;
 
@@ -3235,7 +3902,11 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
         TIKU_BT_PRINTF("p14.smp: received peer Public Key (PKb)\n");
         if (bt_smp_try_request_dhkey(conn_idx) != TIKU_DRV_OK) {
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+            return;
         }
+#if (TIKU_BT_PASSKEY + 0)
+        bt_smp_pk_next(conn_idx);          /* a passkey entry's first round */
+#endif
         return;
 
     case SMP_OP_PAIRING_CONFIRM:
@@ -3243,6 +3914,13 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
             || bt_state.smp[conn_idx].state != SMP_WAITING_CONFIRM) {
             break;
         }
+#if (TIKU_BT_PASSKEY + 0)
+        /* In a passkey entry the responder answers this end's confirm. */
+        if (bt_smp_by_passkey(conn_idx)
+            && !bt_state.smp[conn_idx].confirm_sent) {
+            break;
+        }
+#endif
         for (i = 0U; i < 16U; ++i) {
             bt_state.smp[conn_idx].peer_confirm[i] = pdu[1U + i];
         }
@@ -3268,10 +3946,12 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
             bt_state.smp[conn_idx].peer_nonce[i] = pdu[1U + i];
         }
         bt_state.smp[conn_idx].have_peer_random = 1U;
-        /* The responder committed to Nb in Cb = f4(PKbx, PKax, Nb, 0). */
+        /* The responder committed to Nb in Cb = f4(PKbx, PKax, Nb, z), z
+         * the round's passkey bit in a passkey entry, else 0. */
         if (bt_smp_f4(bt_state.smp[conn_idx].peer_pubkey,
                       bt_state.smp[conn_idx].local_pubkey,
-                      bt_state.smp[conn_idx].peer_nonce, 0x00U, cb)
+                      bt_state.smp[conn_idx].peer_nonce,
+                      bt_smp_z(conn_idx), cb)
             != TIKU_DRV_OK) {
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
@@ -3283,14 +3963,20 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
             }
         }
         TIKU_BT_PRINTF("p14.smp: Nb in, Cb checks\n");
+        if (bt_smp_pk_more(conn_idx)) {
+#if (TIKU_BT_PASSKEY + 0)
+            bt_smp_pk_next(conn_idx);      /* the next passkey bit */
+#endif
+            return;
+        }
         bt_state.smp[conn_idx].state      = SMP_WAITING_DHCHECK;
         bt_state.smp[conn_idx].pending_f5 = 1U;
+        bt_smp_numeric(conn_idx);
         (void)bt_smp_try_derive_keys(conn_idx);   /* Ea goes out from it */
         return;
     }
 
     case SMP_OP_PAIRING_DHKEY_CHECK: {
-        static const uint8_t R0[16] = {0};
         uint8_t Na[16], Nb[16], A[7], B[7], iocap[3], eb[16];
         if (len < 17U
             || bt_state.smp[conn_idx].state != SMP_WAITING_DHCHECK
@@ -3300,8 +3986,8 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
         bt_smp_nonces(conn_idx, Na, Nb);
         bt_smp_addrs(conn_idx, A, B);
         for (i = 0U; i < 3U; ++i) iocap[i] = bt_state.smp[conn_idx].peer_iocap[i];
-        if (bt_smp_f6(bt_state.smp[conn_idx].mackey, Nb, Na, R0, iocap,
-                      B, A, eb) != TIKU_DRV_OK) {
+        if (bt_smp_f6(bt_state.smp[conn_idx].mackey, Nb, Na,
+                      bt_smp_r(conn_idx), iocap, B, A, eb) != TIKU_DRV_OK) {
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
         }
@@ -3312,22 +3998,7 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
             }
         }
         TIKU_BT_PRINTF("p14.smp: Eb checks: paired\n");
-        {
-            tiku_bt_bond_record_t rec;
-            uint8_t k;
-            rec.magic          = TIKU_BT_BOND_MAGIC;
-            rec.peer_addr_type = bt_state.smp[conn_idx].peer_addr_type;
-            for (k = 0U; k < 6U; ++k) {
-                rec.peer_addr[k] = bt_state.conns[conn_idx].info.peer_addr[k];
-            }
-            rec._pad = 0U;
-            for (k = 0U; k < 16U; ++k) {
-                rec.ltk[k] = bt_state.smp[conn_idx].ltk[k];
-            }
-            rec.flags = (uint32_t)SMP_AUTHREQ_SC;
-            TIKU_BT_PRINTF("p14.smp: bond saved slot %u\n",
-                            (unsigned)bt_bond_keep(&rec));
-        }
+        bt_smp_bond(conn_idx);
         if (bt_smp_start_encryption(conn_idx, bt_state.smp[conn_idx].ltk)
             != TIKU_DRV_OK) {
             bt_smp_session_reset(conn_idx);
@@ -3343,10 +4014,17 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
         bt_smp_session_reset(conn_idx);
         return;
 
+#if (TIKU_BT_PRIVACY + 0)
     case SMP_OP_IDENTITY_INFO:
     case SMP_OP_IDENTITY_ADDR_INFO:
+        bt_smp_take_key(conn_idx, pdu, len);
+        return;
+#else
+    case SMP_OP_IDENTITY_INFO:
+    case SMP_OP_IDENTITY_ADDR_INFO:
+#endif
     case SMP_OP_SIGNING_INFO:
-        /* Keys a responder distributes (none asked): taken, not kept. */
+        /* Keys a responder distributes unasked: taken, not kept. */
         TIKU_BT_PRINTF("p14.smp: key 0x%02x from the responder\n", pdu[0]);
         return;
 
@@ -3367,7 +4045,6 @@ static void bt_handle_smp_initiator(uint8_t conn_idx, const uint8_t *pdu,
  */
 static void bt_smp_resp_check_ea(uint8_t conn_idx)
 {
-    static const uint8_t R0[16] = {0};
     uint8_t Na[16], Nb[16];
     uint8_t A_init[7], A_resp[7];
     uint8_t Ea_exp[16];
@@ -3379,10 +4056,11 @@ static void bt_smp_resp_check_ea(uint8_t conn_idx)
     for (i = 0U; i < 16U; ++i) Nb[i] = bt_state.smp[conn_idx].local_nonce[i];
     bt_smp_addr_block(bt_state.smp[conn_idx].peer_addr_type,
                       bt_state.conns[conn_idx].info.peer_addr, A_init);
-    bt_smp_addr_block(bt_state.addr_type, bt_state.bd_addr, A_resp);
-    /* Expected Ea = f6(MacKey, Na, Nb, 0, IOcapA, A_init, A_resp),
-     * IOcapA the initiator's Pairing Request bytes as on the wire. */
-    if (bt_smp_f6(bt_state.smp[conn_idx].mackey, Na, Nb, R0,
+    bt_smp_own_block(conn_idx, A_resp);
+    /* Expected Ea = f6(MacKey, Na, Nb, rb, IOcapA, A_init, A_resp), rb the
+     * passkey or 0, IOcapA the initiator's Pairing Request bytes as on the
+     * wire. */
+    if (bt_smp_f6(bt_state.smp[conn_idx].mackey, Na, Nb, bt_smp_r(conn_idx),
                   bt_state.smp[conn_idx].peer_iocap,
                   A_init, A_resp, Ea_exp) != TIKU_DRV_OK) {
         bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
@@ -3404,25 +4082,7 @@ static void bt_smp_resp_check_ea(uint8_t conn_idx)
     }
     /* Persist bond + wait for LE LTK Request (the chip raises it
      * once the central issues LL_ENC_REQ on the link). */
-    {
-        tiku_bt_bond_record_t rec;
-        uint8_t k;
-        rec.magic          = TIKU_BT_BOND_MAGIC;
-        rec.peer_addr_type = bt_state.smp[conn_idx].peer_addr_type;
-        /* Bond record stores addr in MSB-first display order
-         * (matches scan / conn API for easy lookup). */
-        for (k = 0U; k < 6U; ++k) {
-            rec.peer_addr[k] =
-                bt_state.conns[conn_idx].info.peer_addr[k];
-        }
-        rec._pad = 0U;
-        for (k = 0U; k < 16U; ++k) {
-            rec.ltk[k] = bt_state.smp[conn_idx].ltk[k];
-        }
-        rec.flags = (uint32_t)SMP_AUTHREQ_SC;    /* SC, no MITM */
-        TIKU_BT_PRINTF("p14.smp: bond saved slot %u\n",
-                        (unsigned)bt_bond_keep(&rec));
-    }
+    bt_smp_bond(conn_idx);
     bt_state.smp[conn_idx].state = SMP_ENCRYPTING;
 }
 
@@ -3465,20 +4125,31 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
                             "(AuthReq=0x%02x); LE-SC only\n", pdu[3]);
             return;
         }
-        /* Build Pairing Response: IOCap=NoInputNoOutput (0x03),
-         * OOB=0, AuthReq=SC|Bonding, MaxKeySize=16. Of the keys the
-         * initiator asks to swap, only identity keys: it may send its
-         * IRK and identity address, and this end sends its own once the
-         * link is encrypted (see the Encryption Change handler). EncKey
-         * is legacy and SignKey unused, so neither is offered. */
+#if (TIKU_BT_PASSKEY + 0)
+        if (pdu[1] > TIKU_BT_IO_KEYBOARD_DISPLAY) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_INVALID_PARAMETERS);
+            return;
+        }
+#endif
+        /* Build Pairing Response: this end's IO capability, OOB=0,
+         * AuthReq=SC|Bonding (and MITM unless NoInputNoOutput),
+         * MaxKeySize=16. Of the keys the initiator asks to swap, only
+         * identity keys: it may send its IRK and identity address, and this
+         * end sends its own once the link is encrypted (see the Encryption
+         * Change handler). EncKey is legacy and SignKey unused, so neither
+         * is offered. */
         {
             uint8_t rsp[7];
             uint8_t peer_initkd = (len >= 6U) ? pdu[5] : 0U;
             uint8_t peer_respkd = (len >= 7U) ? pdu[6] : 0U;
             rsp[0] = SMP_OP_PAIRING_RESPONSE;
+#if (TIKU_BT_PASSKEY + 0)
+            rsp[1] = bt_io_cap;
+#else
             rsp[1] = 0x03U;                           /* IOCap NoIN/NoOUT */
+#endif
             rsp[2] = 0x00U;                           /* OOB no           */
-            rsp[3] = (uint8_t)(SMP_AUTHREQ_SC | 0x01U); /* SC + Bonding   */
+            rsp[3] = BT_SMP_AUTHREQ;
             rsp[4] = 16U;                             /* MaxKeySize       */
             rsp[5] = (uint8_t)(peer_initkd & SMP_KEYDIST_ID);
             rsp[6] = (uint8_t)(peer_respkd & SMP_KEYDIST_ID);
@@ -3505,16 +4176,28 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             return;
         }
         bt_smp_session_reset(conn_idx);           /* responder's side */
-        bt_state.smp[conn_idx].own_respkd =
+        bt_state.smp[conn_idx].own_keys =
             (uint8_t)(((len >= 7U) ? pdu[6] : 0U) & SMP_KEYDIST_ID);
+#if (TIKU_BT_PRIVACY + 0)
+        bt_state.smp[conn_idx].peer_keys =
+            (uint8_t)(((len >= 6U) ? pdu[5] : 0U) & SMP_KEYDIST_ID);
+#endif
         bt_state.smp[conn_idx].state             = SMP_WAITING_PUBKEY;
+        TIKU_BT_PRINTF("p14.smp: Pairing Request -> Pairing Response "
+                        "(LE-SC)\n");
+#if (TIKU_BT_PASSKEY + 0)
+        if (bt_smp_choose(conn_idx, pdu[1], bt_io_cap,
+                          (uint8_t)(pdu[3] | bt_state.smp[conn_idx]
+                                                 .own_iocap[2])) != 0) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+            return;
+        }
+#endif
         if (bt_smp_request_local_pubkey() != TIKU_DRV_OK) {
             TIKU_BT_PRINTF("p14.smp: no local P-256 key pair\n");
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
         }
-        TIKU_BT_PRINTF("p14.smp: Pairing Request -> Pairing Response "
-                        "(LE-SC Just-Works)\n");
         break;
     }
 
@@ -3563,6 +4246,27 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             bt_state.smp[conn_idx].peer_nonce[i] = pdu[1U + i];
         }
         bt_state.smp[conn_idx].have_peer_random = 1U;
+#if (TIKU_BT_PASSKEY + 0)
+        /* A passkey round: the initiator committed to Nai in
+         * Cai = f4(PKax, PKbx, Nai, z). */
+        if (bt_smp_by_passkey(conn_idx)) {
+            uint8_t ca[16];
+            if (bt_smp_f4(bt_state.smp[conn_idx].peer_pubkey,
+                          bt_state.smp[conn_idx].local_pubkey,
+                          bt_state.smp[conn_idx].peer_nonce,
+                          bt_smp_z(conn_idx), ca) != TIKU_DRV_OK) {
+                bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+                return;
+            }
+            for (i = 0U; i < 16U; ++i) {
+                if (ca[i] != bt_state.smp[conn_idx].peer_confirm[i]) {
+                    bt_smp_send_failed(conn_idx,
+                                       SMP_ERR_CONFIRM_VALUE_FAILED);
+                    return;
+                }
+            }
+        }
+#endif
         /* Send the Pairing Random (Nb). */
         {
             uint8_t pdu_out[17];
@@ -3574,11 +4278,34 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
                               L2CAP_CID_SMP, pdu_out, sizeof pdu_out);
             TIKU_BT_PRINTF("p14.smp: sent Pairing Random Nb\n");
         }
+        if (bt_smp_pk_more(conn_idx)) {
+            break;                        /* the next passkey bit's Cai */
+        }
         bt_state.smp[conn_idx].state      = SMP_WAITING_DHCHECK;
         bt_state.smp[conn_idx].pending_f5 = 1U;
+        bt_smp_numeric(conn_idx);
         (void)bt_smp_try_derive_keys(conn_idx);
         break;
     }
+
+#if (TIKU_BT_PASSKEY + 0)
+    case SMP_OP_PAIRING_CONFIRM: {
+        uint8_t i;
+        /* A passkey round's Cai; the answer waits for the passkey. */
+        if (len < 17U || !bt_smp_by_passkey(conn_idx)
+            || bt_state.smp[conn_idx].state != SMP_WAITING_CONFIRM
+            || bt_state.smp[conn_idx].held_confirm) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+            return;
+        }
+        for (i = 0U; i < 16U; ++i) {
+            bt_state.smp[conn_idx].peer_confirm[i] = pdu[1U + i];
+        }
+        bt_state.smp[conn_idx].held_confirm = 1U;
+        bt_smp_pk_next(conn_idx);
+        break;
+    }
+#endif
 
     case SMP_OP_PAIRING_DHKEY_CHECK: {
         uint8_t i;
@@ -3595,9 +4322,14 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
         }
         bt_state.smp[conn_idx].have_peer_check = 1U;
         /* A quick initiator's Ea can beat a slow controller's DHKey (the
-         * EM9305 under a Mac): held, and checked once f5 has run. */
+         * EM9305 under a Mac), or the user's yes to a numeric comparison:
+         * held, and checked once f5 has run and the user agreed. */
         if (bt_state.smp[conn_idx].pending_f5) {
             TIKU_BT_PRINTF("p14.smp: DH Check Ea before the DHKey, held\n");
+            break;
+        }
+        if (!BT_SMP_USER_OK(conn_idx)) {
+            TIKU_BT_PRINTF("p14.smp: DH Check Ea held for the user\n");
             break;
         }
         bt_smp_resp_check_ea(conn_idx);
@@ -3609,13 +4341,7 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             TIKU_BT_PRINTF("p14.smp: peer sent Pairing Failed "
                             "reason=0x%02x\n", pdu[1]);
         }
-        bt_state.smp[conn_idx].state            = SMP_IDLE;
-        bt_state.smp[conn_idx].have_pubkey      = 0U;
-        bt_state.smp[conn_idx].have_dhkey       = 0U;
-        bt_state.smp[conn_idx].have_peer_pubkey = 0U;
-        bt_state.smp[conn_idx].have_peer_random = 0U;
-        bt_state.smp[conn_idx].pending_pubkey_tx = 0U;
-        bt_state.smp[conn_idx].pending_f5       = 0U;
+        bt_smp_session_reset(conn_idx);
         break;
     }
 
@@ -3626,11 +4352,18 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
         TIKU_BT_PRINTF("p14.smp: Security Request received (ignored)\n");
         break;
 
+#if (TIKU_BT_PRIVACY + 0)
     case SMP_OP_IDENTITY_INFO:
     case SMP_OP_IDENTITY_ADDR_INFO:
+        bt_smp_take_key(conn_idx, pdu, len);
+        break;
+#else
+    case SMP_OP_IDENTITY_INFO:
+    case SMP_OP_IDENTITY_ADDR_INFO:
+#endif
     case SMP_OP_SIGNING_INFO:
-        /* Keys the initiator distributes after encryption: taken, not
-         * kept (the bond is by the address the link used). */
+        /* Keys the initiator distributes after encryption that this
+         * build does not keep: taken, not kept. */
         TIKU_BT_PRINTF("p14.smp: key 0x%02x from the initiator\n", pdu[0]);
         break;
 
@@ -3795,13 +4528,16 @@ static int bt_advertise_setup(const char *name, uint8_t name_len,
         (void)bt_hci_cmd_response(HCI_OP_LE_SET_ADV_ENABLE, &en0, 1U,
                                   evt, sizeof evt, &n);
     }
+    /* With privacy on, a private address older than its time is renewed
+     * while advertising is off. */
+    bt_rpa_refresh(0U);
 
     /* Step 1: LE_Set_Advertising_Parameters (15 bytes).
      *   interval_min = 0x00A0 (100 ms, 0.625 ms units)
      *   interval_max = 0x00F0 (150 ms)
      *   adv_type     = 0x00 ADV_IND (connectable, scannable, undirected)
      *   own_addr_type= public, or random static where the controller
-     *                  has no public address
+     *                  has no public address, or random for a private one
      *   peer_*       = 0 (only used for directed advertising)
      *   channel_map  = 0x07 (all three advertising channels 37/38/39)
      *   filter       = 0x00 accept all
@@ -3811,7 +4547,7 @@ static int bt_advertise_setup(const char *name, uint8_t name_len,
             0xA0U, 0x00U,                     /* interval_min LE */
             0xF0U, 0x00U,                     /* interval_max LE */
             adv_type,                         /* ADV_IND / NONCONN */
-            bt_state.addr_type,               /* own_addr_type */
+            bt_own_type(),                    /* own_addr_type */
             0x00U,                            /* peer_addr_type */
             0x00U, 0x00U, 0x00U, 0x00U,
             0x00U, 0x00U,                     /* peer_addr (zeros) */
@@ -4138,9 +4874,13 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         if (status != 0x00U) {
             TIKU_BT_PRINTF("p9: LE Connection Complete FAIL "
                             "status=0x%02x handle=0x%04x\n", status, handle);
+#if (TIKU_BT_CONNECT_RETRY + 0)
             if (status == HCI_STATUS_CONN_NOT_ESTABLISHED && was_connecting) {
                 bt_connect_again();
             }
+#else
+            (void)was_connecting;
+#endif
             return;
         }
         idx = bt_conn_alloc();
@@ -4164,9 +4904,30 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
                 (uint16_t)(pkt[at + 4] | ((uint16_t)pkt[at + 5] << 8));
         }
         bt_state.conns[idx].in_use    = 1U;
-        bt_state.conns[idx].att_mtu   = ATT_MTU_DEFAULT;
-        bt_state.conns[idx].tx_octets = BT_LL_OCTETS_MIN;
+        bt_state.conns[idx].info.att_mtu   = ATT_MTU_DEFAULT;
+        bt_state.conns[idx].info.tx_octets = BT_LL_OCTETS_MIN;
         bt_state.conns[idx].rx_need   = 0U;
+#if (TIKU_BT_LINK_UPDATE + 0)
+        /* Every link starts on the 1M PHY with 27-byte packets; the
+         * runner asks for more once this event is handled. */
+        bt_state.conns[idx].info.rx_octets = BT_LL_OCTETS_MIN;
+        bt_state.conns[idx].info.tx_phy    = TIKU_BT_PHY_1M;
+        bt_state.conns[idx].info.rx_phy    = TIKU_BT_PHY_1M;
+        bt_state.conns[idx].upd_due        = 1U;
+#endif
+#if (TIKU_BT_PRIVACY + 0)
+        /* The address this end connected from: a private one in the
+         * controller then, else its identity. */
+        bt_state.conns[idx].own_type = bt_own_type();
+        {
+            const uint8_t *own = bt_state.conns[idx].own_type == 1U
+                                         && bt_local.privacy
+                                         && bt_state.rpa_live
+                                     ? bt_state.rpa : bt_state.bd_addr;
+            int k;
+            for (k = 0; k < 6; ++k) bt_state.conns[idx].own_addr[k] = own[k];
+        }
+#endif
 #if (TIKU_BT_SERVICE_CHANGED + 0)
         bt_state.conns[idx].sc_cccd    = 0U;
         bt_state.conns[idx].sc_waiting = 0U;
@@ -4190,13 +4951,12 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
          * pairing/encryption by sending an SMP Security Request. iOS
          * never auto-pairs without this; without a Pairing Request
          * the LE-SC machinery is never exercised. AuthReq = SC
-         * + Bonding + no-MITM (0x09) to match what Pairing Response
-         * will accept. */
+         * + Bonding (+ MITM with an IO capability) to match what the
+         * Pairing Response will offer. */
         if (bt_state.conns[idx].info.role == 1U /* peripheral */) {
             uint8_t sec_req[2];
             sec_req[0] = SMP_OP_SECURITY_REQUEST;
-            sec_req[1] = (uint8_t)(SMP_AUTHREQ_SC
-                                  | 0x01U /* Bonding */);
+            sec_req[1] = BT_SMP_AUTHREQ;
             (void)bt_send_acl(bt_state.conns[idx].info.handle,
                               L2CAP_CID_SMP, sec_req, sizeof sec_req);
             TIKU_BT_PRINTF("p14.smp: Security Request sent "
@@ -4215,12 +4975,35 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         int      idx    = bt_conn_find(handle);
 
         if (idx >= 0 && tx >= BT_LL_OCTETS_MIN && tx <= 251U) {
-            bt_state.conns[idx].tx_octets = tx;
+            bt_state.conns[idx].info.tx_octets = tx;
         }
+#if (TIKU_BT_LINK_UPDATE + 0)
+        if (idx >= 0) {
+            bt_state.conns[idx].info.rx_octets =
+                (uint16_t)(pkt[10] | ((uint16_t)pkt[11] << 8));
+        }
+#endif
         TIKU_BT_PRINTF("p9: data length handle=0x%04x tx=%u B\n",
                         handle, tx);
         return;
     }
+
+#if (TIKU_BT_LINK_UPDATE + 0)
+    /* LE PHY Update Complete: status, handle(2), TX PHY, RX PHY. */
+    if (pkt[3] == LE_SUBEVT_PHY_UPDATE_COMPLETE && len >= 9) {
+        uint16_t handle = (uint16_t)((pkt[5] | ((uint16_t)pkt[6] << 8))
+                                     & 0x0FFFU);
+        int      idx    = bt_conn_find(handle);
+
+        if (idx >= 0 && pkt[4] == 0x00U) {
+            bt_state.conns[idx].info.tx_phy = pkt[7];
+            bt_state.conns[idx].info.rx_phy = pkt[8];
+        }
+        TIKU_BT_PRINTF("p9: PHY handle=0x%04x status=0x%02x tx=%u rx=%u\n",
+                        handle, pkt[4], pkt[7], pkt[8]);
+        return;
+    }
+#endif
 
     /* Phase 14: chip-side P-256 pubkey readback complete. Payload:
      *   [4]    status
@@ -4376,7 +5159,9 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
         uint16_t handle = (uint16_t)(pkt[4] | ((uint16_t)pkt[5] << 8));
         uint8_t  reason = pkt[6];
         int      idx    = bt_conn_find(handle);
+#if (TIKU_BT_CONNECT_RETRY + 0)
         uint8_t  central = (idx >= 0 && bt_state.conns[idx].info.role == 0U);
+#endif
         if (idx >= 0) {
             bt_state.conns[idx].in_use  = 0U;
             bt_state.conns[idx].rx_need = 0U;
@@ -4396,11 +5181,13 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
             TIKU_BT_PRINTF("p9: *** disconnected handle=0x%04x "
                             "reason=0x%02x status=0x%02x ***\n",
                             handle, reason, status);
+#if (TIKU_BT_CONNECT_RETRY + 0)
             /* The ESP32 controller reports the link up at CONNECT_IND and
              * ends it with this reason when the peer never answers. */
             if (central && reason == HCI_STATUS_CONN_NOT_ESTABLISHED) {
                 bt_connect_again();
             }
+#endif
         }
         /* Auto-readvertise: ADV_IND advertising auto-stops on the
          * chip when the link comes up, so without this the device
@@ -4435,19 +5222,15 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
             bt_state.smp[idx].state = SMP_ENCRYPTED;
             TIKU_BT_PRINTF("p14.smp: *** link encrypted ***\n");
             /* The identity keys a fresh pairing promised, now that the
-             * link is encrypted: an all-zero IRK (this end never uses a
-             * private address) and the identity address. */
-            if ((bt_state.smp[idx].own_respkd & SMP_KEYDIST_ID) != 0U) {
-                uint8_t key[17] = {0};
-                uint8_t k;
-                key[0] = SMP_OP_IDENTITY_INFO;
-                bt_smp_send((uint8_t)idx, key, sizeof key);
-                key[0] = SMP_OP_IDENTITY_ADDR_INFO;
-                key[1] = bt_state.addr_type;            /* public/static */
-                for (k = 0U; k < 6U; ++k) key[2U + k] = bt_state.bd_addr[5U - k];
-                bt_smp_send((uint8_t)idx, key, 8U);
-                bt_state.smp[idx].own_respkd = 0U;
-                TIKU_BT_PRINTF("p14.smp: identity keys sent\n");
+             * link is encrypted: the responder's first, the initiator's
+             * once the responder's are in. */
+            if ((bt_state.smp[idx].own_keys & SMP_KEYDIST_ID) != 0U
+#if (TIKU_BT_PRIVACY + 0)
+                && (bt_state.conns[idx].info.role == 1U
+                    || bt_state.smp[idx].peer_keys == 0U)
+#endif
+                ) {
+                bt_smp_send_keys((uint8_t)idx);
             }
 #if (TIKU_BT_SERVICE_CHANGED + 0)
             bt_sc_on_encrypted((uint8_t)idx);
@@ -4531,8 +5314,8 @@ int tiku_bt_init(void)
         uint8_t k;
         for (k = 0U; k < TIKU_BT_CONN_MAX; ++k) {
             bt_state.conns[k].in_use    = 0U;
-            bt_state.conns[k].att_mtu   = ATT_MTU_DEFAULT;
-            bt_state.conns[k].tx_octets = BT_LL_OCTETS_MIN;
+            bt_state.conns[k].info.att_mtu   = ATT_MTU_DEFAULT;
+            bt_state.conns[k].info.tx_octets = BT_LL_OCTETS_MIN;
             bt_state.conns[k].rx_need   = 0U;
         }
     }
@@ -4617,9 +5400,12 @@ int tiku_bt_init(void)
             };
             /* Connection Complete, Advertising Report, Connection Update
              * Complete, Remote Features, LTK Request, Data Length Change,
-             * P-256 Public Key, DHKey: sub-events 1-5 and 7-9. */
+             * P-256 Public Key, DHKey: sub-events 1-5 and 7-9; with
+             * TIKU_BT_LINK_UPDATE, PHY Update Complete (12) too. */
             static const uint8_t le_mask[8] = {
-                0xDF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                0xDF, (uint8_t)(0x01U | ((TIKU_BT_LINK_UPDATE + 0) ? 0x08U
+                                                                  : 0x00U)),
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00
             };
 
             if (bt_hci_cmd_response(HCI_OP_SET_EVENT_MASK, mask, 8U,
@@ -4659,6 +5445,37 @@ int tiku_bt_init(void)
         TIKU_BT_PRINTF("p6.D: ACL buffers %u x %u B\n",
                         (unsigned)bt_state.acl_num,
                         (unsigned)bt_state.acl_len);
+
+#if (TIKU_BT_LINK_UPDATE + 0)
+        /* What a link can be raised to: the data length extension and the
+         * 2M PHY, from the controller's features; each new link asks for
+         * both (bt_link_update).  The suggested default and the default PHY
+         * preference let a peer's own requests through as well. */
+        bt_state.le_feat = 0U;
+        if (bt_hci_cmd_response(HCI_OP_LE_READ_LOCAL_FEATURES,
+                                (const uint8_t *)0, 0U,
+                                evt, sizeof evt, &n) == TIKU_DRV_OK
+            && n >= 9 && evt[6] == 0U) {
+            bt_state.le_feat = (uint16_t)(evt[7] | ((uint16_t)evt[8] << 8));
+        }
+        if (bt_state.le_feat & LE_FEAT_DATA_LENGTH) {
+            static const uint8_t dl[4] = {
+                (uint8_t)BT_LL_OCTETS_MAX, 0x00U,
+                (uint8_t)(BT_LL_TIME_MAX & 0xFFU), (uint8_t)(BT_LL_TIME_MAX >> 8)
+            };
+            (void)bt_hci_cmd_response(HCI_OP_LE_WRITE_DEFAULT_DATA_LENGTH,
+                                      dl, sizeof dl, evt, sizeof evt, &n);
+        }
+        if (bt_state.le_feat & LE_FEAT_2M_PHY) {
+            static const uint8_t phy[3] = { 0x00U, 0x03U, 0x03U };
+            (void)bt_hci_cmd_response(HCI_OP_LE_SET_DEFAULT_PHY, phy,
+                                      sizeof phy, evt, sizeof evt, &n);
+        }
+        TIKU_BT_PRINTF("p6.D: LE features 0x%04x (data length %s, 2M %s)\n",
+                        (unsigned)bt_state.le_feat,
+                        (bt_state.le_feat & LE_FEAT_DATA_LENGTH) ? "yes" : "no",
+                        (bt_state.le_feat & LE_FEAT_2M_PHY) ? "yes" : "no");
+#endif
 
         if (bt_hci_cmd_response(HCI_OP_READ_LOCAL_VERSION,
                                 (const uint8_t *)0, 0U,
@@ -4701,6 +5518,11 @@ int tiku_bt_init(void)
                             bt_state.bd_addr[4], bt_state.bd_addr[5]);
         }
         bt_random_static_addr(evt, sizeof evt);
+#if (TIKU_BT_PRIVACY + 0)
+        /* The Reset cleared any private address in the controller. */
+        bt_state.rpa_live = 0U;
+        bt_local_ready();
+#endif
 
         /* SMP's AES: the controller's LE Encrypt when it answers one,
          * else the stack's own.  P-256 is found out at the first
@@ -4845,7 +5667,8 @@ int tiku_bt_advertise_raw(uint8_t adv_type, uint16_t interval_ms,
         (void)tiku_bt_advertise_stop();
     }
     /* Interval in 0.625 ms units, both ends of the range; then the
-     * caller's type, the public address, all three channels. */
+     * caller's type, the public address (a private one with privacy on),
+     * all three channels. */
     iv = bt_ms_to_chip_units(interval_ms);
     if (iv < 0x0020U) iv = 0x0020U;
     params[0] = (uint8_t)(iv & 0xFFU);
@@ -4854,6 +5677,10 @@ int tiku_bt_advertise_raw(uint8_t adv_type, uint16_t interval_ms,
     params[3] = params[1];
     params[4] = adv_type;
     params[13] = 0x07U;
+#if (TIKU_BT_PRIVACY + 0)
+    bt_rpa_refresh(0U);
+    if (bt_local.privacy && bt_state.rpa_live) params[5] = 0x01U;
+#endif
     rc = bt_hci_cmd_response(HCI_OP_LE_SET_ADV_PARAMS, params, sizeof params,
                              evt, sizeof evt, &n);
     if (rc != TIKU_DRV_OK || n < 7 || evt[6] != 0x00U) {
@@ -4920,6 +5747,78 @@ int tiku_bt_is_advertising(void)
     return bt_state.advertising ? 1 : 0;
 }
 
+#if (TIKU_BT_PRIVACY + 0)
+/** @brief Start the named advert last started again, from the address
+ *         privacy now gives. */
+static void bt_readvertise(void)
+{
+    char    nz[TIKU_BT_ADV_NAME_MAX + 1];
+    uint8_t i;
+
+    for (i = 0U; i < bt_state.adv_name_len; ++i) nz[i] = bt_state.adv_name[i];
+    nz[bt_state.adv_name_len] = '\0';
+    (void)bt_advertise_begin(nz, bt_state.adv_type, bt_state.adv_uuid128);
+}
+
+int tiku_bt_set_privacy(uint8_t on, uint16_t seconds)
+{
+    bt_local_t l;
+    uint16_t   mpu_saved;
+
+    if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
+    if (seconds != 0U && (seconds < 10U || seconds > 3600U)) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    bt_local_ready();
+    if (bt_local.magic != BT_LOCAL_MAGIC) return TIKU_DRV_ERR_NOT_PRESENT;
+    l = bt_local;
+    l.privacy = on ? 1U : 0U;
+    if (seconds != 0U) l.rpa_s = seconds;
+    mpu_saved = tiku_mpu_unlock_nvm();
+    bt_local = l;
+    tiku_mpu_lock_nvm(mpu_saved);
+    /* Turned on, a fresh private address; a running advert starts again
+     * from it, else the controller takes it while nothing is on air. */
+    if (on) bt_state.rpa_live = 0U;
+    if (bt_state.advertising && bt_state.adv_wanted
+        && bt_state.adv_name_len > 0U) {
+        bt_readvertise();
+    } else if (!bt_state.advertising && !bt_state.scanning
+               && !bt_state.connecting) {
+        bt_rpa_refresh(1U);
+    }
+    if (on && !bt_state.rpa_live && !bt_state.scanning
+        && !bt_state.connecting) {
+        /* The controller takes no private address (the nRF54L's FLPR
+         * takes static ones only): privacy stays off. */
+        l.privacy = 0U;
+        mpu_saved = tiku_mpu_unlock_nvm();
+        bt_local = l;
+        tiku_mpu_lock_nvm(mpu_saved);
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    return TIKU_DRV_OK;
+}
+
+int tiku_bt_privacy(uint16_t *seconds, uint8_t addr[6])
+{
+    uint8_t on = (uint8_t)(bt_local.magic == BT_LOCAL_MAGIC
+                           && bt_local.privacy);
+    uint8_t k;
+
+    if (seconds != (uint16_t *)0) {
+        *seconds = (bt_local.magic == BT_LOCAL_MAGIC) ? bt_local.rpa_s
+                                                      : BT_RPA_SECONDS;
+    }
+    if (addr != (uint8_t *)0) {
+        for (k = 0U; k < 6U; ++k) {
+            addr[k] = (on && bt_state.rpa_live) ? bt_state.rpa[k] : 0U;
+        }
+    }
+    return on;
+}
+#endif
+
 /*---------------------------------------------------------------------------*/
 /* GAP scanning — public API                                                 */
 /*---------------------------------------------------------------------------*/
@@ -4976,6 +5875,12 @@ void tiku_bt_shutdown(void)
         bt_state.conns[k].rx_need = 0U;
         bt_state.smp[k].state     = SMP_IDLE;
     }
+#if (TIKU_BT_PASSKEY + 0)
+    bt_state.auth_need = TIKU_BT_AUTH_NONE;
+#endif
+#if (TIKU_BT_PRIVACY + 0)
+    bt_state.rpa_live = 0U;
+#endif
     bt_wake_runner();       /* back to waiting for an event */
 }
 
@@ -5007,6 +5912,11 @@ int tiku_bt_scan_start(uint8_t active, uint16_t interval_ms,
         params[4] = (uint8_t)((wn >> 8) & 0xFFU);
         params[5] = 0x00U;                           /* own_addr public */
         params[6] = 0x00U;                           /* filter accept-all */
+#if (TIKU_BT_PRIVACY + 0)
+        /* An active scan's requests carry the private address too. */
+        bt_rpa_refresh(0U);
+        if (bt_local.privacy && bt_state.rpa_live) params[5] = 0x01U;
+#endif
         rc = bt_hci_cmd_response(HCI_OP_LE_SET_SCAN_PARAMS, params, 7U,
                                  evt, sizeof evt, &n);
         if (rc != TIKU_DRV_OK || n < 7 || evt[6] != 0x00U) {
@@ -5137,11 +6047,76 @@ int tiku_bt_pair(uint16_t handle)
         /* The peripheral asks the central to pair (SC + Bonding). */
         uint8_t sec_req[2];
         sec_req[0] = SMP_OP_SECURITY_REQUEST;
-        sec_req[1] = (uint8_t)(SMP_AUTHREQ_SC | 0x01U);
+        sec_req[1] = BT_SMP_AUTHREQ;
         bt_smp_send((uint8_t)idx, sec_req, sizeof sec_req);
     }
     return TIKU_DRV_OK;
 }
+
+#if (TIKU_BT_PASSKEY + 0)
+int tiku_bt_set_io_capability(uint8_t io)
+{
+    if (io > TIKU_BT_IO_KEYBOARD_DISPLAY) return TIKU_DRV_ERR_INVALID;
+    bt_io_cap = io;
+    return TIKU_DRV_OK;
+}
+
+uint8_t tiku_bt_io_capability(void)
+{
+    return bt_io_cap;
+}
+
+uint8_t tiku_bt_auth_pending(uint32_t *number)
+{
+    if (number != (uint32_t *)0) *number = bt_state.auth_number;
+    return bt_state.auth_need;
+}
+
+int tiku_bt_auth_passkey(uint32_t passkey)
+{
+    uint8_t i = bt_state.auth_conn;
+
+    if (bt_state.auth_need != TIKU_BT_AUTH_ENTER || passkey > 999999UL) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    bt_state.smp[i].passkey      = passkey;
+    bt_state.smp[i].have_passkey = 1U;
+    bt_state.auth_need           = TIKU_BT_AUTH_NONE;
+    bt_smp_pk_next(i);
+    return TIKU_DRV_OK;
+}
+
+int tiku_bt_auth_confirm(uint8_t yes)
+{
+    uint8_t i    = bt_state.auth_conn;
+    uint8_t need = bt_state.auth_need;
+
+    if (need == TIKU_BT_AUTH_NONE) return TIKU_DRV_ERR_INVALID;
+    if (!yes) {
+        bt_smp_send_failed(i, (need == TIKU_BT_AUTH_CONFIRM)
+                                  ? SMP_ERR_NUMERIC_COMPARISON_FAILED
+                                  : SMP_ERR_PASSKEY_ENTRY_FAILED);
+        return TIKU_DRV_OK;
+    }
+    if (need != TIKU_BT_AUTH_CONFIRM) return TIKU_DRV_ERR_INVALID;
+    bt_state.smp[i].user_ok = 1U;
+    bt_state.auth_need      = TIKU_BT_AUTH_NONE;
+    /* The DHKey check waited on the yes once the keys were in; before
+     * then, the key derivation sends or checks it. */
+    if (bt_state.smp[i].state != SMP_WAITING_DHCHECK
+        || bt_state.smp[i].pending_f5) {
+        return TIKU_DRV_OK;
+    }
+    if (bt_state.smp[i].initiator) {
+        if (bt_smp_init_send_ea(i) != TIKU_DRV_OK) {
+            bt_smp_send_failed(i, SMP_ERR_UNSPECIFIED_REASON);
+        }
+    } else if (bt_state.smp[i].have_peer_check) {
+        bt_smp_resp_check_ea(i);
+    }
+    return TIKU_DRV_OK;
+}
+#endif
 
 int tiku_bt_disconnect(uint16_t handle)
 {
@@ -5235,7 +6210,7 @@ static int bt_create_connection(void)
     params[5]  = bt_state.conn_peer_type;
     /* Reverse MSB-first display order to wire LSB-first. */
     for (k = 0; k < 6; ++k) params[6 + k] = bt_state.conn_peer[5 - k];
-    params[12] = bt_state.addr_type;            /* own_addr_type     */
+    params[12] = bt_own_type();                 /* own_addr_type     */
     params[13] = 0x18U; params[14] = 0x00U;    /* conn_interval_min */
     params[15] = 0x28U; params[16] = 0x00U;    /* conn_interval_max */
     params[17] = 0x00U; params[18] = 0x00U;    /* latency           */
@@ -5245,6 +6220,7 @@ static int bt_create_connection(void)
     return tiku_bt_send(cmd, sizeof cmd);
 }
 
+#if (TIKU_BT_CONNECT_RETRY + 0)
 /**
  * @brief Send the last LE Create Connection again, while retries remain.
  *
@@ -5261,6 +6237,7 @@ static void bt_connect_again(void)
                         bt_state.conn_retries);
     }
 }
+#endif
 
 int tiku_bt_connect_to(const uint8_t peer_addr[6],
                              uint8_t peer_addr_type)
@@ -5272,7 +6249,10 @@ int tiku_bt_connect_to(const uint8_t peer_addr[6],
 
     for (k = 0; k < 6; ++k) bt_state.conn_peer[k] = peer_addr[k];
     bt_state.conn_peer_type = peer_addr_type;
+#if (TIKU_BT_CONNECT_RETRY + 0)
     bt_state.conn_retries   = BT_CONNECT_RETRIES;
+#endif
+    bt_rpa_refresh(0U);
     rc = bt_create_connection();
     if (rc == TIKU_DRV_OK) {
         bt_state.connecting = 1U;
@@ -5565,6 +6545,163 @@ static void bt_demo_push_uptime(void)
     (void)tiku_bt_notify(UUID_TIKU_UPTIME_CHAR, buf, 4U);
 }
 
+#if (TIKU_BT_LINK_UPDATE + 0)
+/*---------------------------------------------------------------------------*/
+/* Link updates: data length and PHY                                         */
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief The connection index of @p handle, or of the first link for
+ *        0xFFFF, into *@p idx.
+ * @return TIKU_DRV_OK; TIKU_DRV_ERR_NOT_PRESENT if BT isn't up or no link
+ *         is active; TIKU_DRV_ERR_INVALID for an unknown handle
+ */
+static int bt_link_of(uint16_t handle, int *idx)
+{
+    uint8_t i;
+
+    if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
+    if (handle == 0xFFFFU) {
+        for (i = 0U; i < TIKU_BT_CONN_MAX; ++i) {
+            if (bt_state.conns[i].in_use) {
+                *idx = (int)i;
+                return TIKU_DRV_OK;
+            }
+        }
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    *idx = bt_conn_find(handle);
+    return (*idx < 0) ? TIKU_DRV_ERR_INVALID : TIKU_DRV_OK;
+}
+
+int tiku_bt_set_phy(uint16_t handle, uint8_t phy)
+{
+    uint8_t p[7];
+    uint8_t st  = 0xFFU;
+    int     idx = -1;
+    int     rc  = bt_link_of(handle, &idx);
+
+    if (rc != TIKU_DRV_OK) return rc;
+    if (phy != TIKU_BT_PHY_1M && phy != TIKU_BT_PHY_2M) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    if (phy == TIKU_BT_PHY_2M && (bt_state.le_feat & LE_FEAT_2M_PHY) == 0U) {
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    handle = bt_state.conns[idx].info.handle;
+    p[0] = (uint8_t)(handle & 0xFFU);
+    p[1] = (uint8_t)(handle >> 8);
+    p[2] = 0x00U;                           /* a preference both ways    */
+    p[3] = (uint8_t)(1U << (phy - 1U));     /* TX: 0x01 1M, 0x02 2M      */
+    p[4] = p[3];                            /* RX the same               */
+    p[5] = 0x00U;                           /* no Coded PHY option       */
+    p[6] = 0x00U;
+    rc = bt_hci_cmd_status(HCI_OP_LE_SET_PHY, p, sizeof p, &st);
+    if (rc != TIKU_DRV_OK) return rc;
+    return (st == 0x00U) ? TIKU_DRV_OK : TIKU_DRV_ERR_INVALID;
+}
+
+int tiku_bt_set_data_length(uint16_t handle, uint16_t octets)
+{
+    uint8_t  p[6];
+    uint8_t  evt[16];
+    uint16_t us;
+    int      n   = 0;
+    int      idx = -1;
+    int      rc  = bt_link_of(handle, &idx);
+
+    if (rc != TIKU_DRV_OK) return rc;
+    if (octets < BT_LL_OCTETS_MIN || octets > BT_LL_OCTETS_MAX) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    if ((bt_state.le_feat & LE_FEAT_DATA_LENGTH) == 0U) {
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    /* The time such a packet takes on the 1M PHY with its MIC: 14 octets
+     * of framing besides the payload, 8 us each. */
+    us = (uint16_t)((octets + 14U) * 8U);
+    handle = bt_state.conns[idx].info.handle;
+    p[0] = (uint8_t)(handle & 0xFFU);
+    p[1] = (uint8_t)(handle >> 8);
+    p[2] = (uint8_t)(octets & 0xFFU);
+    p[3] = (uint8_t)(octets >> 8);
+    p[4] = (uint8_t)(us & 0xFFU);
+    p[5] = (uint8_t)(us >> 8);
+    rc = bt_hci_cmd_response(HCI_OP_LE_SET_DATA_LENGTH, p, sizeof p,
+                             evt, sizeof evt, &n);
+    if (rc != TIKU_DRV_OK) return rc;
+    return (n >= 7 && evt[6] == 0x00U) ? TIKU_DRV_OK : TIKU_DRV_ERR_INVALID;
+}
+
+/**
+ * @brief Ask for a new link's upgrades: 251-byte packets and the 2M PHY
+ *        where the controller has them, and, as the client, a 247-byte
+ *        ATT MTU.
+ */
+static void bt_link_update(uint8_t i)
+{
+    uint16_t h = bt_state.conns[i].info.handle;
+
+    if (bt_state.le_feat & LE_FEAT_DATA_LENGTH) {
+        (void)tiku_bt_set_data_length(h, BT_LL_OCTETS_MAX);
+    }
+    if (bt_state.le_feat & LE_FEAT_2M_PHY) {
+        (void)tiku_bt_set_phy(h, TIKU_BT_PHY_2M);
+    }
+    if (bt_state.conns[i].info.role == 0U) {
+        uint8_t req[3];
+        req[0] = ATT_OP_EXCHANGE_MTU_REQ;
+        req[1] = (uint8_t)(BT_ATT_MTU_MAX & 0xFFU);
+        req[2] = (uint8_t)(BT_ATT_MTU_MAX >> 8);
+        (void)bt_send_acl(h, L2CAP_CID_ATT, req, sizeof req);
+    }
+}
+
+int tiku_bt_bench(uint32_t bytes, uint32_t *ms)
+{
+    const tiku_bt_char_t *c = &bt_demo_chars[0];
+    uint8_t           buf[BT_ATT_MTU_MAX];
+    uint32_t          sent = 0UL;
+    tiku_clock_time_t t0;
+    tiku_clock_time_t moved;
+    uint16_t          k;
+
+    if (ms != (uint32_t *)0) *ms = 0UL;
+    if (bt_state.ready == 0U || !tiku_bt_subscribed(c)) {
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    for (k = 0U; k < (uint16_t)sizeof buf; ++k) buf[k] = (uint8_t)k;
+    t0 = tiku_clock_time();
+    moved = t0;
+    while (sent < bytes) {
+        uint16_t n = tiku_bt_notify_max();
+        int      rc;
+
+        if (n == 0U) return TIKU_DRV_ERR_IO;          /* the link went down */
+        if ((uint32_t)n > bytes - sent) n = (uint16_t)(bytes - sent);
+        rc = tiku_bt_notify_char(c, buf, n);
+        if (rc == TIKU_DRV_OK) {
+            sent += n;
+            moved = tiku_clock_time();
+            continue;
+        }
+        /* No controller buffer free: wait for one, two seconds at most. */
+        if (rc != TIKU_BT_ERR_BUSY
+            || (tiku_clock_time_t)(tiku_clock_time() - moved)
+                   > (tiku_clock_time_t)(2U * TIKU_CLOCK_SECOND)) {
+            return TIKU_DRV_ERR_IO;
+        }
+        tiku_watchdog_kick();
+        bt_transport_wait(1U);
+    }
+    if (ms != (uint32_t *)0) {
+        *ms = (uint32_t)(((uint32_t)(tiku_clock_time_t)(tiku_clock_time() - t0)
+                          * 1000UL) / (uint32_t)TIKU_CLOCK_SECOND);
+    }
+    return TIKU_DRV_OK;
+}
+#endif
+
 void tiku_bt_poll(void)
 {
     /* Bound the per-tick drain: a busy room can produce dozens of
@@ -5588,6 +6725,19 @@ void tiku_bt_poll(void)
             if (bt_rx_one(0U, 0U, (uint8_t *)0, 0U, (int *)0) <= 0) break;
         }
     }
+#if (TIKU_BT_LINK_UPDATE + 0)
+    /* A new link's upgrades go out from here, outside any event handler
+     * and any command's wait. */
+    if (bt_rx_depth == 0U && bt_waiting == 0U) {
+        uint8_t i;
+        for (i = 0U; i < TIKU_BT_CONN_MAX; ++i) {
+            if (bt_state.conns[i].in_use && bt_state.conns[i].upd_due) {
+                bt_state.conns[i].upd_due = 0U;
+                bt_link_update(i);
+            }
+        }
+    }
+#endif
 }
 
 /*---------------------------------------------------------------------------*/
@@ -5629,6 +6779,17 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
          * (one bp_read32) when nothing is queued. */
         tiku_bt_poll();
 
+#if (TIKU_BT_PRIVACY + 0)
+        /* An advert running past its private address's time starts again
+         * from a new one. */
+        if (bt_local.privacy && bt_state.rpa_live && bt_state.advertising
+            && bt_state.adv_wanted && bt_state.adv_name_len > 0U
+            && (uint32_t)(tiku_clock_seconds() - bt_state.rpa_at)
+                   >= (uint32_t)bt_local.rpa_s) {
+            bt_readvertise();
+        }
+#endif
+
         /* Connection-presence drives the periodic uptime push. Arm
          * the timer the first time an active link appears; stop
          * it the first time they are all gone. The CCCD-subscriber
@@ -5660,7 +6821,7 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
 /* SMP bonding store                                                         */
 /*---------------------------------------------------------------------------*/
 /*
- * Fixed 32-byte records in durable memory, each tagged with a magic that
+ * Fixed 48-byte records in durable memory, each tagged with a magic that
  * tells a stored bond from blank NVM; bt_bond_turn is the slot a full
  * store gives up next, so new peers replace the old ones in turn.
  */
@@ -5668,57 +6829,99 @@ static TIKU_DURABLE tiku_bt_bond_record_t bt_bond_nvm[TIKU_BT_BOND_MAX];
 static TIKU_DURABLE uint8_t               bt_bond_turn;
 
 /**
+ * @brief The slot of the bond for the peer at @p addr (MSB-first) of type
+ *        @p addr_type: by its address, or (TIKU_BT_PRIVACY) by the IRK that
+ *        resolves the private address it is.
+ * @return The slot, or -1
+ */
+static int bt_bond_lookup(uint8_t addr_type, const uint8_t addr[6])
+{
+    uint8_t slot;
+    uint8_t k;
+
+    for (slot = 0U; slot < TIKU_BT_BOND_MAX; ++slot) {
+        const tiku_bt_bond_record_t *b = &bt_bond_nvm[slot];
+        if (b->magic != TIKU_BT_BOND_MAGIC || b->peer_addr_type != addr_type) {
+            continue;
+        }
+        for (k = 0U; k < 6U && b->peer_addr[k] == addr[k]; ++k) {
+        }
+        if (k == 6U) return (int)slot;
+    }
+#if (TIKU_BT_PRIVACY + 0)
+    /* A resolvable private address: its two top bits are 01. */
+    if (addr_type == 1U && (addr[0] & 0xC0U) == 0x40U) {
+        for (slot = 0U; slot < TIKU_BT_BOND_MAX; ++slot) {
+            const tiku_bt_bond_record_t *b = &bt_bond_nvm[slot];
+            uint8_t h[3];
+            if (b->magic != TIKU_BT_BOND_MAGIC
+                || (b->flags & TIKU_BT_BOND_F_IRK) == 0UL) {
+                continue;
+            }
+            if (bt_rpa_hash(b->irk, addr, h) == TIKU_DRV_OK
+                && h[0] == addr[3] && h[1] == addr[4] && h[2] == addr[5]) {
+                TIKU_BT_PRINTF("privacy: %02x:%02x:%02x:%02x:%02x:%02x is "
+                               "bond slot %u\n", addr[0], addr[1], addr[2],
+                               addr[3], addr[4], addr[5], (unsigned)slot);
+                return (int)slot;
+            }
+        }
+    }
+#endif
+    return -1;
+}
+
+/**
  * @brief Store @p rec: in the slot its peer holds, else an empty one, else
- *        the next slot in turn.
+ *        the next slot in turn.  A peer found through its IRK keeps its
+ *        identity address and IRK.
  *
  * @return The slot the record went to
  */
 static uint8_t bt_bond_keep(const tiku_bt_bond_record_t *rec)
 {
+    tiku_bt_bond_record_t keep = *rec;
+    const tiku_bt_bond_record_t *b;
+    int     found = bt_bond_lookup(rec->peer_addr_type, rec->peer_addr);
     uint8_t slot;
-    uint8_t empty = TIKU_BT_BOND_MAX;
     uint8_t k;
 
-    for (slot = 0U; slot < TIKU_BT_BOND_MAX; ++slot) {
-        const tiku_bt_bond_record_t *b = &bt_bond_nvm[slot];
-        if (b->magic != TIKU_BT_BOND_MAGIC) {
-            if (empty == TIKU_BT_BOND_MAX) empty = slot;
-            continue;
+    if (found >= 0) {
+        slot = (uint8_t)found;
+    } else {
+        for (slot = 0U; slot < TIKU_BT_BOND_MAX
+                        && bt_bond_nvm[slot].magic == TIKU_BT_BOND_MAGIC;
+             ++slot) {
         }
-        if (b->peer_addr_type != rec->peer_addr_type) continue;
-        for (k = 0U; k < 6U; ++k) {
-            if (b->peer_addr[k] != rec->peer_addr[k]) break;
-        }
-        if (k == 6U) break;
-    }
-    if (slot == TIKU_BT_BOND_MAX) {
-        if (empty < TIKU_BT_BOND_MAX) {
-            slot = empty;
-        } else {
+        if (slot == TIKU_BT_BOND_MAX) {
             uint16_t mpu_saved = tiku_mpu_unlock_nvm();
             slot = (uint8_t)(bt_bond_turn % TIKU_BT_BOND_MAX);
             bt_bond_turn = (uint8_t)((slot + 1U) % TIKU_BT_BOND_MAX);
             tiku_mpu_lock_nvm(mpu_saved);
         }
     }
-#if (TIKU_BT_SERVICE_CHANGED + 0)
-    {
-        /* The same key stored again (a bonded peer encrypting anew) keeps
-         * its Service Changed state; a new key is a new bond. */
-        tiku_bt_bond_record_t keep = *rec;
-        const tiku_bt_bond_record_t *b = &bt_bond_nvm[slot];
-        if (b->magic == TIKU_BT_BOND_MAGIC) {
-            for (k = 0U; k < 16U && b->ltk[k] == rec->ltk[k]; ++k) {
-            }
-            if (k == 16U) {
-                keep.flags = (rec->flags & 0xFFUL) | (b->flags & ~0xFFUL);
-            }
-        }
-        (void)tiku_bt_bond_save(slot, &keep);
+    b = &bt_bond_nvm[slot];
+#if (TIKU_BT_PRIVACY + 0)
+    if (found >= 0 && (b->flags & TIKU_BT_BOND_F_IRK) != 0UL) {
+        keep.peer_addr_type = b->peer_addr_type;
+        for (k = 0U; k < 6U; ++k) keep.peer_addr[k] = b->peer_addr[k];
+        for (k = 0U; k < 16U; ++k) keep.irk[k] = b->irk[k];
+        keep.flags |= TIKU_BT_BOND_F_IRK;
     }
-#else
-    (void)tiku_bt_bond_save(slot, rec);
 #endif
+#if (TIKU_BT_SERVICE_CHANGED + 0)
+    /* The same key stored again (a bonded peer encrypting anew) keeps its
+     * Service Changed state; a new key is a new bond. */
+    if (b->magic == TIKU_BT_BOND_MAGIC) {
+        for (k = 0U; k < 16U && b->ltk[k] == rec->ltk[k]; ++k) {
+        }
+        if (k == 16U) {
+            keep.flags = (keep.flags & 0xFFUL) | (b->flags & ~0xFFUL);
+        }
+    }
+#endif
+    (void)k;
+    (void)tiku_bt_bond_save(slot, &keep);
     return slot;
 }
 
@@ -5748,12 +6951,8 @@ int tiku_bt_bond_load(uint8_t slot, tiku_bt_bond_record_t *out)
         /* Empty slot -- return a zeroed record with magic=0 so the
          * caller can distinguish "no bond" from "real bond" without
          * a separate is_present() probe. */
-        out->magic          = 0UL;
-        out->peer_addr_type = 0U;
-        for (i = 0U; i < 6U; ++i) out->peer_addr[i] = 0U;
-        out->_pad           = 0U;
-        for (i = 0U; i < 16U; ++i) out->ltk[i] = 0U;
-        out->flags          = 0UL;
+        uint8_t *p = (uint8_t *)out;
+        for (i = 0U; i < (uint8_t)sizeof *out; ++i) p[i] = 0U;
     }
     return TIKU_DRV_OK;
 }
@@ -5763,25 +6962,13 @@ int tiku_bt_bond_clear(uint8_t slot)
     if (slot >= TIKU_BT_BOND_MAX) return TIKU_DRV_ERR_INVALID;
     {
         uint16_t mpu_saved = tiku_mpu_unlock_nvm();
+        uint8_t *p = (uint8_t *)&bt_bond_nvm[slot];
         uint8_t  i;
-        bt_bond_nvm[slot].magic          = 0UL;
-        bt_bond_nvm[slot].peer_addr_type = 0U;
-        for (i = 0U; i < 6U; ++i) bt_bond_nvm[slot].peer_addr[i] = 0U;
-        bt_bond_nvm[slot]._pad           = 0U;
-        for (i = 0U; i < 16U; ++i) bt_bond_nvm[slot].ltk[i] = 0U;
-        bt_bond_nvm[slot].flags          = 0UL;
+        for (i = 0U; i < (uint8_t)sizeof bt_bond_nvm[slot]; ++i) p[i] = 0U;
         tiku_mpu_lock_nvm(mpu_saved);
     }
     return TIKU_DRV_OK;
 }
-
-/*
- * Linear scan over the bond slots. The stored peer_addr is in
- * MSB-first display order; the caller's @p addr_le is taken in LE
- * wire order so the comparison is straightforward (reverse on the
- * way in). Used by the LE LTK Request handler to recover the LTK
- * from NVM when an already-paired peer reconnects.
- */
 
 /**
  * @brief Find a bond record by peer addr (Phase 14 reconnect path)
@@ -5794,27 +6981,70 @@ int tiku_bt_bond_clear(uint8_t slot)
 static int bt_bond_find_by_addr(uint8_t addr_type, const uint8_t addr_le[6],
                                 tiku_bt_bond_record_t *out)
 {
-    uint8_t slot;
-    for (slot = 0U; slot < TIKU_BT_BOND_MAX; ++slot) {
-        if (bt_bond_nvm[slot].magic != TIKU_BT_BOND_MAGIC) continue;
-        if (bt_bond_nvm[slot].peer_addr_type != addr_type) continue;
-        {
-            int  match = 1;
-            uint8_t k;
-            for (k = 0U; k < 6U; ++k) {
-                if (bt_bond_nvm[slot].peer_addr[k] != addr_le[5U - k]) {
-                    match = 0;
-                    break;
-                }
-            }
-            if (match) {
-                *out = bt_bond_nvm[slot];
-                return TIKU_DRV_OK;
-            }
-        }
-    }
-    return TIKU_DRV_ERR_NOT_PRESENT;
+    uint8_t msb[6];
+    uint8_t k;
+    int     slot;
+
+    for (k = 0U; k < 6U; ++k) msb[k] = addr_le[5U - k];
+    slot = bt_bond_lookup(addr_type, msb);
+    if (slot < 0) return TIKU_DRV_ERR_NOT_PRESENT;
+    *out = bt_bond_nvm[slot];
+    return TIKU_DRV_OK;
 }
+
+#if (TIKU_BT_SERVICE_CHANGED + 0) || (TIKU_BT_PRIVACY + 0)
+/** @brief The bond slot of connection @p conn_idx's peer, or -1. */
+static int bt_bond_slot_of(uint8_t conn_idx)
+{
+    const tiku_bt_connection_t *c = &bt_state.conns[conn_idx].info;
+    return bt_bond_lookup(c->peer_addr_type, c->peer_addr);
+}
+#endif
+
+#if (TIKU_BT_PRIVACY + 0)
+/**
+ * @brief Keep the identity a peer distributed in the bond its pairing on
+ *        @p conn_idx made: its identity address (type @p id_type, LE wire
+ *        order) and its IRK; another bond for the same identity is an older
+ *        one and goes.
+ */
+static void bt_bond_identity(uint8_t conn_idx, uint8_t id_type,
+                             const uint8_t id_le[6])
+{
+    tiku_bt_bond_record_t rec;
+    int     slot = bt_bond_slot_of(conn_idx);
+    uint8_t has_irk = 0U;
+    uint8_t s, k;
+
+    if (slot < 0) return;
+    rec = bt_bond_nvm[slot];
+    rec.peer_addr_type = (uint8_t)(id_type & 1U);
+    for (k = 0U; k < 6U; ++k) rec.peer_addr[k] = id_le[5U - k];
+    for (k = 0U; k < 16U; ++k) {
+        rec.irk[k] = bt_state.smp[conn_idx].peer_irk[k];
+        has_irk = (uint8_t)(has_irk | rec.irk[k]);
+    }
+    rec.flags = has_irk ? (rec.flags | TIKU_BT_BOND_F_IRK)
+                        : (rec.flags & ~TIKU_BT_BOND_F_IRK);
+    for (s = 0U; s < TIKU_BT_BOND_MAX; ++s) {
+        const tiku_bt_bond_record_t *b = &bt_bond_nvm[s];
+        if ((int)s == slot || b->magic != TIKU_BT_BOND_MAGIC
+            || b->peer_addr_type != rec.peer_addr_type) {
+            continue;
+        }
+        for (k = 0U; k < 6U && b->peer_addr[k] == rec.peer_addr[k]; ++k) {
+        }
+        if (k == 6U) (void)tiku_bt_bond_clear(s);
+    }
+    (void)tiku_bt_bond_save((uint8_t)slot, &rec);
+    TIKU_BT_PRINTF("p14.smp: peer identity %02x:%02x:%02x:%02x:%02x:%02x "
+                   "%s in slot %u\n", rec.peer_addr[0], rec.peer_addr[1],
+                   rec.peer_addr[2], rec.peer_addr[3], rec.peer_addr[4],
+                   rec.peer_addr[5], has_irk ? "and its IRK kept"
+                                             : "kept (no IRK)",
+                   (unsigned)slot);
+}
+#endif
 
 #if (TIKU_BT_SERVICE_CHANGED + 0)
 /*---------------------------------------------------------------------------*/
@@ -5864,25 +7094,6 @@ static uint16_t bt_gatt_digest(void)
     return crc;
 }
 
-/** @brief The bond slot of connection @p conn_idx's peer, or -1. */
-static int bt_bond_slot_of(uint8_t conn_idx)
-{
-    const tiku_bt_connection_t *c = &bt_state.conns[conn_idx].info;
-    uint8_t slot, k;
-
-    for (slot = 0U; slot < TIKU_BT_BOND_MAX; ++slot) {
-        const tiku_bt_bond_record_t *b = &bt_bond_nvm[slot];
-        if (b->magic != TIKU_BT_BOND_MAGIC ||
-            b->peer_addr_type != c->peer_addr_type) {
-            continue;
-        }
-        for (k = 0U; k < 6U && b->peer_addr[k] == c->peer_addr[k]; ++k) {
-        }
-        if (k == 6U) return (int)slot;
-    }
-    return -1;
-}
-
 /**
  * @brief Keep, in the bond of an encrypted link (or one encrypting again),
  *        whether its peer wants Service Changed and the layout it has seen.
@@ -5900,7 +7111,8 @@ static void bt_sc_remember(uint8_t conn_idx)
     slot = bt_bond_slot_of(conn_idx);
     if (slot < 0) return;
     rec = bt_bond_nvm[slot];
-    flags = rec.flags & 0xFFUL;
+    /* Its own bits only: the AuthReq and the IRK flag stay. */
+    flags = rec.flags & ~(BT_BOND_F_SC | (0xFFFFUL << BT_BOND_DIGEST_POS));
     if (bt_state.conns[conn_idx].sc_cccd & 0x0002U) {
         /* An unconfirmed indication leaves the layout the peer last saw. */
         uint32_t digest = (bt_state.conns[conn_idx].sc_waiting &&
