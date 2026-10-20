@@ -337,6 +337,8 @@ tiku_kits_net_http_build_request(
 #include <arch/ra8p1/tiku_timer_arch.h>
 #elif defined(PLATFORM_ESP32C61)
 #include <arch/esp32c61/tiku_timer_arch.h>
+#elif defined(PLATFORM_ESP32P4)
+#include <arch/esp32p4/tiku_timer_arch.h>
 #else
 #error "tikukits/net/http: unsupported platform"
 #endif

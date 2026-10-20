@@ -39,6 +39,8 @@
 #include <arch/ra8p1/tiku_device_select.h>
 #elif defined(PLATFORM_ESP32C61)
 #include <arch/esp32c61/tiku_device_select.h>
+#elif defined(PLATFORM_ESP32P4)
+#include <arch/esp32p4/tiku_device_select.h>
 #else
 #error "tikukits/net/ipv4: unsupported platform"
 #endif
@@ -146,12 +148,14 @@ tiku_kits_net_ipv4_input(uint8_t *buf, uint16_t len)
     uint16_t total_len;
     uint16_t frag;
 
+#ifdef TIKU_BOARD_LED2_ON
     /* Debug LED: LED2 on for valid-looking IPv4 frames */
     if (len > 0 && buf[0] == 0x45) {
         TIKU_BOARD_LED2_ON();
     } else {
         TIKU_BOARD_LED2_OFF();
     }
+#endif
 
     /* Check 1: minimum length for an IPv4 header */
     if (len < TIKU_KITS_NET_IPV4_HDR_LEN) {
@@ -376,10 +380,14 @@ TIKU_PROCESS_THREAD(tiku_kits_net_process, ev, data)
     tiku_kits_net_tcp_init();
 #endif
     net_buf_len = 0;
+#ifdef TIKU_BOARD_LED1_INIT
     TIKU_BOARD_LED1_INIT();
-    TIKU_BOARD_LED2_INIT();
     TIKU_BOARD_LED1_OFF();
+#endif
+#ifdef TIKU_BOARD_LED2_INIT
+    TIKU_BOARD_LED2_INIT();
     TIKU_BOARD_LED2_OFF();
+#endif
 
     /* Drain any stale bytes from the UART ring buffer.
      *
@@ -403,7 +411,9 @@ TIKU_PROCESS_THREAD(tiku_kits_net_process, ev, data)
         while (active_link != NULL &&
                active_link->poll_rx(net_buf, TIKU_KITS_NET_MTU,
                                     &net_buf_len)) {
+#ifdef TIKU_BOARD_LED1_TOGGLE
             TIKU_BOARD_LED1_TOGGLE();
+#endif
             tiku_kits_net_ipv4_input(net_buf, net_buf_len);
             net_buf_len = 0;
         }

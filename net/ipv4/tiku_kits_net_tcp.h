@@ -249,11 +249,14 @@
  */
 #ifndef TIKU_KITS_NET_TCP_BUF_PERSIST
 #if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350) || \
-    defined(PLATFORM_NORDIC)
+    defined(PLATFORM_NORDIC) || defined(PLATFORM_ESP32P4)
 /* Nordic joins the .bss group for the inverse reason: its .persistent is
  * REAL RRAM behind the RRAMC WEN gate (not a mirror), so a churning TCP
  * pool there is NVM wear plus a precise bus fault on any unbracketed
- * store -- and with 256 KB of SRAM there is no reason to take either. */
+ * store -- and with 256 KB of SRAM there is no reason to take either.
+ * The ESP32-P4's .persistent is mirrored to flash: each relock after a
+ * changed store writes the 16 KiB image to the other mirror, a flash erase
+ * and program per TCP segment. */
 #define TIKU_KITS_NET_TCP_BUF_PERSIST   0
 #else
 #define TIKU_KITS_NET_TCP_BUF_PERSIST   1
@@ -269,10 +272,10 @@
 
 /*
  * Resource sizing -- keyed on the platform, not the placement knob.  Cortex-M
- * parts (Ambiq, RP2350, Nordic) have ample SRAM, so the default is roomier
- * limits and a multi-KB shell response (e.g. telnet `help`) fits the TX pool
- * without churn.  MSP430 keeps the lean defaults below.  All sizes stay
- * #ifndef so a build can still override either way.
+ * parts (Ambiq, RP2350, Nordic) and the ESP32-P4 have ample SRAM, so the
+ * default is roomier limits and a multi-KB shell response (e.g. telnet
+ * `help`) fits the TX pool without churn.  MSP430 keeps the lean defaults
+ * below.  All sizes stay #ifndef so a build can still override either way.
  */
 #if defined(PLATFORM_NORDIC)
 /* The advertised receive window (rx_free of this buffer) must comfortably
@@ -287,7 +290,7 @@
 #endif
 #endif
 #if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350) || \
-    defined(PLATFORM_NORDIC)
+    defined(PLATFORM_NORDIC) || defined(PLATFORM_ESP32P4)
 #ifndef TIKU_KITS_NET_TCP_MAX_CONNS
 #define TIKU_KITS_NET_TCP_MAX_CONNS         4
 #endif

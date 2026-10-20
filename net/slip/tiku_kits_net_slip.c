@@ -47,6 +47,8 @@
 #include <arch/ra8p1/tiku_uart_arch.h>
 #elif defined(PLATFORM_ESP32C61)
 #include <arch/esp32c61/tiku_uart_arch.h>
+#elif defined(PLATFORM_ESP32P4)
+#include <arch/esp32p4/tiku_uart_arch.h>
 #else
 #error "tikukits/net/slip: unsupported platform — add an arch include here"
 #endif
@@ -55,19 +57,29 @@
 /* The SLIP wire follows the console. On an RP2350 native-USB console build
  * the USB CDC port is the only wired serial -- the host tools (tikuconsole,
  * slmux) connect there and expect SLIP frames on that same port, and the
- * UART0 pins are typically unwired.  Everywhere else (and in `both` mode,
- * where USB is a print mirror) SLIP keeps riding the physical UART.  The
- * CDC getters also pump the polled USB stack as a side effect, so the
- * APP=net poll loop services enumeration/EP0 for free. */
+ * UART0 pins are typically unwired.  On a USB Serial/JTAG console build
+ * (TIKU_CONSOLE_JTAG) SLIP rides that USB port, and each frame is flushed
+ * whole, since the console otherwise queues it.  Everywhere else (and in
+ * `both` mode, where USB is a print mirror) SLIP keeps riding the physical
+ * UART.  The CDC getters also pump the polled USB stack as a side effect,
+ * so the APP=net poll loop services enumeration/EP0 for free. */
 #if defined(TIKU_CONSOLE_USB) && !defined(TIKU_CONSOLE_BOTH)
 #include <arch/arm-rp2350/tiku_usb_cdc_arch.h>
 #define SLIP_WIRE_PUTC(c)    tiku_usb_cdc_putc(c)
 #define SLIP_WIRE_RX_READY() tiku_usb_cdc_rx_ready()
 #define SLIP_WIRE_GETC()     tiku_usb_cdc_getc()
+#define SLIP_WIRE_FLUSH()    ((void)0)
+#elif defined(TIKU_CONSOLE_JTAG)
+#include <services/console/tiku_usb_serial_jtag.h>
+#define SLIP_WIRE_PUTC(c)    tiku_serial_jtag_putc(c)
+#define SLIP_WIRE_RX_READY() tiku_serial_jtag_rx_ready()
+#define SLIP_WIRE_GETC()     tiku_usb_serial_jtag_getc()
+#define SLIP_WIRE_FLUSH()    tiku_serial_jtag_flush()
 #else
 #define SLIP_WIRE_PUTC(c)    tiku_uart_putc(c)
 #define SLIP_WIRE_RX_READY() tiku_uart_rx_ready()
 #define SLIP_WIRE_GETC()     tiku_uart_getc()
+#define SLIP_WIRE_FLUSH()    ((void)0)
 #endif
 
 /*---------------------------------------------------------------------------*/
@@ -168,6 +180,7 @@ tiku_kits_net_slip_send(const uint8_t *pkt, uint16_t len)
 
     /* Trailing END marks the frame boundary */
     SLIP_WIRE_PUTC((char)TIKU_KITS_NET_SLIP_END);
+    SLIP_WIRE_FLUSH();
 
     return TIKU_KITS_NET_OK;
 }
