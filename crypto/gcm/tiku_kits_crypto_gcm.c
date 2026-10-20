@@ -19,9 +19,7 @@
 /*---------------------------------------------------------------------------*/
 
 #include "tiku_kits_crypto_gcm.h"
-#if defined(PLATFORM_NORDIC)
-#include <arch/nordic/tiku_crypto_arch.h>
-#endif
+#include <hal/tiku_crypto_hal.h>
 #include <string.h>
 
 /*---------------------------------------------------------------------------*/
@@ -389,7 +387,7 @@ int tiku_kits_crypto_gcm_init(tiku_kits_crypto_gcm_ctx_t *ctx,
 
     /* Expand the AES-128 key schedule */
     rc = tiku_kits_crypto_aes128_init(&ctx->aes, key);
-#if defined(PLATFORM_NORDIC)
+#if TIKU_CRYPTO_HW
     memcpy(ctx->key, key, 16); ctx->key_sz = 16u;
 #endif
     if (rc != TIKU_KITS_CRYPTO_OK) {
@@ -416,7 +414,7 @@ int tiku_kits_crypto_gcm_init256(tiku_kits_crypto_gcm_ctx_t *ctx,
     /* AES-256 schedule; the encrypt/CTR/GHASH path is key-size agnostic
      * (it reads the round count from the context). */
     rc = tiku_kits_crypto_aes256_init(&ctx->aes, key);
-#if defined(PLATFORM_NORDIC)
+#if TIKU_CRYPTO_HW
     memcpy(ctx->key, key, 32); ctx->key_sz = 32u;
 #endif
     if (rc != TIKU_KITS_CRYPTO_OK) {
@@ -449,7 +447,7 @@ int tiku_kits_crypto_gcm_encrypt(
         return TIKU_KITS_CRYPTO_ERR_NULL;
     }
 
-#if defined(PLATFORM_NORDIC)
+#if TIKU_CRYPTO_HW
     if (tiku_crypto_hw_mode() == TIKU_CRYPTO_HW_MODE_AUTO &&
         tiku_crypto_arch_aes_gcm_kit(0, ctx->key, ctx->key_sz, nonce,
                                      aad, aad_len, pt, pt_len, ct, tag) == 0) {
@@ -492,7 +490,7 @@ int tiku_kits_crypto_gcm_decrypt(
         return TIKU_KITS_CRYPTO_ERR_NULL;
     }
 
-#if defined(PLATFORM_NORDIC)
+#if TIKU_CRYPTO_HW
     if (tiku_crypto_hw_mode() == TIKU_CRYPTO_HW_MODE_AUTO &&
         tiku_crypto_arch_aes_gcm_kit(1, ctx->key, ctx->key_sz, nonce,
                                      aad, aad_len, ct, ct_len, pt,

@@ -26,6 +26,7 @@
 
 #include "../tiku_kits_crypto.h"
 #include "../aes128/tiku_kits_crypto_aes128.h"
+#include <hal/tiku_crypto_hal.h>
 
 /*---------------------------------------------------------------------------*/
 /* CONSTANTS                                                                 */
@@ -67,9 +68,9 @@ typedef struct tiku_kits_crypto_gcm_ctx {
     tiku_kits_crypto_aes128_ctx_t aes;
     /** GHASH subkey H = AES(K, 0^128). */
     uint8_t h[16];
-#if defined(PLATFORM_NORDIC)
-    /** Raw key + size, retained for the CRACEN hardware path (which the
-     *  software round-key schedule cannot reconstruct). */
+#if TIKU_CRYPTO_HW
+    /** Raw key + size, retained for the hardware path (which the software
+     *  round-key schedule cannot reconstruct). */
     uint8_t key[32];
     uint8_t key_sz;
 #endif
