@@ -472,7 +472,7 @@ int tiku_kits_codec_cbor_decode_int(tiku_kits_codec_cbor_reader_t *r,
         *value = (int32_t)raw;
     } else if (major == 1) {
         /* CBOR: actual value = -1 - raw */
-        if (raw > (uint32_t)(-(int32_t)INT32_MIN - 1)) {
+        if (raw > (uint32_t)INT32_MAX) {
             return TIKU_KITS_CODEC_ERR_CORRUPT;
         }
         *value = -1 - (int32_t)raw;

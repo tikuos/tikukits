@@ -267,8 +267,8 @@ int tiku_kits_textcompression_heatshrink_encode(
         search_start = (i > HS_WINDOW_SIZE) ? (i - HS_WINDOW_SIZE) : 0;
 
         /* Clamp max match to remaining input or HS_MAX_MATCH */
-        max_match = (uint8_t)((src_len - i < HS_MAX_MATCH)
-                              ? (src_len - i) : HS_MAX_MATCH);
+        max_match = (uint8_t)(((unsigned)(src_len - i) < HS_MAX_MATCH)
+                              ? (unsigned)(src_len - i) : HS_MAX_MATCH);
 
         for (j = search_start; j < i; j++) {
             match_len = 0;
