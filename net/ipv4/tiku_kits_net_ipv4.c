@@ -39,6 +39,8 @@
 #include <arch/ra8p1/tiku_device_select.h>
 #elif defined(PLATFORM_ESP32C61)
 #include <arch/esp32c61/tiku_device_select.h>
+#elif defined(PLATFORM_ESP32C5)
+#include <arch/esp32c5/tiku_device_select.h>
 #elif defined(PLATFORM_ESP32P4)
 #include <arch/esp32p4/tiku_device_select.h>
 #else
