@@ -34,6 +34,7 @@
  * then calls tiku_bt_init() once the chip-side bring-up is complete.
  */
 
+#include <string.h>
 #include <interfaces/bluetooth/tiku_bt.h>
 #include <interfaces/bluetooth/tiku_bt_transport.h>
 #include "tiku.h"
@@ -57,6 +58,10 @@
 #include <arch/arm-rp2350/tiku_trng_arch.h>
 #elif PLATFORM_ESP32C61
 #include <arch/esp32c61/tiku_trng_arch.h>
+#elif PLATFORM_ESP32C6
+#include <arch/esp32c6/tiku_trng_arch.h>
+#elif PLATFORM_ESP32P4
+#include <arch/esp32p4/tiku_trng_arch.h>
 #elif PLATFORM_ESP32C5
 #include <arch/esp32c5/tiku_trng_arch.h>
 #elif PLATFORM_AMBIQ
@@ -135,6 +140,15 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define HCI_OP_LE_WRITE_DEFAULT_DATA_LENGTH 0x2024U
 #define HCI_OP_LE_SET_DEFAULT_PHY       0x2031U
 #define HCI_OP_LE_SET_PHY               0x2032U
+#define HCI_OP_LE_READ_PHY              0x2030U
+#define HCI_OP_LE_SET_ADV_SET_ADDR      0x2035U
+#define HCI_OP_LE_SET_EXT_ADV_PARAMS    0x2036U
+#define HCI_OP_LE_SET_EXT_ADV_DATA      0x2037U
+#define HCI_OP_LE_SET_EXT_SCAN_RSP      0x2038U
+#define HCI_OP_LE_SET_EXT_ADV_ENABLE    0x2039U
+#define HCI_OP_LE_SET_EXT_SCAN_PARAMS   0x2041U
+#define HCI_OP_LE_SET_EXT_SCAN_ENABLE   0x2042U
+#define HCI_OP_LE_EXT_CREATE_CONNECTION 0x2043U
 /* Phase 14: SMP crypto offload + encryption key management. The chip
  * has a dedicated AES-128 + P-256 ECDH engine reachable via these LE
  * controller HCI commands, which avoid a software AES/ECDH
@@ -181,6 +195,8 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 /* LE features (LE Read Local Supported Features, its first two octets). */
 #define LE_FEAT_DATA_LENGTH             (1U << 5)
 #define LE_FEAT_2M_PHY                  (1U << 8)
+#define LE_FEAT_CODED_PHY               (1U << 11)
+#define LE_FEAT_EXT_ADV                 (1U << 12)
 
 /* L2CAP fixed-channel IDs (Core Spec Vol 3 Part A 2.1). */
 #define L2CAP_CID_ATT                   0x0004U
@@ -347,7 +363,9 @@ typedef enum {
 #define BT_SCRATCH_CMD_SIZE   260U
 #define BT_ARENA_BYTES        (BT_SCRATCH_CMD_SIZE + 32U /* alignment slack */)
 
+#if !defined(PLATFORM_ESP32C6) && !(TIKU_DRV_BLE_IPC_ENABLE + 0)
 static uint8_t       bt_arena_buf[BT_ARENA_BYTES] __attribute__((aligned(4)));
+#endif
 static tiku_arena_t  bt_arena;
 static uint8_t      *bt_scratch_cmd;
 
@@ -403,7 +421,7 @@ static struct {
 #if (TIKU_BT_CONNECT_RETRY + 0)
     uint8_t                    conn_retries;
 #endif
-#if (TIKU_BT_LINK_UPDATE + 0)
+#if (TIKU_BT_LINK_UPDATE + 0) || (TIKU_BT_EXTENDED + 0)
     /* The controller's LE features, its first two octets (LE_FEAT_*). */
     uint16_t                   le_feat;
 #endif
@@ -428,6 +446,21 @@ static struct {
     tiku_bt_scan_entry_t scan[TIKU_BT_SCAN_MAX];
     char                       scan_prefix[TIKU_BT_SCAN_NAME_MAX];
     uint8_t                    scan_prefix_len;  /* 0: cache every device */
+#if (TIKU_BT_EXTENDED + 0)
+    uint8_t ext_commands;
+    uint8_t adv_primary;       /* zero selects legacy PDUs */
+    uint8_t adv_secondary;
+    int8_t adv_tx_power;
+    uint8_t conn_phy;
+    uint8_t scan_fault;
+    struct {
+        uint8_t active;
+        uint8_t discard;
+        uint8_t key[11];       /* properties, address, PHYs and SID */
+        uint8_t len;
+        uint8_t data[TIKU_BT_EXT_ADV_MAX];
+    } fragments[2];
+#endif
 
     /* Phase 9 — active LE connections. `in_use` is 0 for free slots,
      * 1 for live links. ATT context (current_mtu) is per-connection
@@ -497,8 +530,7 @@ static struct {
     const uint8_t *adv_uuid128;
     uint8_t        adv_wanted;   /* 1 from a start until a stop */
 
-    /* Every advertising report, as heard, for a module with its own
-     * table (the broadcast facade's observer). */
+    /* Legacy advertising reports for the broadcast facade's observer. */
     tiku_bt_adv_hook_t adv_hook;
 
     /* Phase 14 — per-connection SMP session state (one parallel slot
@@ -2143,6 +2175,7 @@ static void bt_random_static_addr(uint8_t *evt, uint16_t cap)
  * block because it's only consumed by the pairing state machine.
  * Returns 0 on success. */
 #if PLATFORM_RP2350 || PLATFORM_ESP32C61 || PLATFORM_ESP32C5 || \
+    PLATFORM_ESP32C6 || PLATFORM_ESP32P4 || \
     PLATFORM_AMBIQ || PLATFORM_NORDIC
 static int bt_rand_bytes(uint8_t *out, size_t n)
 {
@@ -4491,6 +4524,15 @@ static uint8_t bt_strlen_capped(const char *s, uint8_t cap)
     return n;
 }
 
+#if (TIKU_BT_EXTENDED + 0)
+static int bt_ext_advertise_setup(uint8_t properties, uint8_t primary,
+                                   uint8_t secondary, uint16_t interval,
+                                   const uint8_t *ad, uint8_t ad_len,
+                                   const uint8_t *rsp, uint8_t rsp_len);
+static int bt_ext_named(const char *name, uint8_t name_len,
+                          uint8_t adv_type, const uint8_t *uuid128);
+#endif
+
 /**
  * @brief Issue the LE advertising-bring-up command sequence
  *
@@ -4516,6 +4558,11 @@ static int bt_advertise_setup(const char *name, uint8_t name_len,
     int     n;
     uint8_t evt[64];
 
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.ext_commands) {
+        return bt_ext_named(name, name_len, adv_type, uuid128);
+    }
+#endif
     /* Step 0: belt-and-braces LE_Set_Advertising_Enable(0). The chip
      * returns "Command Disallowed" (status 0x0C) on Set_Adv_Params
      * if its internal adv state machine is mid-transition (most
@@ -4676,6 +4723,268 @@ static uint16_t bt_ms_to_chip_units(uint16_t ms)
     return (uint16_t)v;
 }
 
+#if (TIKU_BT_EXTENDED + 0)
+/** @brief Send an extended GAP command and check its completion status. */
+static int bt_ext_command(uint16_t opcode, const uint8_t *p, uint8_t len)
+{
+    uint8_t evt[16];
+    int n;
+    int rc = bt_hci_cmd_response(opcode, p, len, evt, sizeof evt, &n);
+    if (rc != TIKU_DRV_OK) return rc;
+    if (n < 7 || evt[6] != 0U) return TIKU_DRV_ERR_INVALID;
+    if (opcode == HCI_OP_LE_SET_EXT_ADV_PARAMS && n >= 8) {
+        bt_state.adv_tx_power = (int8_t)evt[7];
+    }
+    return TIKU_DRV_OK;
+}
+
+/** @brief Set the controller preference for subsequent connections. */
+static int bt_ext_default_phy(uint8_t phy)
+{
+    uint8_t mask = (uint8_t)(1U << (phy - 1U));
+    uint8_t p[3] = {0U, mask, mask};
+    return bt_ext_command(HCI_OP_LE_SET_DEFAULT_PHY, p, sizeof p);
+}
+
+/** @brief Validate the advertising PHYs against local controller features. */
+static int bt_ext_phys(uint8_t primary, uint8_t secondary)
+{
+    if (!bt_state.ready || !bt_state.ext_commands) {
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    if ((primary != 1U && primary != 3U) || secondary < 1U || secondary > 3U) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    if (((primary == 3U || secondary == 3U)
+         && !(bt_state.le_feat & LE_FEAT_CODED_PHY))
+        || (secondary == 2U && !(bt_state.le_feat & LE_FEAT_2M_PHY))) {
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    return TIKU_DRV_OK;
+}
+
+/** @brief Load advertising or scan-response data in bounded HCI fragments. */
+static int bt_ext_data(uint16_t opcode, const uint8_t *data, uint8_t len)
+{
+    uint8_t p[252];
+    uint16_t offset = 0U;
+    do {
+        uint8_t n = (uint8_t)(len - offset);
+        int rc;
+        if (n > 248U) n = 248U;
+        p[0] = 0U;
+        p[1] = len <= 248U ? 3U : (offset == 0U ? 1U : 2U);
+        p[2] = 0U;
+        p[3] = n;
+        if (n != 0U) memcpy(&p[4], data + offset, n);
+        rc = bt_ext_command(opcode, p, (uint8_t)(4U + n));
+        if (rc != TIKU_DRV_OK) return rc;
+        offset += n;
+    } while (offset < len);
+    return TIKU_DRV_OK;
+}
+
+/** @brief Configure and enable advertising set zero; failures leave it off. */
+static int bt_ext_advertise_setup(uint8_t properties, uint8_t primary,
+                                   uint8_t secondary, uint16_t interval,
+                                   const uint8_t *ad, uint8_t ad_len,
+                                   const uint8_t *rsp, uint8_t rsp_len)
+{
+    uint8_t p[25] = {0};
+    const uint8_t enable[6] = {1U, 1U, 0U, 0U, 0U, 0U};
+    uint16_t iv = bt_ms_to_chip_units(interval);
+    int rc;
+
+    if ((properties & 1U) && bt_any_connection()) return TIKU_BT_ERR_BUSY;
+    rc = tiku_bt_advertise_stop();
+    if (rc != TIKU_DRV_OK) return rc;
+    bt_rpa_refresh(0U);
+    if (iv < 0x20U) iv = 0x20U;
+    p[1] = properties;
+    p[3] = (uint8_t)iv; p[4] = (uint8_t)(iv >> 8);
+    p[6] = p[3]; p[7] = p[4];
+    p[9] = 7U;
+    p[10] = bt_own_type();
+    p[19] = 0x7FU;
+    p[20] = primary;
+    p[22] = secondary;
+    rc = bt_ext_command(HCI_OP_LE_SET_EXT_ADV_PARAMS, p, sizeof p);
+    if (rc != TIKU_DRV_OK) return rc;
+    if (p[10] == 1U) {
+        uint8_t address[7] = {0};
+        const uint8_t *own = bt_state.bd_addr;
+        uint8_t i;
+#if (TIKU_BT_PRIVACY + 0)
+        if (bt_local.privacy && bt_state.rpa_live) own = bt_state.rpa;
+#endif
+        for (i = 0U; i < 6U; ++i) address[1U + i] = own[5U - i];
+        rc = bt_ext_command(HCI_OP_LE_SET_ADV_SET_ADDR, address, 7U);
+        if (rc != TIKU_DRV_OK) return rc;
+    }
+    rc = bt_ext_data(HCI_OP_LE_SET_EXT_ADV_DATA, ad, ad_len);
+    if (rc != TIKU_DRV_OK) return rc;
+    if (properties & 2U) {
+        rc = bt_ext_data(HCI_OP_LE_SET_EXT_SCAN_RSP, rsp, rsp_len);
+        if (rc != TIKU_DRV_OK) return rc;
+    }
+    if (properties & 1U) {
+        rc = bt_ext_default_phy(secondary);
+        if (rc != TIKU_DRV_OK) return rc;
+    }
+    rc = bt_ext_command(HCI_OP_LE_SET_EXT_ADV_ENABLE, enable, sizeof enable);
+    if (rc == TIKU_DRV_OK) {
+        bt_state.advertising = 1U;
+        bt_wake_runner();
+    }
+    return rc;
+}
+
+/** @brief Encode the local name and optional service UUID for set zero. */
+static int bt_ext_named(const char *name, uint8_t name_len,
+                          uint8_t adv_type, const uint8_t *uuid128)
+{
+    uint8_t ad[49] = {2U, AD_TYPE_FLAGS, AD_FLAGS_LE_GENERAL_DISC};
+    uint8_t rsp[18] = {17U, 7U};
+    uint8_t len = (uint8_t)(5U + name_len);
+    uint8_t rsp_len = 0U;
+    uint8_t ext = bt_state.adv_primary != 0U;
+    uint8_t properties = ext ? 1U : (adv_type == 0U ? 0x13U : 0x10U);
+    int rc;
+    ad[3] = (uint8_t)(name_len + 1U);
+    ad[4] = AD_TYPE_COMPLETE_LOCAL_NAME;
+    memcpy(&ad[5], name, name_len);
+    if (uuid128 != (const uint8_t *)0) {
+        memcpy(&rsp[2], uuid128, 16U);
+        if (ext) {
+            memcpy(&ad[len], rsp, sizeof rsp);
+            len = (uint8_t)(len + sizeof rsp);
+        } else if (adv_type == 0U) rsp_len = sizeof rsp;
+    }
+    rc = bt_ext_advertise_setup(properties,
+                                ext ? bt_state.adv_primary : 1U,
+                                ext ? bt_state.adv_secondary : 1U,
+                                100U, ad, len, rsp, rsp_len);
+    if (rc == TIKU_DRV_OK) {
+        memcpy(bt_state.adv_name, name, name_len);
+        bt_state.adv_name_len = name_len;
+    }
+    return rc;
+}
+
+/** @brief Select a named advertising format, retaining it after success. */
+static int bt_advertise_select(const char *name, uint8_t type,
+                                 const uint8_t *uuid, uint8_t primary,
+                                 uint8_t secondary)
+{
+    uint8_t previous_primary = bt_state.adv_primary;
+    uint8_t previous_secondary = bt_state.adv_secondary;
+    int rc;
+    bt_state.adv_primary = primary;
+    bt_state.adv_secondary = secondary;
+    rc = bt_advertise_begin(name, type, uuid);
+    if (rc != TIKU_DRV_OK) {
+        bt_state.adv_primary = previous_primary;
+        bt_state.adv_secondary = previous_secondary;
+    }
+    return rc;
+}
+
+int tiku_bt_advertise_extended(const char *name, const uint8_t *uuid128,
+                                uint8_t primary, uint8_t secondary)
+{
+    int rc = bt_ext_phys(primary, secondary);
+    if (rc != TIKU_DRV_OK) return rc;
+    if (name == (const char *)0 || name[0] == '\0') return TIKU_DRV_ERR_INVALID;
+    return bt_advertise_select(name, 0U, uuid128, primary, secondary);
+}
+
+int tiku_bt_advertise_extended_raw(uint8_t connectable, uint8_t primary,
+                                    uint8_t secondary, uint16_t interval_ms,
+                                    const uint8_t *ad, uint8_t ad_len)
+{
+    int rc = bt_ext_phys(primary, secondary);
+    if (rc != TIKU_DRV_OK) return rc;
+    if (connectable > 1U || ad_len > TIKU_BT_EXT_ADV_MAX
+        || (ad == (const uint8_t *)0 && ad_len != 0U)) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    rc = bt_ext_advertise_setup(connectable, primary, secondary, interval_ms,
+                                ad, ad_len, (const uint8_t *)0, 0U);
+    if (rc == TIKU_DRV_OK) {
+        bt_state.adv_primary = primary;
+        bt_state.adv_secondary = secondary;
+    }
+    return rc;
+}
+
+int tiku_bt_scan_extended(uint8_t phys, uint8_t active,
+                           uint16_t interval_ms, uint16_t window_ms)
+{
+    uint8_t p[13] = {0};
+    const uint8_t enable[6] = {1U, 1U, 0U, 0U, 0U, 0U};
+    uint8_t len = 3U;
+    uint8_t mask;
+    uint16_t iv, wn;
+    int rc;
+    if (!bt_state.ready || !bt_state.ext_commands) return TIKU_DRV_ERR_NOT_PRESENT;
+    if (phys == 0U || (phys & ~5U)) return TIKU_DRV_ERR_INVALID;
+    if ((phys & 4U) && !(bt_state.le_feat & LE_FEAT_CODED_PHY)) {
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    if (bt_state.scanning) {
+        rc = tiku_bt_scan_stop();
+        if (rc != TIKU_DRV_OK) return rc;
+    }
+    bt_rpa_refresh(0U);
+    iv = bt_ms_to_chip_units(interval_ms);
+    wn = bt_ms_to_chip_units(window_ms);
+    if (wn > iv) wn = iv;
+    p[0] = bt_own_type();
+    p[2] = phys;
+    for (mask = 1U; mask <= 4U; mask <<= 2) {
+        if (!(phys & mask)) continue;
+        p[len++] = active ? 1U : 0U;
+        p[len++] = (uint8_t)iv; p[len++] = (uint8_t)(iv >> 8);
+        p[len++] = (uint8_t)wn; p[len++] = (uint8_t)(wn >> 8);
+    }
+    rc = bt_ext_command(HCI_OP_LE_SET_EXT_SCAN_PARAMS, p, len);
+    if (rc != TIKU_DRV_OK) return rc;
+    bt_state.scan_count = 0U;
+    bt_state.scan_fault = 0U;
+    memset(bt_state.fragments, 0, sizeof bt_state.fragments);
+    rc = bt_ext_command(HCI_OP_LE_SET_EXT_SCAN_ENABLE, enable, sizeof enable);
+    if (rc == TIKU_DRV_OK) {
+        bt_state.scanning = 1U;
+        bt_wake_runner();
+    }
+    return rc;
+}
+
+/** @brief Initiate on the selected primary PHY and await command acceptance. */
+static int bt_ext_create_connection(void)
+{
+    uint8_t p[26] = {0};
+    uint8_t status;
+    uint8_t i;
+    int rc;
+    p[1] = bt_own_type();
+    p[2] = bt_state.conn_peer_type;
+    for (i = 0U; i < 6U; ++i) p[3U + i] = bt_state.conn_peer[5U - i];
+    p[9] = bt_state.conn_phy == 3U ? 4U : 1U;
+    p[10] = 0x60U;
+    p[12] = 0x30U;
+    p[14] = 0x18U;
+    p[16] = 0x28U;
+    p[20] = 0xF4U; p[21] = 1U;
+    rc = bt_ext_default_phy(bt_state.conn_phy);
+    if (rc != TIKU_DRV_OK) return rc;
+    rc = bt_hci_cmd_status(HCI_OP_LE_EXT_CREATE_CONNECTION, p, sizeof p,
+                            &status);
+    if (rc != TIKU_DRV_OK) return rc;
+    return status == 0U ? TIKU_DRV_OK : TIKU_DRV_ERR_INVALID;
+}
+#endif
+
 /*
  * The AD payload uses the standard `[len][type][data]` records; the
  * scan walks them until it finds a Complete (0x09) or Shortened
@@ -4716,12 +5025,21 @@ static uint8_t bt_extract_name(const uint8_t *ad, uint8_t ad_len,
     return 0U;
 }
 
-/** Look up @p addr in the scan cache; return its index or -1 if absent. */
-static int bt_scan_find(const uint8_t addr[6])
+/** @brief Find an advertiser by address and, on extended profiles, type/SID.
+ *  @return Cache index, or -1 if absent. */
+static int bt_scan_find(const uint8_t addr[6], uint8_t addr_type,
+                         uint8_t sid)
 {
     uint8_t i, k;
     for (i = 0U; i < bt_state.scan_count; ++i) {
         int eq = 1;
+#if (TIKU_BT_EXTENDED + 0)
+        if (bt_state.scan[i].addr_type != addr_type
+            || bt_state.scan[i].sid != sid) continue;
+#else
+        (void)addr_type;
+        (void)sid;
+#endif
         for (k = 0U; k < 6U; ++k) {
             if (bt_state.scan[i].addr[k] != addr[k]) { eq = 0; break; }
         }
@@ -4750,11 +5068,16 @@ static int bt_scan_find(const uint8_t addr[6])
  * @param ad         AD payload bytes from the report
  * @param ad_len     Length of @p ad in bytes
  * @param rssi       Received signal strength in dBm (signed)
+ * @param primary    Primary advertising PHY
+ * @param secondary  Secondary advertising PHY, or zero for legacy PDUs
+ * @param sid        Advertising SID, or 255 when absent
+ * @param ext        One for extended advertising PDUs
  */
 static void bt_scan_cache_add(uint8_t evt_type, uint8_t addr_type,
                               const uint8_t addr_le[6],
                               const uint8_t *ad, uint8_t ad_len,
-                              int8_t rssi)
+                              int8_t rssi, uint8_t primary,
+                              uint8_t secondary, uint8_t sid, uint8_t ext)
 {
     uint8_t addr_msb[6];
     char    namebuf[TIKU_BT_SCAN_NAME_MAX];
@@ -4766,7 +5089,7 @@ static void bt_scan_cache_add(uint8_t evt_type, uint8_t addr_type,
     for (k = 0; k < 6; ++k) addr_msb[k] = addr_le[5 - k];
     n = bt_extract_name(ad, ad_len, namebuf, sizeof namebuf);
 
-    idx = bt_scan_find(addr_msb);
+    idx = bt_scan_find(addr_msb, addr_type, sid);
     if (idx < 0) {
         /* Under a name filter a device joins once a report names it. */
         if (bt_state.scan_prefix_len > n) return;
@@ -4794,6 +5117,17 @@ static void bt_scan_cache_add(uint8_t evt_type, uint8_t addr_type,
         e = &bt_state.scan[idx];
     }
 
+#if (TIKU_BT_EXTENDED + 0)
+    e->primary_phy = primary;
+    e->secondary_phy = secondary;
+    e->sid = sid;
+    e->extended = ext;
+#else
+    (void)primary;
+    (void)secondary;
+    (void)sid;
+    (void)ext;
+#endif
     e->evt_type = evt_type;
     e->rssi_dbm = rssi;
     if (n > 0U) {                              /* never erase a known name */
@@ -4813,6 +5147,96 @@ void tiku_bt_scan_filter(const char *prefix)
     }
     bt_state.scan_prefix_len = n;
 }
+
+#if (TIKU_BT_EXTENDED + 0)
+/** @brief Translate extended properties to the legacy report-hook vocabulary. */
+static uint8_t bt_ext_legacy_type(uint8_t properties)
+{
+    if (properties & 8U) return 4U;
+    if (properties & 4U) return 1U;
+    if (properties & 1U) return 0U;
+    if (properties & 2U) return 2U;
+    return 3U;
+}
+
+/** @brief Reassemble complete extended reports, keyed by advertiser and SID. */
+static void bt_ext_reports(const uint8_t *pkt, int len)
+{
+    int off = 5;
+    uint8_t r;
+    if (len < 5 || pkt[2] + 3 != len || pkt[4] == 0U || pkt[4] > 10U) return;
+    if (bt_state.scan_fault) return;
+    /* Validate the full event before accepting any of its reports. */
+    for (r = 0U; r < pkt[4]; ++r) {
+        if (off + 24 > len || off + 24 + pkt[off + 23] > len) return;
+        off += 24 + pkt[off + 23];
+    }
+    if (off != len) return;
+    off = 5;
+    for (r = 0U; r < pkt[4]; ++r) {
+        const uint8_t *p = &pkt[off];
+        const uint8_t *data = &p[24];
+        uint8_t n = p[23];
+        uint8_t key[11];
+        uint8_t status = (uint8_t)((p[0] >> 5) & 3U);
+        uint8_t type = bt_ext_legacy_type(p[0]);
+        int slot = -1;
+        int free_slot = -1;
+        int i;
+        off += 24 + n;
+        /* Anonymous adverts cannot identify a connection target or a chain. */
+        if (p[1] != 0U || p[2] > 3U || (p[0] & 0x80U)
+            || (p[9] != 1U && p[9] != 3U) || p[10] > 3U
+            || (p[11] > 15U && p[11] != 0xFFU)) continue;
+        key[0] = (uint8_t)(p[0] & 0x1FU);
+        memcpy(&key[1], &p[2], 10U);
+        for (i = 0; i < 2; ++i) {
+            if (!bt_state.fragments[i].active) free_slot = i;
+            else if (memcmp(key, bt_state.fragments[i].key, sizeof key) == 0) {
+                slot = i;
+                break;
+            }
+        }
+        if (status >= 2U) {
+            if (slot >= 0) bt_state.fragments[slot].active = 0U;
+            continue;
+        }
+        if (status == 1U && slot < 0) {
+            if (free_slot < 0) {
+                bt_state.scan_fault = 1U;
+                return;
+            }
+            slot = free_slot;
+            bt_state.fragments[slot].active = 1U;
+            bt_state.fragments[slot].discard = 0U;
+            bt_state.fragments[slot].len = 0U;
+            memcpy(bt_state.fragments[slot].key, key, sizeof key);
+        }
+        if (slot >= 0) {
+            if ((unsigned)bt_state.fragments[slot].len + n > TIKU_BT_EXT_ADV_MAX) {
+                bt_state.fragments[slot].discard = 1U;
+            }
+            if (!bt_state.fragments[slot].discard) {
+                memcpy(&bt_state.fragments[slot].data[bt_state.fragments[slot].len],
+                       data, n);
+                bt_state.fragments[slot].len =
+                    (uint8_t)(bt_state.fragments[slot].len + n);
+            }
+            if (status == 1U) continue;
+            bt_state.fragments[slot].active = 0U;
+            if (bt_state.fragments[slot].discard) continue;
+            data = bt_state.fragments[slot].data;
+            n = bt_state.fragments[slot].len;
+        }
+        bt_scan_cache_add(type, p[2], &p[3], data, n, (int8_t)p[13],
+                          p[9], p[10], p[11], (p[0] & 16U) == 0U);
+        /* The legacy hook receives legacy PDUs even during an extended scan. */
+        if ((p[0] & 16U) && bt_state.adv_hook != (tiku_bt_adv_hook_t)0) {
+            bt_state.adv_hook(type, p[2], &p[3], data, n, (int8_t)p[13]);
+        }
+    }
+}
+#endif
 
 /*
  * Layout starting at the type byte returned by tiku_bt_recv:
@@ -4842,6 +5266,22 @@ void tiku_bt_scan_filter(const char *prefix)
  */
 static void bt_handle_le_meta(const uint8_t *pkt, int len)
 {
+#if (TIKU_BT_EXTENDED + 0)
+    if (len < 4 || pkt[1] != HCI_EVT_LE_META) return;
+    if (pkt[3] == 0x11U) {
+        bt_state.scanning = 0U;
+        memset(bt_state.fragments, 0, sizeof bt_state.fragments);
+        return;
+    }
+    if (pkt[3] == 0x12U && len >= 9 && pkt[5] == 0U) {
+        bt_state.advertising = 0U;
+        return;
+    }
+    if (pkt[3] == 0x0DU) {
+        bt_ext_reports(pkt, len);
+        return;
+    }
+#endif
     if (len < 5) return;
     if (pkt[1] != HCI_EVT_LE_META) return;
 
@@ -4908,11 +5348,16 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         bt_state.conns[idx].info.tx_octets = BT_LL_OCTETS_MIN;
         bt_state.conns[idx].rx_need   = 0U;
 #if (TIKU_BT_LINK_UPDATE + 0)
-        /* Every link starts on the 1M PHY with 27-byte packets; the
-         * runner asks for more once this event is handled. */
+        /* The runner reads the initial PHY on extended-capable profiles. */
         bt_state.conns[idx].info.rx_octets = BT_LL_OCTETS_MIN;
         bt_state.conns[idx].info.tx_phy    = TIKU_BT_PHY_1M;
         bt_state.conns[idx].info.rx_phy    = TIKU_BT_PHY_1M;
+#if (TIKU_BT_EXTENDED + 0)
+        if (bt_state.ext_commands) {
+            bt_state.conns[idx].info.tx_phy = 0U;
+            bt_state.conns[idx].info.rx_phy = 0U;
+        }
+#endif
         bt_state.conns[idx].upd_due        = 1U;
 #endif
 #if (TIKU_BT_PRIVACY + 0)
@@ -4935,7 +5380,7 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         bt_smp_session_reset((uint8_t)idx);
         /* When advertising as ADV_IND, the chip auto-stops on
          * connection (per Core Spec). Reflect that in the local state. */
-        bt_state.advertising = 0U;
+        if (pkt[7] == 1U) bt_state.advertising = 0U;
         {
             const tiku_bt_connection_t *c = &bt_state.conns[idx].info;
             TIKU_BT_PRINTF("p9: *** connected to "
@@ -5112,7 +5557,7 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
             rssi      = (int8_t)pkt[off + 9 + data_len];
 
             bt_scan_cache_add(evt_type, addr_type, addr,
-                              data, data_len, rssi);
+                              data, data_len, rssi, 1U, 0U, 0xFFU, 0U);
             if (bt_state.adv_hook != (tiku_bt_adv_hook_t)0) {
                 bt_state.adv_hook(evt_type, addr_type, addr, data,
                                   data_len, rssi);
@@ -5299,6 +5744,15 @@ static uint8_t           bt_demo_notify_armed;
  */
 int tiku_bt_init(void)
 {
+#if (TIKU_BT_EXTENDED + 0)
+    bt_state.ext_commands = 0U;
+    bt_state.adv_tx_power = 127;
+    bt_state.adv_primary = 0U;
+    bt_state.adv_secondary = 0U;
+    bt_state.conn_phy = TIKU_BT_PHY_1M;
+    bt_state.scan_fault = 0U;
+    memset(bt_state.fragments, 0, sizeof bt_state.fragments);
+#endif
     bt_state.ready         = 0U;
     bt_state.advertising   = 0U;
     bt_state.adv_wanted    = 0U;
@@ -5342,9 +5796,15 @@ int tiku_bt_init(void)
      * memory budget rather than the buffer being an invisible
      * static .bss array (paired with the transport's id=0xB2 arena). */
     if (bt_scratch_cmd == (uint8_t *)0) {
+#if defined(PLATFORM_ESP32C6) || (TIKU_DRV_BLE_IPC_ENABLE + 0)
+        /* The port reserves the host's static SRAM as part of its image or IPC region. */
+        tiku_mem_err_t err = tiku_mem_workspace_open(&bt_arena,
+                              BT_ARENA_BYTES, NULL);
+#else
         tiku_mem_err_t err = tiku_arena_create(&bt_arena, bt_arena_buf,
                               (tiku_mem_arch_size_t)sizeof bt_arena_buf,
                               /* id */ 0xB1U);
+#endif
         if (err != TIKU_MEM_OK) {
             TIKU_BT_PRINTF("tiku_arena_create err=%d\n", (int)err);
             return TIKU_DRV_ERR_NOT_PRESENT;
@@ -5401,11 +5861,15 @@ int tiku_bt_init(void)
             /* Connection Complete, Advertising Report, Connection Update
              * Complete, Remote Features, LTK Request, Data Length Change,
              * P-256 Public Key, DHKey: sub-events 1-5 and 7-9; with
-             * TIKU_BT_LINK_UPDATE, PHY Update Complete (12) too. */
+             * TIKU_BT_LINK_UPDATE, PHY Update Complete (12) too. Extended
+             * profiles add Enhanced Connection Complete, Extended Advertising
+             * Report, Scan Timeout and Advertising Set Terminated. */
             static const uint8_t le_mask[8] = {
-                0xDF, (uint8_t)(0x01U | ((TIKU_BT_LINK_UPDATE + 0) ? 0x08U
+                0xDF, (uint8_t)(0x01U | ((TIKU_BT_EXTENDED + 0) ? 0x12U : 0U)
+                         | ((TIKU_BT_LINK_UPDATE + 0) ? 0x08U
                                                                   : 0x00U)),
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                (TIKU_BT_EXTENDED + 0) ? 0x03U : 0U,
+                0x00, 0x00, 0x00, 0x00, 0x00
             };
 
             if (bt_hci_cmd_response(HCI_OP_SET_EVENT_MASK, mask, 8U,
@@ -5446,11 +5910,10 @@ int tiku_bt_init(void)
                         (unsigned)bt_state.acl_num,
                         (unsigned)bt_state.acl_len);
 
-#if (TIKU_BT_LINK_UPDATE + 0)
-        /* What a link can be raised to: the data length extension and the
-         * 2M PHY, from the controller's features; each new link asks for
-         * both (bt_link_update).  The suggested default and the default PHY
-         * preference let a peer's own requests through as well. */
+#if (TIKU_BT_LINK_UPDATE + 0) || (TIKU_BT_EXTENDED + 0)
+        /* Cache local LE features and set initial data-length and PHY
+         * preferences. Extended GAP operations select the preference for
+         * subsequent connections; bt_link_update reads their initial PHY. */
         bt_state.le_feat = 0U;
         if (bt_hci_cmd_response(HCI_OP_LE_READ_LOCAL_FEATURES,
                                 (const uint8_t *)0, 0U,
@@ -5458,6 +5921,9 @@ int tiku_bt_init(void)
             && n >= 9 && evt[6] == 0U) {
             bt_state.le_feat = (uint16_t)(evt[7] | ((uint16_t)evt[8] << 8));
         }
+#if (TIKU_BT_EXTENDED + 0)
+        bt_state.ext_commands = (bt_state.le_feat & LE_FEAT_EXT_ADV) != 0U;
+#endif
         if (bt_state.le_feat & LE_FEAT_DATA_LENGTH) {
             static const uint8_t dl[4] = {
                 (uint8_t)BT_LL_OCTETS_MAX, 0x00U,
@@ -5616,7 +6082,8 @@ static int bt_advertise_begin(const char *name, uint8_t adv_type,
     /* If advertising was already running, stop first so the chip accepts
      * the new parameters cleanly. */
     if (bt_state.advertising) {
-        (void)tiku_bt_advertise_stop();
+        rc = tiku_bt_advertise_stop();
+        if (rc != TIKU_DRV_OK) return rc;
     }
 
     rc = bt_advertise_setup(name, name_len, adv_type, uuid128);
@@ -5634,17 +6101,29 @@ static int bt_advertise_begin(const char *name, uint8_t adv_type,
 
 int tiku_bt_advertise_start(const char *name)
 {
+#if (TIKU_BT_EXTENDED + 0)
+    return bt_advertise_select(name, 0x00U, (const uint8_t *)0, 0U, 0U);
+#else
     return bt_advertise_begin(name, 0x00U, (const uint8_t *)0);
+#endif
 }
 
 int tiku_bt_advertise_service(const char *name, const uint8_t *uuid128)
 {
+#if (TIKU_BT_EXTENDED + 0)
+    return bt_advertise_select(name, 0x00U, uuid128, 0U, 0U);
+#else
     return bt_advertise_begin(name, 0x00U, uuid128);
+#endif
 }
 
 int tiku_bt_advertise_beacon(const char *name)
 {
+#if (TIKU_BT_EXTENDED + 0)
+    return bt_advertise_select(name, 0x03U, (const uint8_t *)0, 0U, 0U);
+#else
     return bt_advertise_begin(name, 0x03U, (const uint8_t *)0);
+#endif
 }
 
 int tiku_bt_advertise_raw(uint8_t adv_type, uint16_t interval_ms,
@@ -5663,6 +6142,19 @@ int tiku_bt_advertise_raw(uint8_t adv_type, uint16_t interval_ms,
     if (ad_len > 31U || (ad == (const uint8_t *)0 && ad_len != 0U)) {
         return TIKU_DRV_ERR_INVALID;
     }
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.ext_commands) {
+        uint8_t properties;
+        if (adv_type == 0U) properties = 0x13U;
+        else if (adv_type == 2U) properties = 0x12U;
+        else if (adv_type == 3U) properties = 0x10U;
+        else return TIKU_DRV_ERR_INVALID;
+        rc = bt_ext_advertise_setup(properties, 1U, 1U, interval_ms,
+                                    ad, ad_len, (const uint8_t *)0, 0U);
+        if (rc == TIKU_DRV_OK) bt_state.adv_primary = 0U;
+        return rc;
+    }
+#endif
     if (bt_state.advertising) {
         (void)tiku_bt_advertise_stop();
     }
@@ -5716,6 +6208,14 @@ int tiku_bt_adv_tx_power(int8_t *dbm)
     int     rc;
 
     if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.ext_commands) {
+        if (dbm == (int8_t *)0) return TIKU_DRV_ERR_INVALID;
+        if (bt_state.adv_tx_power == 127) return TIKU_DRV_ERR_NOT_PRESENT;
+        *dbm = bt_state.adv_tx_power;
+        return TIKU_DRV_OK;
+    }
+#endif
     rc = bt_hci_cmd_response(HCI_OP_LE_READ_ADV_TX_POWER, (const uint8_t *)0,
                              0U, evt, sizeof evt, &n);
     if (rc != TIKU_DRV_OK) return rc;
@@ -5733,6 +6233,16 @@ int tiku_bt_advertise_stop(void)
 
     if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
 
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.ext_commands) {
+        const uint8_t disable[2] = {0U, 0U};
+        rc = bt_ext_command(HCI_OP_LE_SET_EXT_ADV_ENABLE, disable, 2U);
+        if (rc != TIKU_DRV_OK) return rc;
+        bt_state.advertising = 0U;
+        bt_state.adv_wanted = 0U;
+        return TIKU_DRV_OK;
+    }
+#endif
     rc = bt_hci_cmd_response(HCI_OP_LE_SET_ADV_ENABLE, &en, 1U,
                              evt, sizeof evt, &n);
     bt_state.advertising = 0U;
@@ -5863,6 +6373,13 @@ void tiku_bt_shutdown(void)
         (void)bt_hci_cmd_response(HCI_OP_RESET, (const uint8_t *)0, 0U,
                                   evt, sizeof evt, &n);
     }
+#if (TIKU_BT_EXTENDED + 0)
+    bt_state.ext_commands = 0U;
+    bt_state.adv_tx_power = 127;
+    bt_state.adv_primary = 0U;
+    bt_state.scan_fault = 0U;
+    memset(bt_state.fragments, 0, sizeof bt_state.fragments);
+#endif
     bt_state.ready        = 0U;
     bt_state.advertising  = 0U;
     bt_state.adv_wanted   = 0U;
@@ -5892,6 +6409,12 @@ int tiku_bt_scan_start(uint8_t active, uint16_t interval_ms,
     uint8_t evt[64];
 
     if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.ext_commands) {
+        return tiku_bt_scan_extended(TIKU_BT_SCAN_1M, active,
+                                      interval_ms, window_ms);
+    }
+#endif
     if (interval_ms < 3U)  interval_ms = 3U;
     if (window_ms   < 3U)  window_ms   = 3U;
     if (window_ms > interval_ms) window_ms = interval_ms;
@@ -5961,6 +6484,18 @@ int tiku_bt_scan_stop(void)
     uint8_t en[2] = { 0x00U, 0x00U };
 
     if (bt_state.ready == 0U) return TIKU_DRV_ERR_NOT_PRESENT;
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.ext_commands) {
+        const uint8_t disable[6] = {0};
+        rc = bt_ext_command(HCI_OP_LE_SET_EXT_SCAN_ENABLE, disable, 6U);
+        if (rc != TIKU_DRV_OK) return rc;
+        bt_state.scanning = 0U;
+        bt_state.scan_fault = 0U;
+        memset(bt_state.fragments, 0, sizeof bt_state.fragments);
+        bt_wake_runner();
+        return TIKU_DRV_OK;
+    }
+#endif
     bt_state.scanning = 0U;
     rc = bt_hci_cmd_response(HCI_OP_LE_SET_SCAN_ENABLE, en, 2U,
                              evt, sizeof evt, &n);
@@ -6180,19 +6715,9 @@ int tiku_bt_disconnect(uint16_t handle)
 /*---------------------------------------------------------------------------*/
 
 /**
- * @brief Send HCI_LE_Create_Connection for the peer in bt_state.conn_peer.
- *
- * The 25 parameter bytes (Core Spec Vol 4 Part E 7.8.12):
- *   scan_interval = 0x0060 (60 ms)
- *   scan_window   = 0x0030 (30 ms)
- *   conn_interval 24..40 (30..50 ms)
- *   latency       = 0
- *   supv_timeout  = 500 (5 s)
- *   ce_length     = 0
- * The command replies with Command Status, so it goes out raw and the
- * Connection Complete event reports the outcome.
- *
- * @return TIKU_DRV_OK, or the transport's error
+ * @brief Initiate a connection to the cached peer on the selected PHY.
+ * @return TIKU_DRV_OK after sending, or a transport error; the extended path
+ *         also checks Command Status and returns INVALID on refusal.
  */
 static int bt_create_connection(void)
 {
@@ -6200,6 +6725,11 @@ static int bt_create_connection(void)
     uint8_t *params = &cmd[4];
     int      k;
 
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.ext_commands) {
+        return bt_ext_create_connection();
+    }
+#endif
     cmd[0] = HCI_PKT_TYPE_CMD;
     cmd[1] = (uint8_t)(HCI_OP_LE_CREATE_CONNECTION & 0xFFU);
     cmd[2] = (uint8_t)((HCI_OP_LE_CREATE_CONNECTION >> 8) & 0xFFU);
@@ -6239,8 +6769,9 @@ static void bt_connect_again(void)
 }
 #endif
 
-int tiku_bt_connect_to(const uint8_t peer_addr[6],
-                             uint8_t peer_addr_type)
+/** @brief Cache the peer and start initiation, retaining its retry settings. */
+static int bt_connect_begin(const uint8_t peer_addr[6],
+                              uint8_t peer_addr_type)
 {
     int rc;
     int k;
@@ -6266,6 +6797,36 @@ int tiku_bt_connect_to(const uint8_t peer_addr[6],
     }
     return rc;
 }
+
+int tiku_bt_connect_to(const uint8_t peer_addr[6], uint8_t peer_addr_type)
+{
+#if (TIKU_BT_EXTENDED + 0)
+    return tiku_bt_connect_phy(peer_addr, peer_addr_type, TIKU_BT_PHY_1M);
+#else
+    return bt_connect_begin(peer_addr, peer_addr_type);
+#endif
+}
+
+#if (TIKU_BT_EXTENDED + 0)
+int tiku_bt_connect_phy(const uint8_t peer_addr[6], uint8_t peer_addr_type,
+                          uint8_t phy)
+{
+    if (!bt_state.ready) return TIKU_DRV_ERR_NOT_PRESENT;
+    if (peer_addr == (const uint8_t *)0 || peer_addr_type > 1U
+        || (phy != TIKU_BT_PHY_1M && phy != TIKU_BT_PHY_CODED)) {
+        return TIKU_DRV_ERR_INVALID;
+    }
+    if (phy == TIKU_BT_PHY_CODED && (!bt_state.ext_commands
+        || !(bt_state.le_feat & LE_FEAT_CODED_PHY))) {
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    if (bt_state.connecting || tiku_bt_connection_count() >= TIKU_BT_CONN_MAX) {
+        return TIKU_BT_ERR_BUSY;
+    }
+    bt_state.conn_phy = phy;
+    return bt_connect_begin(peer_addr, peer_addr_type);
+}
+#endif
 
 int tiku_bt_client_read(uint16_t conn_handle, uint16_t attr_handle)
 {
@@ -6574,7 +7135,8 @@ static int bt_link_of(uint16_t handle, int *idx)
     return (*idx < 0) ? TIKU_DRV_ERR_INVALID : TIKU_DRV_OK;
 }
 
-int tiku_bt_set_phy(uint16_t handle, uint8_t phy)
+/** @brief Validate a link's PHY request and submit its HCI coding preference. */
+static int bt_set_phy(uint16_t handle, uint8_t phy, uint8_t coding)
 {
     uint8_t p[7];
     uint8_t st  = 0xFFU;
@@ -6582,23 +7144,37 @@ int tiku_bt_set_phy(uint16_t handle, uint8_t phy)
     int     rc  = bt_link_of(handle, &idx);
 
     if (rc != TIKU_DRV_OK) return rc;
-    if (phy != TIKU_BT_PHY_1M && phy != TIKU_BT_PHY_2M) {
+    if ((phy != TIKU_BT_PHY_1M && phy != TIKU_BT_PHY_2M &&
+         phy != TIKU_BT_PHY_CODED) || coding > TIKU_BT_CODED_S8) {
         return TIKU_DRV_ERR_INVALID;
     }
     if (phy == TIKU_BT_PHY_2M && (bt_state.le_feat & LE_FEAT_2M_PHY) == 0U) {
+        return TIKU_DRV_ERR_NOT_PRESENT;
+    }
+    if (phy == TIKU_BT_PHY_CODED && (bt_state.le_feat & LE_FEAT_CODED_PHY) == 0U) {
         return TIKU_DRV_ERR_NOT_PRESENT;
     }
     handle = bt_state.conns[idx].info.handle;
     p[0] = (uint8_t)(handle & 0xFFU);
     p[1] = (uint8_t)(handle >> 8);
     p[2] = 0x00U;                           /* a preference both ways    */
-    p[3] = (uint8_t)(1U << (phy - 1U));     /* TX: 0x01 1M, 0x02 2M      */
+    p[3] = (uint8_t)(1U << (phy - 1U));     /* TX: 1M=1, 2M=2, Coded=4  */
     p[4] = p[3];                            /* RX the same               */
-    p[5] = 0x00U;                           /* no Coded PHY option       */
+    p[5] = coding;
     p[6] = 0x00U;
     rc = bt_hci_cmd_status(HCI_OP_LE_SET_PHY, p, sizeof p, &st);
     if (rc != TIKU_DRV_OK) return rc;
     return (st == 0x00U) ? TIKU_DRV_OK : TIKU_DRV_ERR_INVALID;
+}
+
+int tiku_bt_set_phy(uint16_t handle, uint8_t phy)
+{
+    return bt_set_phy(handle, phy, TIKU_BT_CODED_ANY);
+}
+
+int tiku_bt_set_coded_phy(uint16_t handle, uint8_t coding)
+{
+    return bt_set_phy(handle, TIKU_BT_PHY_CODED, coding);
 }
 
 int tiku_bt_set_data_length(uint16_t handle, uint16_t octets)
@@ -6634,9 +7210,8 @@ int tiku_bt_set_data_length(uint16_t handle, uint16_t octets)
 }
 
 /**
- * @brief Ask for a new link's upgrades: 251-byte packets and the 2M PHY
- *        where the controller has them, and, as the client, a 247-byte
- *        ATT MTU.
+ * @brief Request 251-byte packets and a central's 247-byte ATT MTU.
+ *        Read the initial PHY on extended profiles; request 2M for 1M links.
  */
 static void bt_link_update(uint8_t i)
 {
@@ -6645,7 +7220,26 @@ static void bt_link_update(uint8_t i)
     if (bt_state.le_feat & LE_FEAT_DATA_LENGTH) {
         (void)tiku_bt_set_data_length(h, BT_LL_OCTETS_MAX);
     }
-    if (bt_state.le_feat & LE_FEAT_2M_PHY) {
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.ext_commands) {
+        uint8_t p[2] = {(uint8_t)h, (uint8_t)(h >> 8)};
+        uint8_t evt[12];
+        int n;
+        if (bt_hci_cmd_response(HCI_OP_LE_READ_PHY, p, 2U, evt, sizeof evt,
+                                 &n) == TIKU_DRV_OK && n >= 11 && evt[6] == 0U
+            && evt[7] == p[0] && evt[8] == p[1]) {
+            bt_state.conns[i].info.tx_phy = evt[9];
+            bt_state.conns[i].info.rx_phy = evt[10];
+        }
+    }
+#endif
+    if ((bt_state.le_feat & LE_FEAT_2M_PHY)
+#if (TIKU_BT_EXTENDED + 0)
+        && (!bt_state.ext_commands
+            || (bt_state.conns[i].info.tx_phy == TIKU_BT_PHY_1M
+                && bt_state.conns[i].info.rx_phy == TIKU_BT_PHY_1M))
+#endif
+        ) {
         (void)tiku_bt_set_phy(h, TIKU_BT_PHY_2M);
     }
     if (bt_state.conns[i].info.role == 0U) {
@@ -6710,6 +7304,12 @@ void tiku_bt_poll(void)
      * effective throughput is ~1024 packets/s -- well above what a
      * legacy LE radio can deliver. */
     if (bt_state.ready == 0U) return;
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.scan_fault) {
+        if (tiku_bt_scan_stop() != TIKU_DRV_OK) return;
+        TIKU_BT_PRINTF("bt: scan stopped: extended report capacity exceeded\n");
+    }
+#endif
     if (bt_state.scanning == 0U
         && bt_state.advertising == 0U
         && bt_state.connecting == 0U
