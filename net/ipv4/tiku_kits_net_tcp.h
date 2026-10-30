@@ -267,6 +267,8 @@
 #if TIKU_KITS_NET_TCP_BUF_PERSIST
 #define TIKU_KITS_NET_TCP_BUF_ATTR \
     __attribute__((section(".persistent"), aligned(2)))
+#elif defined(PLATFORM_ESP32P4) && (TIKU_DRV_WIFI_IPC_ENABLE + 0)
+#define TIKU_KITS_NET_TCP_BUF_ATTR __attribute__((section(".p4.ipc"), aligned(64)))
 #else
 #define TIKU_KITS_NET_TCP_BUF_ATTR  __attribute__((aligned(2)))
 #endif
@@ -724,6 +726,9 @@ int8_t tiku_kits_net_tcp_close(tiku_kits_net_tcp_conn_t *conn);
  * @param conn  Connection to abort (may be in any state)
  */
 void tiku_kits_net_tcp_abort(tiku_kits_net_tcp_conn_t *conn);
+
+/** @brief Abort live connections with ABORTED callbacks after a local link loss. */
+void tiku_kits_net_tcp_link_down(void);
 
 /*---------------------------------------------------------------------------*/
 /* INPUT / PERIODIC                                                          */

@@ -21,6 +21,9 @@
 #include "../ipv4/tiku_kits_net_ipv4.h"
 #include "../ipv4/tiku_kits_net_dhcp.h"   /* lease: gw + netmask for next-hop */
 #include <interfaces/wireless/tiku_wireless.h>
+#include "../ipv4/tiku_kits_net_tcp.h"
+#include <string.h>
+#include <kernel/timers/tiku_timer.h>
 
 /*---------------------------------------------------------------------------*/
 /* CONSTANTS                                                                 */
@@ -44,6 +47,11 @@
  * the kit will produce. A radio delivers up to 1514 B; this caps at the
  * kit's MTU so the kit's buf_size on poll_rx is enough. */
 #define RX_STAGE_BYTES       TIKU_KITS_NET_MTU
+#if defined(PLATFORM_ESP32P4) && (TIKU_DRV_WIFI_IPC_ENABLE + 0)
+#define WIFI_STAGE __attribute__((section(".p4.ipc"),aligned(64)))
+#else
+#define WIFI_STAGE
+#endif
 
 /*---------------------------------------------------------------------------*/
 /* RX staging buffer                                                         */
@@ -54,7 +62,7 @@
  * because the kit's net process serialises RX/process/TX. A backlog
  * shows up as `rx_dropped++` so it's observable.
  */
-static uint8_t  rx_stage[RX_STAGE_BYTES];
+static uint8_t  rx_stage[RX_STAGE_BYTES] WIFI_STAGE;
 static uint16_t rx_stage_len;       /* 0 = empty */
 static uint32_t rx_dropped_full;    /* slot full when new frame arrived */
 static uint32_t rx_dropped_other;   /* non-v4 / malformed             */
@@ -87,7 +95,7 @@ static uint8_t     arp_cache_next;
  * asks the LAN and keeps the packet here, and the reply's arrival sends it.
  * A newer miss replaces it -- lwIP keeps one per pending entry likewise.
  */
-static uint8_t  arp_wait_pkt[TIKU_KITS_NET_MTU];
+static uint8_t  arp_wait_pkt[TIKU_KITS_NET_MTU] WIFI_STAGE;
 static uint16_t arp_wait_len;              /* 0 = nothing waiting */
 static uint8_t  arp_wait_hop[4];
 
@@ -565,6 +573,72 @@ wifi_poll_rx(uint8_t *buf, uint16_t buf_size, uint16_t *pos)
 /* Public                                                                    */
 /*---------------------------------------------------------------------------*/
 
+void tiku_kits_net_wifi_reset(void)
+{
+    static const uint8_t zero[4] = {0};
+    rx_stage_len = arp_wait_len = 0;
+    memset(arp_cache, 0, sizeof arp_cache);
+    arp_cache_next = 0;
+#if TIKU_KITS_NET_DHCP_ENABLE
+    tiku_process_exit(&tiku_kits_net_dhcp_process);
+    tiku_kits_net_dhcp_init();
+#endif
+    tiku_kits_net_ipv4_set_addr(zero);
+#if TIKU_KITS_NET_TCP_ENABLE
+    tiku_kits_net_tcp_link_down();
+#endif
+}
+
+void tiku_kits_net_wifi_periodic(void)
+{
+#if TIKU_KITS_NET_TCP_ENABLE
+    static tiku_clock_time_t last;
+    tiku_clock_time_t now = tiku_clock_time();
+    if ((tiku_clock_time_t)(now - last) >= TIKU_CLOCK_SECOND / 8) {
+        last = now;
+        tiku_kits_net_tcp_periodic();
+    }
+#endif
+}
+
+#if TIKU_DRV_WIFI_IPC_ENABLE
+static struct tiku_timer wifi_timer;
+TIKU_PROCESS(wifi_link_process, "Wi-Fi link");
+static uint8_t wifi_reconnect;
+TIKU_PROCESS_THREAD(wifi_link_process, ev, data)
+{
+    (void)data;
+    TIKU_PROCESS_BEGIN();
+#if TIKU_KITS_NET_TCP_ENABLE
+    tiku_kits_net_tcp_init();
+#endif
+    for (;;) {
+        tiku_timer_set_event(&wifi_timer, TIKU_CLOCK_SECOND / 8);
+        TIKU_PROCESS_WAIT_EVENT();
+        if (tiku_kits_net_ipv4_get_link() != &tiku_kits_net_wifi_link) {
+            wifi_reconnect = 0;
+            continue;
+        }
+        tiku_kits_net_wifi_periodic();
+        if (ev == TIKU_WIRELESS_EVT_LINK_DOWN) {
+            tiku_kits_net_wifi_reset();
+            wifi_reconnect = 1;
+        }
+#if TIKU_KITS_NET_DHCP_ENABLE
+        if (ev == TIKU_WIRELESS_EVT_LINK_UP && wifi_reconnect) {
+            tiku_wireless_status_t status;
+            if (!tiku_wireless_status(&status) && status.link_state == TIKU_WIRELESS_LINK_JOINED &&
+                !tiku_kits_net_dhcp_start(status.mac)) {
+                tiku_process_start(&tiku_kits_net_dhcp_process, NULL);
+                wifi_reconnect = 0;
+            }
+        }
+#endif
+    }
+    TIKU_PROCESS_END();
+}
+#endif
+
 const tiku_kits_net_link_t tiku_kits_net_wifi_link = {
     .send    = wifi_send,
     .poll_rx = wifi_poll_rx,
@@ -589,6 +663,9 @@ tiku_kits_net_wifi_init(void)
 {
     int rc;
 
+#if TIKU_DRV_WIFI_IPC_ENABLE
+    if (!wifi_link_process.is_running) tiku_process_start(&wifi_link_process, NULL);
+#endif
     rx_stage_len      = 0U;
     arp_wait_len      = 0U;
     rx_dropped_full   = 0UL;

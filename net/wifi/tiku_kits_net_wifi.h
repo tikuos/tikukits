@@ -77,6 +77,12 @@ extern const tiku_kits_net_link_t tiku_kits_net_wifi_link;
  */
 int8_t tiku_kits_net_wifi_init(void);
 
+/** @brief Clear packet/ARP state, invalidate DHCP/address and abort TCP on link loss. */
+void tiku_kits_net_wifi_reset(void);
+
+/** @brief Pace TCP timers across the Wi-Fi service process and synchronous callers. */
+void tiku_kits_net_wifi_periodic(void);
+
 #ifdef __cplusplus
 }
 #endif

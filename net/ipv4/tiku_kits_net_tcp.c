@@ -1468,6 +1468,17 @@ tiku_kits_net_tcp_abort(tiku_kits_net_tcp_conn_t *conn)
     tcp_free_conn(conn);
 }
 
+void tiku_kits_net_tcp_link_down(void)
+{
+    for (unsigned i = 0; i < TIKU_KITS_NET_TCP_MAX_CONNS; i++) {
+        tiku_kits_net_tcp_conn_t *c = &conn_table[i];
+        if (!c->active) continue;
+        tiku_kits_net_tcp_event_cb_t event = c->event_cb;
+        tcp_free_conn(c);
+        if (event) event(c, TIKU_KITS_NET_TCP_EVT_ABORTED);
+    }
+}
+
 /*---------------------------------------------------------------------------*/
 /* PUBLIC API: INPUT                                                         */
 /*---------------------------------------------------------------------------*/
