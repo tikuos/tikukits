@@ -249,7 +249,8 @@
  */
 #ifndef TIKU_KITS_NET_TCP_BUF_PERSIST
 #if defined(PLATFORM_AMBIQ) || defined(PLATFORM_RP2350) || \
-    defined(PLATFORM_NORDIC) || defined(PLATFORM_ESP32P4)
+    defined(PLATFORM_NORDIC) || defined(PLATFORM_ESP32P4) || \
+    defined(PLATFORM_ESP32C6)
 /* Nordic joins the .bss group for the inverse reason: its .persistent is
  * REAL RRAM behind the RRAMC WEN gate (not a mirror), so a churning TCP
  * pool there is NVM wear plus a precise bus fault on any unbracketed
