@@ -30,4 +30,8 @@ int tiku_kits_crypto_pbkdf2_hmac_sha1(const uint8_t *pass, size_t pass_len,
                                       uint32_t iterations,
                                       uint8_t *out, size_t out_len);
 
+/** @brief Derive a 32-byte PBKDF2-HMAC-SHA256 key; optional progress runs every 256 rounds. */
+int tiku_kits_crypto_pbkdf2_sha256(const uint8_t *pass, size_t pass_len,
+    const uint8_t *salt, size_t salt_len, uint32_t rounds, uint8_t out[32],
+    void (*progress)(void *), void *context);
 #endif /* TIKU_KITS_CRYPTO_PBKDF2_H_ */
