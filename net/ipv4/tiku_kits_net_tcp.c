@@ -1113,7 +1113,7 @@ tiku_kits_net_tcp_listen(uint16_t port,
     uint8_t i;
     int8_t free_slot = -1;
 
-    if (port == 0 || recv_cb == (void *)0 || event_cb == (void *)0) {
+    if (port == 0 || tiku_kits_net_port_reserved(port) || recv_cb == (void *)0 || event_cb == (void *)0) {
         return TIKU_KITS_NET_ERR_PARAM;
     }
 
@@ -1188,7 +1188,7 @@ tiku_kits_net_tcp_connect(const uint8_t *dst_addr,
     tiku_kits_net_tcp_conn_t *c;
     uint8_t idx;
     uint32_t iss;
-    if (dst_addr == (void *)0 || recv_cb == (void *)0 ||
+    if (tiku_kits_net_port_reserved(src_port) || dst_addr == (void *)0 || recv_cb == (void *)0 ||
         event_cb == (void *)0) {
         return (tiku_kits_net_tcp_conn_t *)0;
     }

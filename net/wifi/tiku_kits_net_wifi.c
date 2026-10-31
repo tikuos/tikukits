@@ -19,11 +19,21 @@
 
 #include "tiku_kits_net_wifi.h"
 #include "../ipv4/tiku_kits_net_ipv4.h"
+#if TIKU_DRV_WIFI_IPC_ENABLE
+#include <interfaces/wireless/tiku_wireless_ap.h>
+#include "../ipv4/tiku_kits_net_dhcps.h"
+#include "tiku_kits_net_router.h"
+
+#endif
 #include "../ipv4/tiku_kits_net_dhcp.h"   /* lease: gw + netmask for next-hop */
 #include <interfaces/wireless/tiku_wireless.h>
 #include "../ipv4/tiku_kits_net_tcp.h"
 #include <string.h>
 #include <kernel/timers/tiku_timer.h>
+#if TIKU_DRV_WIFI_IPC_ENABLE
+static uint8_t ap_router, router_lease_started;
+static tiku_clock_time_t router_lease_until;
+#endif
 
 /*---------------------------------------------------------------------------*/
 /* CONSTANTS                                                                 */
@@ -95,7 +105,12 @@ static uint8_t     arp_cache_next;
  * asks the LAN and keeps the packet here, and the reply's arrival sends it.
  * A newer miss replaces it -- lwIP keeps one per pending entry likewise.
  */
-static uint8_t  arp_wait_pkt[TIKU_KITS_NET_MTU] WIFI_STAGE;
+#if TIKU_DRV_WIFI_IPC_ENABLE
+#define WIFI_TX_MTU TIKU_ROUTER_MTU
+#else
+#define WIFI_TX_MTU TIKU_KITS_NET_MTU
+#endif
+static uint8_t  arp_wait_pkt[WIFI_TX_MTU] WIFI_STAGE;
 static uint16_t arp_wait_len;              /* 0 = nothing waiting */
 static uint8_t  arp_wait_hop[4];
 
@@ -435,6 +450,23 @@ wifi_rx_cb(const uint8_t *frame, uint16_t len, void *ctx)
     }
 }
 
+#if TIKU_DRV_WIFI_IPC_ENABLE
+/** @brief Keep AP traffic outside the station IPv4 and ARP state. */
+static void wifi_rx_interface(uint8_t interface, const uint8_t *frame, uint16_t len, void *ctx)
+{
+    if (tiku_wireless_is_dual()) {
+        if (tiku_kits_net_router_input(interface, frame, len) || interface) return;
+    }
+    wifi_rx_cb(frame, len, ctx);
+}
+/** @brief Send a translated packet through station next-hop resolution. */
+static int router_station(const uint8_t *ip, uint16_t n, void *ctx)
+{ (void)ctx; return wifi_send(ip, n); }
+/** @brief Send an AP Ethernet frame with its interface identity. */
+static int router_ap(const uint8_t *frame, uint16_t n, void *ctx)
+{ (void)ctx; return tiku_wireless_tx_if(TIKU_WIRELESS_IF_AP, frame, n); }
+#endif
+
 /*---------------------------------------------------------------------------*/
 /* tiku_kits_net_link_t implementation                                       */
 /*---------------------------------------------------------------------------*/
@@ -459,7 +491,7 @@ static int8_t
 wifi_send(const uint8_t *pkt, uint16_t len)
 {
     tiku_wireless_status_t st;
-    uint8_t   eth[ETH_HDR_LEN + TIKU_KITS_NET_MTU];
+    uint8_t   eth[ETH_HDR_LEN + WIFI_TX_MTU];
     uint8_t   dst[6];
     uint16_t  i, total;
     int       rc;
@@ -576,6 +608,11 @@ wifi_poll_rx(uint8_t *buf, uint16_t buf_size, uint16_t *pos)
 void tiku_kits_net_wifi_reset(void)
 {
     static const uint8_t zero[4] = {0};
+#if TIKU_DRV_WIFI_IPC_ENABLE
+    router_lease_started = 0;
+    if (tiku_wireless_is_dual() && ap_router) tiku_kits_net_router_uplink(NULL, NULL);
+    else { tiku_kits_net_router_stop(); tiku_kits_net_dhcps_stop(); ap_router = 0; }
+#endif
     rx_stage_len = arp_wait_len = 0;
     memset(arp_cache, 0, sizeof arp_cache);
     arp_cache_next = 0;
@@ -609,6 +646,7 @@ TIKU_PROCESS_THREAD(wifi_link_process, ev, data)
 {
     (void)data;
     TIKU_PROCESS_BEGIN();
+    wifi_reconnect = 1;
 #if TIKU_KITS_NET_TCP_ENABLE
     tiku_kits_net_tcp_init();
 #endif
@@ -620,12 +658,48 @@ TIKU_PROCESS_THREAD(wifi_link_process, ev, data)
             continue;
         }
         tiku_kits_net_wifi_periodic();
+        {
+            tiku_wireless_ap_status_t ap;
+            uint8_t dual = tiku_wireless_is_dual();
+            tiku_wireless_status_t status;
+            const tiku_kits_net_dhcp_lease_t *lease = tiku_kits_net_dhcp_get_lease();
+            if (!dual || tiku_wireless_status(&status) ||
+                status.link_state != TIKU_WIRELESS_LINK_JOINED) lease = NULL;
+            if (lease) {
+                if (!router_lease_started) {
+                    uint32_t seconds = lease->lease_sec ? lease->lease_sec : 60;
+                    uint32_t maximum = UINT32_MAX / 2 / TIKU_CLOCK_SECOND;
+                    if (seconds > maximum) seconds = maximum;
+                    router_lease_until = tiku_clock_time() + seconds * TIKU_CLOCK_SECOND;
+                    router_lease_started = 1;
+                }
+                if (!TIKU_CLOCK_LT(tiku_clock_time(), router_lease_until)) {
+                    tiku_kits_net_wifi_reset(); wifi_reconnect = 1; lease = NULL;
+                }
+            } else router_lease_started = 0;
+            if (!tiku_wireless_ap_status(&ap) && ap.active) {
+                if (!dual) {
+                    if (ap_router) { tiku_kits_net_router_stop(); ap_router = 0; }
+                    if (!tiku_kits_net_dhcps_start()) tiku_kits_net_dhcps_poll();
+                    wifi_reconnect = 0;
+                    continue;
+                }
+                if (!ap_router) {
+                    uint8_t mac[6];
+                    tiku_kits_net_dhcps_stop();
+                    if (!tiku_wireless_ap_mac(mac) &&
+                        !tiku_kits_net_router_start(mac, router_station, router_ap, NULL)) ap_router = 1;
+                }
+                tiku_kits_net_router_uplink(lease ? lease->ip : NULL, lease ? lease->dns : NULL);
+                tiku_kits_net_router_poll();
+            } else if (ap_router) { tiku_kits_net_router_stop(); ap_router = 0; }
+        }
         if (ev == TIKU_WIRELESS_EVT_LINK_DOWN) {
             tiku_kits_net_wifi_reset();
             wifi_reconnect = 1;
         }
 #if TIKU_KITS_NET_DHCP_ENABLE
-        if (ev == TIKU_WIRELESS_EVT_LINK_UP && wifi_reconnect) {
+        if (wifi_reconnect) {
             tiku_wireless_status_t status;
             if (!tiku_wireless_status(&status) && status.link_state == TIKU_WIRELESS_LINK_JOINED &&
                 !tiku_kits_net_dhcp_start(status.mac)) {
@@ -672,7 +746,11 @@ tiku_kits_net_wifi_init(void)
     rx_dropped_other  = 0UL;
     rx_delivered      = 0UL;
 
+#if TIKU_DRV_WIFI_IPC_ENABLE
+    rc = tiku_wireless_set_rx_if(wifi_rx_interface, NULL);
+#else
     rc = tiku_wireless_set_rx(wifi_rx_cb, (void *)0);
+#endif
     if (rc != TIKU_DRV_OK) return TIKU_KITS_NET_ERR_NOLINK;
 
     tiku_kits_net_ipv4_set_link(&tiku_kits_net_wifi_link);

@@ -18,6 +18,9 @@
 /* INCLUDES                                                                  */
 /*---------------------------------------------------------------------------*/
 
+#if TIKU_DRV_WIFI_IPC_ENABLE
+#include "../wifi/tiku_kits_net_wifi.h"
+#endif
 #include "tiku_kits_net_ipv4.h"
 #include "tiku_kits_net_icmp.h"
 #include "tiku_kits_net_udp.h"
@@ -384,6 +387,9 @@ TIKU_PROCESS_THREAD(tiku_kits_net_process, ev, data)
     tiku_kits_net_tcp_init();
 #endif
     net_buf_len = 0;
+#if TIKU_DRV_WIFI_IPC_ENABLE
+    (void)tiku_kits_net_wifi_init();
+#endif
 #ifdef TIKU_BOARD_LED1_INIT
     TIKU_BOARD_LED1_INIT();
     TIKU_BOARD_LED1_OFF();

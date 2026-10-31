@@ -328,4 +328,20 @@ typedef struct tiku_kits_net_link {
     const char *name;  /**< Human-readable name (e.g. "SLIP") */
 } tiku_kits_net_link_t;
 
+#ifndef TIKU_KITS_NET_RESERVED_PORT_BASE
+#define TIKU_KITS_NET_RESERVED_PORT_BASE 0u
+#endif
+#ifndef TIKU_KITS_NET_RESERVED_PORT_COUNT
+#define TIKU_KITS_NET_RESERVED_PORT_COUNT 0u
+#endif
+/** @brief Whether a port is reserved for a forwarding service in this build. */
+static inline uint8_t tiku_kits_net_port_reserved(uint16_t port)
+{
+#if TIKU_KITS_NET_RESERVED_PORT_COUNT
+    return port >= TIKU_KITS_NET_RESERVED_PORT_BASE &&
+           port < TIKU_KITS_NET_RESERVED_PORT_BASE + TIKU_KITS_NET_RESERVED_PORT_COUNT;
+#else
+    (void)port; return 0;
+#endif
+}
 #endif /* TIKU_KITS_NET_H_ */

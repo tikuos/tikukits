@@ -173,7 +173,7 @@ tiku_kits_net_udp_bind(uint16_t port, tiku_kits_net_udp_recv_cb_t cb)
     int8_t  free_slot = -1;
 
     /* Reject NULL callback and reserved port 0 */
-    if (cb == (tiku_kits_net_udp_recv_cb_t)0 || port == 0) {
+    if (cb == (tiku_kits_net_udp_recv_cb_t)0 || port == 0 || tiku_kits_net_port_reserved(port)) {
         return TIKU_KITS_NET_ERR_PARAM;
     }
 
