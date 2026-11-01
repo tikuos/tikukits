@@ -4,7 +4,7 @@
  *
  * Authors: Ambuj Varshney <ambuj@tiku-os.org>
  *
- * tiku_kits_crypto_p256.c - NIST P-256 ECDSA signature verification
+ * tiku_kits_crypto_p256.c - NIST P-256 ECDSA and ECDH
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -13,8 +13,12 @@
  * 256-bit bignum over uint32_t[8] limbs (little-endian) with generic
  * Montgomery multiplication; the per-modulus Montgomery constants (n0, R^2,
  * modulus-2) are derived at runtime to avoid hardcoded-constant transcription
- * errors.  Point arithmetic in Jacobian coordinates with the a=-3 doubling.
- * Verify-only: all inputs are public, so nothing here is constant-time.
+ * errors.  Field additions and the Montgomery reduction select their result
+ * by mask, never by branch.  Verification works on public data in Jacobian
+ * coordinates.  A secret scalar (a signing nonce, a private key) multiplies
+ * through the complete projective formulas of Renes, Costello and Batina
+ * (eprint 2015/1060, a = -3), which have no exceptional case, so every bit
+ * costs one doubling and one addition.
  */
 
 #include "tiku_kits_crypto_p256.h"
@@ -42,6 +46,11 @@ static const uint8_t P256_GX[32] = {
 static const uint8_t P256_GY[32] = {
     0x4f,0xe3,0x42,0xe2,0xfe,0x1a,0x7f,0x9b,0x8e,0xe7,0xeb,0x4a,0x7c,0x0f,0x9e,0x16,
     0x2b,0xce,0x33,0x57,0x6b,0x31,0x5e,0xce,0xcb,0xb6,0x40,0x68,0x37,0xbf,0x51,0xf5 };
+
+/* curve coefficient b (big-endian) */
+static const uint8_t P256_B[32] = {
+    0x5a,0xc6,0x35,0xd8,0xaa,0x3a,0x93,0xe7,0xb3,0xeb,0xbd,0x55,0x76,0x98,0x86,0xbc,
+    0x65,0x1d,0x06,0xb0,0xcc,0x53,0xb0,0xf6,0x3b,0xce,0x3c,0x3e,0x27,0xd2,0x60,0x4b };
 
 /* ---- bignum primitives -------------------------------------------------- */
 
@@ -85,6 +94,13 @@ static uint32_t bn_sub(bn d, const bn a, const bn b)
     uint64_t c = 0; int i;
     for (i = 0; i < NL; i++) { uint64_t t = (uint64_t)a[i] - b[i] - c; d[i] = (uint32_t)t; c = (t >> 32) & 1; }
     return (uint32_t)c;
+}
+
+/* d = flag ? a : b, for flag 0 or 1, without a branch. */
+static void bn_select(bn d, const bn a, const bn b, uint32_t flag)
+{
+    uint32_t m = (uint32_t)0 - (flag & 1u); int i;
+    for (i = 0; i < NL; i++) d[i] = (a[i] & m) | (b[i] & ~m);
 }
 
 /* ---- Montgomery context ------------------------------------------------- */
@@ -167,8 +183,7 @@ static void mont_mul(bn out, const bn a, const bn b, const mont_ctx *ctx)
         bn lo, d; uint32_t bw;
         for (i = 0; i < NL; i++) lo[i] = t[i];
         bw = bn_sub(d, lo, ctx->m);
-        if (t[NL] != 0 || bw == 0) bn_copy(out, d);
-        else                       bn_copy(out, lo);
+        bn_select(out, d, lo, t[NL] | (bw ^ 1u));
     }
 }
 
@@ -193,10 +208,28 @@ static void mont_inv(bn out, const bn a, const mont_ctx *c)
 
 static mont_ctx FP, FN;   /* field and scalar contexts */
 static bn       MG_X, MG_Y;  /* base point G in Montgomery (field) form */
+static bn       MB, MONE;    /* b and 1 in Montgomery (field) form */
 static int      p256_ready;
 
-static void fp_add(bn o,const bn a,const bn b){ uint32_t c=bn_add(o,a,b); bn t; if(c||bn_geq(o,FP.m)){bn_sub(t,o,FP.m);bn_copy(o,t);} }
-static void fp_sub(bn o,const bn a,const bn b){ uint32_t bw=bn_sub(o,a,b); bn t; if(bw){bn_add(t,o,FP.m);bn_copy(o,t);} }
+/* o = a + b mod m, for a, b < m: the sum less m kept unless that borrowed
+ * from a sum that did not carry. */
+static void mod_add(bn o, const bn a, const bn b, const bn m)
+{
+    bn sum, t;
+    uint32_t c = bn_add(sum, a, b);
+    uint32_t bw = bn_sub(t, sum, m);
+    bn_select(o, t, sum, c | (bw ^ 1u));
+}
+/* o = a - b mod m, for a, b < m. */
+static void mod_sub(bn o, const bn a, const bn b, const bn m)
+{
+    bn d, t;
+    uint32_t bw = bn_sub(d, a, b);
+    (void)bn_add(t, d, m);
+    bn_select(o, t, d, bw);
+}
+static void fp_add(bn o,const bn a,const bn b){ mod_add(o, a, b, FP.m); }
+static void fp_sub(bn o,const bn a,const bn b){ mod_sub(o, a, b, FP.m); }
 static void fp_mul(bn o,const bn a,const bn b){ mont_mul(o,a,b,&FP); }
 static void fp_sqr(bn o,const bn a){ mont_mul(o,a,a,&FP); }
 
@@ -299,6 +332,8 @@ static void p256_setup(void)
     mont_init(&FN, P256_N);
     bn_from_be(gx, P256_GX); to_mont(MG_X, gx, &FP);
     bn_from_be(gy, P256_GY); to_mont(MG_Y, gy, &FP);
+    bn_from_be(gx, P256_B); to_mont(MB, gx, &FP);
+    bn_zero(gx); gx[0] = 1; to_mont(MONE, gx, &FP);
     p256_ready = 1;
 }
 
@@ -372,12 +407,7 @@ int tiku_kits_crypto_p256_ecdsa_verify(const uint8_t qx[32], const uint8_t qy[32
     return bn_eq(xmod, rr) ? TIKU_KITS_CRYPTO_P256_OK : TIKU_KITS_CRYPTO_P256_BAD;
 }
 
-/* ---- ECDH (secret scalar) ----------------------------------------------- */
-
-/* curve coefficient b (big-endian) */
-static const uint8_t P256_B[32] = {
-    0x5a,0xc6,0x35,0xd8,0xaa,0x3a,0x93,0xe7,0xb3,0xeb,0xbd,0x55,0x76,0x98,0x86,0xbc,
-    0x65,0x1d,0x06,0xb0,0xcc,0x53,0xb0,0xf6,0x3b,0xce,0x3c,0x3e,0x27,0xd2,0x60,0x4b };
+/* ---- secret scalars ----------------------------------------------------- */
 
 static void bn_to_be(uint8_t out[32], const bn a)
 {
@@ -389,98 +419,281 @@ static void bn_to_be(uint8_t out[32], const bn a)
     }
 }
 
-/* Constant-time point select: d = flag ? s : d. */
-static void pt_cselect(jpt *d, const jpt *s, uint32_t flag)
+/* Clears @p n bytes in a way the compiler keeps. */
+static void wipe(void *p, size_t n)
 {
-    uint32_t m = (uint32_t)0 - (flag & 1u); int i;
-    for (i = 0; i < NL; i++) {
-        d->X[i] ^= m & (d->X[i] ^ s->X[i]);
-        d->Y[i] ^= m & (d->Y[i] ^ s->Y[i]);
-        d->Z[i] ^= m & (d->Z[i] ^ s->Z[i]);
-    }
+    volatile uint8_t *v = (volatile uint8_t *)p;
+    while (n-- > 0u) *v++ = 0u;
 }
 
-/* R = k*P via double-and-add-ALWAYS (no scalar-bit branch).  Best-effort
- * constant-time: the per-bit add is always performed and merged with a masked
- * select, so the secret scalar drives no top-level control flow.  (pt_add's
- * internal special-case branches are not hardened -- full CT is a TODO.) */
-static void pt_mul_ct(jpt *R, const bn k, const jpt *P)
+/* 1 when 0 < d < n, else 0. */
+static uint32_t scalar_ok(const bn d)
 {
-    jpt R0, R1; int i;
-    pt_set_inf(&R0);
-    for (i = NL * 32 - 1; i >= 0; i--) {
-        uint32_t bit = (k[i >> 5] >> (i & 31)) & 1u;
-        pt_double(&R0, &R0);
-        pt_add(&R1, &R0, P);
-        pt_cselect(&R0, &R1, bit);
-    }
-    *R = R0;
+    bn t; uint32_t z = 0; int i;
+    for (i = 0; i < NL; i++) z |= d[i];
+    return bn_sub(t, d, FN.m) & (uint32_t)(z != 0u);
 }
 
-/* Affine (x,y) big-endian from a Jacobian point: x=X/Z^2, y=Y/Z^3. */
-static void pt_to_affine(const jpt *P, uint8_t x[32], uint8_t y[32])
+/* a mod n for a < 2^256, which is below 2n. */
+static void reduce_n(bn a)
 {
-    bn zfm, zinv, z2m, z3m, fm, p;
-    from_mont(zfm, P->Z, &FP);
-    mont_inv(zinv, zfm, &FP);               /* Z^-1 (plain)   */
-    to_mont(zfm, zinv, &FP);                /* Z^-1 (mont)    */
-    fp_sqr(z2m, zfm);                        /* Z^-2           */
-    fp_mul(fm, P->X, z2m); from_mont(p, fm, &FP); bn_to_be(x, p);
-    fp_mul(z3m, z2m, zfm);                   /* Z^-3           */
-    fp_mul(fm, P->Y, z3m); from_mont(p, fm, &FP); bn_to_be(y, p);
+    bn t;
+    uint32_t bw = bn_sub(t, a, FN.m);
+    bn_select(a, a, t, bw);
 }
 
 /* Is the affine point (x,y), given as plain limbs, on y^2 = x^3 - 3x + b? */
 static int pt_on_curve(const bn x, const bn y)
 {
-    bn xm, ym, lhs, rhs, t, three, bm, bp;
+    bn xm, ym, lhs, rhs, t;
     to_mont(xm, x, &FP); to_mont(ym, y, &FP);
     fp_sqr(lhs, ym);                         /* y^2            */
     fp_sqr(rhs, xm); fp_mul(rhs, rhs, xm);   /* x^3            */
-    bn_zero(three); three[0] = 3; to_mont(three, three, &FP);
-    fp_mul(t, three, xm);                    /* 3x             */
+    fp_add(t, xm, xm); fp_add(t, t, xm);     /* 3x             */
     fp_sub(rhs, rhs, t);                     /* x^3 - 3x       */
-    bn_from_be(bp, P256_B); to_mont(bm, bp, &FP);
-    fp_add(rhs, rhs, bm);                    /* + b            */
+    fp_add(rhs, rhs, MB);                    /* + b            */
     return bn_eq(lhs, rhs);
+}
+
+/* Homogeneous projective point (X:Y:Z), x = X/Z and y = Y/Z, coordinates
+ * in field-Montgomery form; the identity is (0:1:0). */
+typedef struct { bn X, Y, Z; } ppt;
+
+/* R = P + Q for any two points, equal ones and the identity included
+ * (eprint 2015/1060, algorithm 4).  R may be P or Q. */
+static void cp_add(ppt *R, const ppt *P, const ppt *Q)
+{
+    bn t0, t1, t2, t3, t4, x3, y3, z3;
+
+    fp_mul(t0, P->X, Q->X);
+    fp_mul(t1, P->Y, Q->Y);
+    fp_mul(t2, P->Z, Q->Z);
+    fp_add(t3, P->X, P->Y);
+    fp_add(t4, Q->X, Q->Y);
+    fp_mul(t3, t3, t4);
+    fp_add(t4, t0, t1);
+    fp_sub(t3, t3, t4);
+    fp_add(t4, P->Y, P->Z);
+    fp_add(x3, Q->Y, Q->Z);
+    fp_mul(t4, t4, x3);
+    fp_add(x3, t1, t2);
+    fp_sub(t4, t4, x3);
+    fp_add(x3, P->X, P->Z);
+    fp_add(y3, Q->X, Q->Z);
+    fp_mul(x3, x3, y3);
+    fp_add(y3, t0, t2);
+    fp_sub(y3, x3, y3);
+    fp_mul(z3, MB, t2);
+    fp_sub(x3, y3, z3);
+    fp_add(z3, x3, x3);
+    fp_add(x3, x3, z3);
+    fp_sub(z3, t1, x3);
+    fp_add(x3, t1, x3);
+    fp_mul(y3, MB, y3);
+    fp_add(t1, t2, t2);
+    fp_add(t2, t1, t2);
+    fp_sub(y3, y3, t2);
+    fp_sub(y3, y3, t0);
+    fp_add(t1, y3, y3);
+    fp_add(y3, t1, y3);
+    fp_add(t1, t0, t0);
+    fp_add(t0, t1, t0);
+    fp_sub(t0, t0, t2);
+    fp_mul(t1, t4, y3);
+    fp_mul(t2, t0, y3);
+    fp_mul(y3, x3, z3);
+    fp_add(y3, y3, t2);
+    fp_mul(x3, t3, x3);
+    fp_sub(x3, x3, t1);
+    fp_mul(z3, t4, z3);
+    fp_mul(t1, t3, t0);
+    fp_add(z3, z3, t1);
+
+    bn_copy(R->X, x3); bn_copy(R->Y, y3); bn_copy(R->Z, z3);
+}
+
+/* R = 2P for any point (eprint 2015/1060, algorithm 6).  R may be P. */
+static void cp_dbl(ppt *R, const ppt *P)
+{
+    bn t0, t1, t2, t3, x3, y3, z3;
+
+    fp_sqr(t0, P->X);
+    fp_sqr(t1, P->Y);
+    fp_sqr(t2, P->Z);
+    fp_mul(t3, P->X, P->Y);
+    fp_add(t3, t3, t3);
+    fp_mul(z3, P->X, P->Z);
+    fp_add(z3, z3, z3);
+    fp_mul(y3, MB, t2);
+    fp_sub(y3, y3, z3);
+    fp_add(x3, y3, y3);
+    fp_add(y3, x3, y3);
+    fp_sub(x3, t1, y3);
+    fp_add(y3, t1, y3);
+    fp_mul(y3, x3, y3);
+    fp_mul(x3, x3, t3);
+    fp_add(t3, t2, t2);
+    fp_add(t2, t2, t3);
+    fp_mul(z3, MB, z3);
+    fp_sub(z3, z3, t2);
+    fp_sub(z3, z3, t0);
+    fp_add(t3, z3, z3);
+    fp_add(z3, z3, t3);
+    fp_add(t3, t0, t0);
+    fp_add(t0, t3, t0);
+    fp_sub(t0, t0, t2);
+    fp_mul(t0, t0, z3);
+    fp_add(y3, y3, t0);
+    fp_mul(t0, P->Y, P->Z);
+    fp_add(t0, t0, t0);
+    fp_mul(z3, t0, z3);
+    fp_sub(x3, x3, z3);
+    fp_mul(z3, t0, t1);
+    fp_add(z3, z3, z3);
+    fp_add(z3, z3, z3);
+
+    bn_copy(R->X, x3); bn_copy(R->Y, y3); bn_copy(R->Z, z3);
+}
+
+/* R = k*P: a doubling and an addition for each of the 256 bits of k, the
+ * sum kept or dropped by mask, so k drives no branch and no address. */
+static void cp_mul(ppt *R, const bn k, const ppt *P)
+{
+    ppt A, T; int i;
+
+    bn_zero(A.X); bn_copy(A.Y, MONE); bn_zero(A.Z);
+    for (i = NL * 32 - 1; i >= 0; i--) {
+        uint32_t bit = (k[i >> 5] >> (i & 31)) & 1u;
+        cp_dbl(&A, &A);
+        cp_add(&T, &A, P);
+        bn_select(A.X, T.X, A.X, bit);
+        bn_select(A.Y, T.Y, A.Y, bit);
+        bn_select(A.Z, T.Z, A.Z, bit);
+    }
+    *R = A;
+    wipe(&A, sizeof A);
+    wipe(&T, sizeof T);
+}
+
+/* P from affine plain limbs. */
+static void cp_from_affine(ppt *P, const bn x, const bn y)
+{
+    to_mont(P->X, x, &FP); to_mont(P->Y, y, &FP); bn_copy(P->Z, MONE);
+}
+
+/* x and y of P, big-endian; @p y may be NULL.  -1 for the identity. */
+static int cp_to_affine(const ppt *P, uint8_t x[32], uint8_t *y)
+{
+    bn z, zi, zim, t, p;
+    from_mont(z, P->Z, &FP);
+    if (bn_is_zero(z)) return -1;
+    mont_inv(zi, z, &FP);
+    to_mont(zim, zi, &FP);
+    fp_mul(t, P->X, zim); from_mont(p, t, &FP); bn_to_be(x, p);
+    if (y != NULL) { fp_mul(t, P->Y, zim); from_mont(p, t, &FP); bn_to_be(y, p); }
+    return 0;
+}
+
+int tiku_kits_crypto_p256_public(const uint8_t priv[32], uint8_t pub[65])
+{
+    static bn  d, gx, gy;
+    static ppt G, Q;
+    int rc;
+    p256_setup();
+    bn_from_be(d, priv);
+    if (!scalar_ok(d)) return TIKU_KITS_CRYPTO_P256_BAD;
+    bn_from_be(gx, P256_GX); bn_from_be(gy, P256_GY);
+    cp_from_affine(&G, gx, gy);
+    cp_mul(&Q, d, &G);
+    pub[0] = 0x04;
+    rc = cp_to_affine(&Q, pub + 1, pub + 33);
+    wipe(d, sizeof d);
+    return rc == 0 ? TIKU_KITS_CRYPTO_P256_OK : TIKU_KITS_CRYPTO_P256_BAD;
 }
 
 int tiku_kits_crypto_p256_ecdh_keypair(const uint8_t seed[32],
                                        uint8_t priv[32], uint8_t pub[65])
 {
-    static bn  d;
-    static jpt G, Q;
+    bn d;
     p256_setup();
-    bn_from_be(d, seed);                      /* d = seed mod n (one subtract) */
-    if (bn_geq(d, FN.m)) { bn t; bn_sub(t, d, FN.m); bn_copy(d, t); }
-    if (bn_is_zero(d)) return TIKU_KITS_CRYPTO_P256_BAD;   /* reseed and retry */
+    bn_from_be(d, seed);                      /* d = seed mod n */
+    reduce_n(d);
     bn_to_be(priv, d);
-    bn_copy(G.X, MG_X); bn_copy(G.Y, MG_Y);
-    bn_zero(G.Z); G.Z[0] = 1; to_mont(G.Z, G.Z, &FP);
-    pt_mul_ct(&Q, d, &G);
-    if (pt_is_inf(&Q)) return TIKU_KITS_CRYPTO_P256_BAD;
-    pub[0] = 0x04; pt_to_affine(&Q, pub + 1, pub + 33);
-    return TIKU_KITS_CRYPTO_P256_OK;
+    wipe(d, sizeof d);
+    return tiku_kits_crypto_p256_public(priv, pub);  /* _BAD for d = 0 */
 }
 
 int tiku_kits_crypto_p256_ecdh_shared(const uint8_t priv[32],
                                       const uint8_t peer[65], uint8_t out_x[32])
 {
     static bn  d, px, py;
-    static jpt P, S;
-    uint8_t ydummy[32];
+    static ppt P, S;
+    int rc;
     p256_setup();
     if (peer[0] != 0x04) return TIKU_KITS_CRYPTO_P256_BAD;  /* uncompressed only */
     bn_from_be(px, peer + 1); bn_from_be(py, peer + 33);
     if (bn_geq(px, FP.m) || bn_geq(py, FP.m)) return TIKU_KITS_CRYPTO_P256_BAD;
-    if (bn_is_zero(px) && bn_is_zero(py)) return TIKU_KITS_CRYPTO_P256_BAD;
     if (!pt_on_curve(px, py)) return TIKU_KITS_CRYPTO_P256_BAD;
     bn_from_be(d, priv);
-    if (bn_is_zero(d) || bn_geq(d, FN.m)) return TIKU_KITS_CRYPTO_P256_BAD;
-    to_mont(P.X, px, &FP); to_mont(P.Y, py, &FP);
-    bn_zero(P.Z); P.Z[0] = 1; to_mont(P.Z, P.Z, &FP);
-    pt_mul_ct(&S, d, &P);
-    if (pt_is_inf(&S)) return TIKU_KITS_CRYPTO_P256_BAD;
-    pt_to_affine(&S, out_x, ydummy);          /* shared secret = S.x */
-    return TIKU_KITS_CRYPTO_P256_OK;
+    if (!scalar_ok(d)) return TIKU_KITS_CRYPTO_P256_BAD;
+    cp_from_affine(&P, px, py);
+    cp_mul(&S, d, &P);
+    rc = cp_to_affine(&S, out_x, NULL);       /* shared secret = S.x */
+    wipe(d, sizeof d);
+    wipe(&S, sizeof S);
+    return rc == 0 ? TIKU_KITS_CRYPTO_P256_OK : TIKU_KITS_CRYPTO_P256_BAD;
+}
+
+/* ---- ECDSA sign ---------------------------------------------------------- */
+
+#define NONCE_TRIES 64   /* candidates before a nonce source counts as broken */
+
+int tiku_kits_crypto_p256_ecdsa_sign_nonce(const uint8_t priv[32],
+                                           const uint8_t *hash, size_t hashlen,
+                                           tiku_kits_crypto_p256_nonce_fn nonce,
+                                           void *ctx, uint8_t r[32], uint8_t s[32])
+{
+    static bn  d, e, k, ki, rr, ss, t, u, gx, gy;
+    static ppt G, R;
+    uint8_t hb[32], kb[32], xb[32];
+    int rc = TIKU_KITS_CRYPTO_P256_BAD, tries;
+
+    p256_setup();
+    bn_from_be(d, priv);
+    if (nonce == NULL || !scalar_ok(d)) return rc;
+
+    /* e = bits2octets(h1): the leftmost 256 bits of the hash, mod n */
+    memset(hb, 0, sizeof hb);
+    if (hashlen >= 32u) memcpy(hb, hash, 32);
+    else memcpy(hb + 32 - hashlen, hash, hashlen);
+    bn_from_be(e, hb);
+    reduce_n(e);
+    bn_to_be(hb, e);
+
+    bn_from_be(gx, P256_GX); bn_from_be(gy, P256_GY);
+    cp_from_affine(&G, gx, gy);
+    for (tries = 0; tries < NONCE_TRIES; tries++) {
+        nonce(ctx, hb, tries > 0, kb);
+        bn_from_be(k, kb);
+        if (!scalar_ok(k)) continue;
+        cp_mul(&R, k, &G);
+        if (cp_to_affine(&R, xb, NULL) != 0) continue;
+        bn_from_be(rr, xb);
+        reduce_n(rr);                         /* r = x mod n */
+        if (bn_is_zero(rr)) continue;
+        /* s = k^-1 (e + r d) mod n, each product (a R)(b) R^-1 = a b */
+        to_mont(t, rr, &FN); mont_mul(u, t, d, &FN);      /* u = r d     */
+        mod_add(u, e, u, FN.m);                           /* u = e + r d */
+        mont_inv(ki, k, &FN);
+        to_mont(t, ki, &FN); mont_mul(ss, t, u, &FN);     /* s = k^-1 u  */
+        if (bn_is_zero(ss)) continue;
+        bn_to_be(r, rr);
+        bn_to_be(s, ss);
+        rc = TIKU_KITS_CRYPTO_P256_OK;
+        break;
+    }
+    wipe(d, sizeof d); wipe(k, sizeof k); wipe(ki, sizeof ki);
+    wipe(t, sizeof t); wipe(u, sizeof u); wipe(kb, sizeof kb);
+    wipe(&R, sizeof R);
+    return rc;
 }
