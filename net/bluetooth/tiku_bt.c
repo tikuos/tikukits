@@ -467,6 +467,7 @@ static struct {
      * because Exchange MTU only affects the requester's link. */
     struct {
         uint8_t                    in_use;
+        uint8_t                    acl_inflight;
         /* info.tx_octets is the payload the link layer sends per PDU (Data
          * Length Change): every outgoing ACL fragment fits one, since the
          * EM9305 does not split a packet the PDU cannot carry. */
@@ -507,15 +508,10 @@ static struct {
     uint8_t                              user_svc_count;
     const tiku_bt_service_t       *user_svc[TIKU_BT_SVC_MAX];
 
-    /* Phase 12 — per-char CCCD state. The CCCD value (2 bytes:
-     * bit 0 = notify, bit 1 = indicate) is conceptually per
-     * {char, connection} but the legacy GATT model keeps it as
-     * per-char because most clients only subscribe on one link.
-     * cccd_char[i] is the characteristic each slot belongs to;
-     * cccd_value[i] holds the current bits. */
+    /* Subscription values belong to one connection and characteristic. */
     uint8_t   cccd_count;
     const tiku_bt_char_t *cccd_char[TIKU_BT_CHAR_MAX];
-    uint16_t  cccd_value[TIKU_BT_CHAR_MAX];
+    uint16_t  cccd_value[TIKU_BT_CONN_MAX][TIKU_BT_CHAR_MAX];
 
     /* Per-char Characteristic Declaration value scratch: properties,
      * value handle (2) and the characteristic's UUID (2 or 16 bytes).
@@ -593,6 +589,9 @@ static struct {
      * pairing. */
     uint8_t  sw_aes;
     uint8_t  sw_p256;
+#if TIKU_BT_CONN_MAX > 1
+    uint8_t pubkey_owner, dhkey_owner;
+#endif
 } bt_state;
 
 /*---------------------------------------------------------------------------*/
@@ -688,29 +687,16 @@ static uint16_t bt_acl_frag_max(int conn_idx)
     return m;
 }
 
-/**
- * @brief Wait for a free ACL buffer in the controller, taking its packets
- *        meanwhile.
- *
- * A controller that frees none in about a second is taken to have lost the
- * events, and the count starts again rather than the link stalling.
- */
-static void bt_acl_credit_wait(void)
+/** @brief Wait up to one second for controller credit without discarding other links' debt. */
+static int bt_acl_credit_wait(void)
 {
     unsigned polls = 0U;
-
-    while (bt_state.acl_num != 0U
-           && bt_state.acl_inflight >= bt_state.acl_num) {
-        if (polls >= 200U) {
-            TIKU_BT_PRINTF("acl: no buffer freed in 1 s, count reset\n");
-            bt_state.acl_inflight = 0U;
-            return;
-        }
-        if (bt_rx_one(0U, 0U, (uint8_t *)0, 0U, (int *)0) <= 0) {
+    while (bt_state.acl_num != 0U && bt_state.acl_inflight >= bt_state.acl_num) {
+        if (polls++ >= 200U) return TIKU_BT_ERR_BUSY;
+        if (bt_rx_one(0U, 0U, (uint8_t *)0, 0U, (int *)0) <= 0)
             bt_transport_wait(5U);
-        }
-        ++polls;
     }
+    return TIKU_DRV_OK;
 }
 
 /**
@@ -731,10 +717,11 @@ static int bt_send_acl(uint16_t handle, uint16_t cid,
     uint8_t  pkt[5U + BT_L2CAP_MAX];
     uint8_t  hdr[4];
     uint16_t total = (uint16_t)(4U + len);
-    uint16_t frag  = bt_acl_frag_max(bt_conn_find(handle));
+    int conn_idx = bt_conn_find(handle);
+    uint16_t frag  = bt_acl_frag_max(conn_idx);
     uint16_t off   = 0U;
 
-    if (len > BT_ATT_MTU_MAX) return TIKU_DRV_ERR_INVALID;
+    if (len > BT_ATT_MTU_MAX || conn_idx < 0) return TIKU_DRV_ERR_INVALID;
     hdr[0] = (uint8_t)(len & 0xFFU);
     hdr[1] = (uint8_t)((len >> 8) & 0xFFU);
     hdr[2] = (uint8_t)(cid & 0xFFU);
@@ -756,10 +743,16 @@ static int bt_send_acl(uint16_t handle, uint16_t cid,
             uint16_t at = (uint16_t)(off + k);
             pkt[5U + k] = (at < 4U) ? hdr[at] : payload[at - 4U];
         }
-        bt_acl_credit_wait();
+        rc = bt_acl_credit_wait();
+        if (rc != TIKU_DRV_OK) return rc;
+        if (!bt_state.conns[conn_idx].in_use || bt_state.conns[conn_idx].info.handle != handle)
+            return TIKU_DRV_ERR_NOT_PRESENT;
         rc = tiku_bt_send(pkt, (uint16_t)(5U + n));
         if (rc != TIKU_DRV_OK) return rc;
-        if (bt_state.acl_num != 0U) bt_state.acl_inflight++;
+        if (bt_state.acl_num != 0U) {
+            bt_state.acl_inflight++;
+            bt_state.conns[conn_idx].acl_inflight++;
+        }
         off = (uint16_t)(off + n);
     }
     return TIKU_DRV_OK;
@@ -927,7 +920,8 @@ static int bt_cccd_slot_for(const tiku_bt_char_t *c)
     if (bt_state.cccd_count >= TIKU_BT_CHAR_MAX) return -1;
     i = bt_state.cccd_count;
     bt_state.cccd_char[i]  = c;
-    bt_state.cccd_value[i] = 0U;
+    for (unsigned link = 0; link < TIKU_BT_CONN_MAX; link++)
+        bt_state.cccd_value[link][i] = 0U;
     bt_state.cccd_count = (uint8_t)(bt_state.cccd_count + 1U);
     return (int)i;
 }
@@ -1072,10 +1066,10 @@ static uint8_t bt_att_snapshot(bt_att_entry_t *out)
                     out[n].uuid      = UUID_CCCD;
                     out[n].uuid128   = (const uint8_t *)0;
                     out[n].value     = (const uint8_t *)
-                                         &bt_state.cccd_value[slot];
+                                         &bt_state.cccd_value[0][slot];
                     out[n].value_len = 2U;
                     out[n].char_ref  = (const tiku_bt_char_t *)0;
-                    out[n].cccd_ref  = &bt_state.cccd_value[slot];
+                    out[n].cccd_ref  = &bt_state.cccd_value[0][slot];
                     ++n;
                 }
             }
@@ -1378,8 +1372,10 @@ static void bt_att_handle_read(uint8_t conn_idx, const uint8_t *pdu,
             } else
 #endif
             if (e->cccd_ref != (uint16_t *)0) {
-                rsp[1] = (uint8_t)(*e->cccd_ref & 0xFFU);
-                rsp[2] = (uint8_t)((*e->cccd_ref >> 8) & 0xFFU);
+                unsigned slot = (unsigned)(e->cccd_ref - bt_state.cccd_value[0]);
+                uint16_t value = bt_state.cccd_value[conn_idx][slot];
+                rsp[1] = (uint8_t)(value & 0xFFU);
+                rsp[2] = (uint8_t)(value >> 8);
                 produced = 2U;
             } else if (e->char_ref != (const tiku_bt_char_t *)0
                        && e->char_ref->on_read != (tiku_bt_char_read_t)0) {
@@ -1455,7 +1451,8 @@ static void bt_att_handle_write(uint8_t conn_idx, const uint8_t *pdu,
             } else
 #endif
             {
-                *e->cccd_ref = new_val;
+                unsigned slot = (unsigned)(e->cccd_ref - bt_state.cccd_value[0]);
+                bt_state.cccd_value[conn_idx][slot] = new_val;
             }
             TIKU_BT_PRINTF("p12: CCCD set to 0x%04x "
                             "(notify=%u indicate=%u)\n",
@@ -3020,6 +3017,10 @@ static void bt_smp_own_block(uint8_t conn_idx, uint8_t out[7])
 /** @brief Clear @p conn_idx's pairing session for a fresh start. */
 static void bt_smp_session_reset(uint8_t conn_idx)
 {
+#if TIKU_BT_CONN_MAX > 1
+    if (bt_state.pubkey_owner == conn_idx + 1U) bt_state.pubkey_owner = 255U;
+    if (bt_state.dhkey_owner == conn_idx + 1U) bt_state.dhkey_owner = 255U;
+#endif
     bt_state.smp[conn_idx].state             = SMP_IDLE;
     bt_state.smp[conn_idx].have_pubkey       = 0U;
     bt_state.smp[conn_idx].have_dhkey        = 0U;
@@ -3182,6 +3183,22 @@ static int bt_smp_request_local_pubkey(void)
 #else
     return TIKU_DRV_ERR_NOT_PRESENT;
 #endif
+}
+
+/** @brief Bind a public-key completion to its initiating pairing session. */
+static int bt_smp_local_key(uint8_t conn_idx)
+{
+#if TIKU_BT_CONN_MAX > 1
+    if (bt_state.pubkey_owner || bt_state.dhkey_owner) return TIKU_BT_ERR_BUSY;
+    bt_state.pubkey_owner = conn_idx + 1U;
+#else
+    (void)conn_idx;
+#endif
+    int rc = bt_smp_request_local_pubkey();
+#if TIKU_BT_CONN_MAX > 1
+    if (rc) bt_state.pubkey_owner = 0U;
+#endif
+    return rc;
 }
 
 /**
@@ -3639,7 +3656,15 @@ static int bt_smp_try_request_dhkey(uint8_t conn_idx)
         return TIKU_DRV_OK;
     }
     bt_state.smp[conn_idx].dhkey_requested = 1U;
-    return bt_smp_request_dhkey(bt_state.smp[conn_idx].peer_pubkey);
+#if TIKU_BT_CONN_MAX > 1
+    if (bt_state.dhkey_owner) return TIKU_BT_ERR_BUSY;
+    bt_state.dhkey_owner = conn_idx + 1U;
+#endif
+    int rc = bt_smp_request_dhkey(bt_state.smp[conn_idx].peer_pubkey);
+#if TIKU_BT_CONN_MAX > 1
+    if (rc) bt_state.dhkey_owner = 0U;
+#endif
+    return rc;
 }
 
 /**
@@ -3674,11 +3699,25 @@ static int bt_smp_start_encryption(uint8_t conn_idx, const uint8_t ltk[16])
  * @brief As the central, start pairing on @p conn_idx's link: the Pairing
  *        Request goes out and the local P-256 key is started.
  */
+/** @brief Whether another link owns the pairing exchange and user prompt. */
+static int bt_pairing_busy(uint8_t conn_idx)
+{
+#if TIKU_BT_CONN_MAX > 1
+    if (bt_state.pubkey_owner || bt_state.dhkey_owner) return 1;
+#endif
+    for (unsigned i = 0; i < TIKU_BT_CONN_MAX; i++)
+        if (i != conn_idx && bt_state.conns[i].in_use &&
+            bt_state.smp[i].state != SMP_IDLE && bt_state.smp[i].state != SMP_ENCRYPTED)
+            return 1;
+    return 0;
+}
+
 static int bt_smp_init_start(uint8_t conn_idx)
 {
     uint8_t req[7];
     int     k;
 
+    if (bt_pairing_busy(conn_idx)) return TIKU_BT_ERR_BUSY;
     bt_smp_session_reset(conn_idx);
     bt_state.smp[conn_idx].initiator = 1U;
     for (k = 0; k < 6; ++k) {
@@ -3715,7 +3754,7 @@ static int bt_smp_init_start(uint8_t conn_idx)
     bt_state.smp[conn_idx].state = SMP_WAITING_PUBKEY;
     bt_smp_send(conn_idx, req, sizeof req);
     TIKU_BT_PRINTF("p14.smp: Pairing Request sent (LE-SC, initiator)\n");
-    if (bt_smp_request_local_pubkey() != TIKU_DRV_OK) {
+    if (bt_smp_local_key(conn_idx) != TIKU_DRV_OK) {
         TIKU_BT_PRINTF("p14.smp: no local P-256 key pair\n");
         bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
         return TIKU_DRV_ERR_INVALID;
@@ -4139,6 +4178,10 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
     }
     switch (pdu[0]) {
     case SMP_OP_PAIRING_REQUEST: {
+        if (bt_pairing_busy(conn_idx)) {
+            bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
+            return;
+        }
         if (len < 7U) {
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
@@ -4226,7 +4269,7 @@ static void bt_handle_smp(uint8_t conn_idx, const uint8_t *pdu,
             return;
         }
 #endif
-        if (bt_smp_request_local_pubkey() != TIKU_DRV_OK) {
+        if (bt_smp_local_key(conn_idx) != TIKU_DRV_OK) {
             TIKU_BT_PRINTF("p14.smp: no local P-256 key pair\n");
             bt_smp_send_failed(conn_idx, SMP_ERR_UNSPECIFIED_REASON);
             return;
@@ -4795,7 +4838,7 @@ static int bt_ext_advertise_setup(uint8_t properties, uint8_t primary,
     uint16_t iv = bt_ms_to_chip_units(interval);
     int rc;
 
-    if ((properties & 1U) && bt_any_connection()) return TIKU_BT_ERR_BUSY;
+    if ((properties & 1U) && tiku_bt_connection_count() >= TIKU_BT_CONN_MAX) return TIKU_BT_ERR_BUSY;
     rc = tiku_bt_advertise_stop();
     if (rc != TIKU_DRV_OK) return rc;
     bt_rpa_refresh(0U);
@@ -5310,7 +5353,7 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
 
         uint8_t  was_connecting = bt_state.connecting;
 
-        bt_state.connecting = 0U;        /* the outcome is in */
+        if (status || pkt[7] == 0U) bt_state.connecting = 0U;
         if (status != 0x00U) {
             TIKU_BT_PRINTF("p9: LE Connection Complete FAIL "
                             "status=0x%02x handle=0x%04x\n", status, handle);
@@ -5323,6 +5366,7 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
 #endif
             return;
         }
+        if (bt_conn_find(handle) >= 0) return;
         idx = bt_conn_alloc();
         if (idx < 0) {
             TIKU_BT_PRINTF("p9: LE Connection Complete -- no free "
@@ -5344,6 +5388,8 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
                 (uint16_t)(pkt[at + 4] | ((uint16_t)pkt[at + 5] << 8));
         }
         bt_state.conns[idx].in_use    = 1U;
+        bt_state.conns[idx].acl_inflight = 0U;
+        memset(bt_state.cccd_value[idx], 0, sizeof bt_state.cccd_value[idx]);
         bt_state.conns[idx].info.att_mtu   = ATT_MTU_DEFAULT;
         bt_state.conns[idx].info.tx_octets = BT_LL_OCTETS_MIN;
         bt_state.conns[idx].rx_need   = 0U;
@@ -5454,20 +5500,27 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
      *   [4]    status
      *   [5..68] 64-byte public key (LE byte order, X || Y) */
     if (pkt[3] == LE_SUBEVT_READ_LOCAL_P256_PUBKEY_CPL && len >= 69) {
+#if TIKU_BT_CONN_MAX > 1
+        uint8_t owner = bt_state.pubkey_owner;
+        bt_state.pubkey_owner = 0U;
+        if (!owner || owner > TIKU_BT_CONN_MAX) return;
+#endif
         if (pkt[4] != 0x00U) {
             TIKU_BT_PRINTF("p14.smp: P256_PubKey_Complete status=0x%02x\n",
                             pkt[4]);
             return;
         }
-        /* Walk all sessions waiting for a pubkey; deliver to the one
-         * still pending. With TIKU_BT_CONN_MAX=1 today this is a
-         * single-element loop. */
+        /* Deliver the completion to its pairing session. */
         {
             uint8_t i;
             for (i = 0U; i < TIKU_BT_CONN_MAX; ++i) {
+#if TIKU_BT_CONN_MAX > 1
+                if (i + 1U != owner) continue;
+#endif
                 if (!bt_state.conns[i].in_use)             continue;
                 if (bt_state.smp[i].have_pubkey)           continue;
-                if (bt_state.smp[i].state == SMP_IDLE)     continue;
+                if (bt_state.smp[i].state == SMP_IDLE ||
+                    bt_state.smp[i].state == SMP_ENCRYPTED) continue;
                 {
                     uint8_t k;
                     for (k = 0U; k < 64U; ++k) {
@@ -5498,6 +5551,11 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
      *   [4]    status
      *   [5..36] 32-byte DHKey */
     if (pkt[3] == LE_SUBEVT_GENERATE_DHKEY_COMPLETE && len >= 37) {
+#if TIKU_BT_CONN_MAX > 1
+        uint8_t owner = bt_state.dhkey_owner;
+        bt_state.dhkey_owner = 0U;
+        if (!owner || owner > TIKU_BT_CONN_MAX) return;
+#endif
         if (pkt[4] != 0x00U) {
             TIKU_BT_PRINTF("p14.smp: DHKey_Complete status=0x%02x\n",
                             pkt[4]);
@@ -5506,9 +5564,13 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         {
             uint8_t i;
             for (i = 0U; i < TIKU_BT_CONN_MAX; ++i) {
+#if TIKU_BT_CONN_MAX > 1
+                if (i + 1U != owner) continue;
+#endif
                 if (!bt_state.conns[i].in_use)         continue;
                 if (bt_state.smp[i].have_dhkey)        continue;
-                if (bt_state.smp[i].state == SMP_IDLE) continue;
+                if (bt_state.smp[i].state == SMP_IDLE ||
+                    bt_state.smp[i].state == SMP_ENCRYPTED) continue;
                 {
                     uint8_t k;
                     for (k = 0U; k < 32U; ++k) {
@@ -5592,8 +5654,14 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
         for (i = 0U; i < pkt[3] && 7 + 4 * (int)i < len; ++i) {
             uint16_t c = (uint16_t)(pkt[6U + 4U * i]
                                     | ((uint16_t)pkt[7U + 4U * i] << 8));
-            bt_state.acl_inflight = (c >= bt_state.acl_inflight)
-                ? 0U : (uint8_t)(bt_state.acl_inflight - c);
+            uint16_t handle = (uint16_t)(pkt[4U + 4U * i] |
+                                         ((uint16_t)pkt[5U + 4U * i] << 8));
+            int link = bt_conn_find(handle);
+            if (link < 0) continue;
+            if (c > bt_state.conns[link].acl_inflight)
+                c = bt_state.conns[link].acl_inflight;
+            bt_state.conns[link].acl_inflight -= (uint8_t)c;
+            bt_state.acl_inflight -= (uint8_t)c;
         }
         return;
     }
@@ -5610,17 +5678,10 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
         if (idx >= 0) {
             bt_state.conns[idx].in_use  = 0U;
             bt_state.conns[idx].rx_need = 0U;
-            /* The controller drops a closed link's unsent packets, which
-             * frees their buffers without a Number Of Completed Packets.
-             * The subscriptions were that client's: the next one starts
-             * unsubscribed. */
-            if (bt_any_connection() == 0) {
-                uint8_t k;
-                bt_state.acl_inflight = 0U;
-                for (k = 0U; k < bt_state.cccd_count; ++k) {
-                    bt_state.cccd_value[k] = 0U;
-                }
-            }
+            /* Disconnect releases this link's controller credits and subscriptions. */
+            bt_state.acl_inflight -= bt_state.conns[idx].acl_inflight;
+            bt_state.conns[idx].acl_inflight = 0U;
+            memset(bt_state.cccd_value[idx], 0, sizeof bt_state.cccd_value[idx]);
             /* Phase 14: clear any in-flight SMP session for the link. */
             bt_smp_session_reset((uint8_t)idx);
             TIKU_BT_PRINTF("p9: *** disconnected handle=0x%04x "
@@ -5640,7 +5701,7 @@ static void bt_handle_hci_event(const uint8_t *pkt, int len)
          * cycle. Restart with whatever name was last in use; falls
          * back to "TikuPico" if advertise was never set up. */
         if (bt_state.adv_wanted && bt_state.adv_name_len > 0U
-            && bt_any_connection() == 0) {
+            && tiku_bt_connection_count() < TIKU_BT_CONN_MAX) {
             char nz[TIKU_BT_ADV_NAME_MAX + 1];
             uint8_t i;
             for (i = 0U; i < bt_state.adv_name_len; ++i) nz[i] = bt_state.adv_name[i];
@@ -5756,6 +5817,9 @@ int tiku_bt_init(void)
     bt_state.ready         = 0U;
     bt_state.advertising   = 0U;
     bt_state.adv_wanted    = 0U;
+#if TIKU_BT_CONN_MAX > 1
+    bt_state.pubkey_owner = bt_state.dhkey_owner = 0U;
+#endif
     bt_state.connecting    = 0U;
     bt_state.adv_name_len  = 0U;
     bt_state.scanning      = 0U;
@@ -5768,6 +5832,7 @@ int tiku_bt_init(void)
         uint8_t k;
         for (k = 0U; k < TIKU_BT_CONN_MAX; ++k) {
             bt_state.conns[k].in_use    = 0U;
+            bt_state.conns[k].acl_inflight = 0U;
             bt_state.conns[k].info.att_mtu   = ATT_MTU_DEFAULT;
             bt_state.conns[k].info.tx_octets = BT_LL_OCTETS_MIN;
             bt_state.conns[k].rx_need   = 0U;
@@ -5779,12 +5844,7 @@ int tiku_bt_init(void)
     /* user_svc_count is not cleared on re-init -- services
      * registered at boot survive a re-init, which matches the
      * convention used by tiku_drv_registry. */
-    {
-        uint8_t k;
-        for (k = 0U; k < TIKU_BT_CHAR_MAX; ++k) {
-            bt_state.cccd_value[k] = 0U;
-        }
-    }
+    memset(bt_state.cccd_value, 0, sizeof bt_state.cccd_value);
     /* Register the built-in demo service exactly once per boot. */
     if (bt_state.user_svc_count == 0U) {
         (void)tiku_bt_register_service(&bt_demo_service);
@@ -6257,7 +6317,6 @@ int tiku_bt_is_advertising(void)
     return bt_state.advertising ? 1 : 0;
 }
 
-#if (TIKU_BT_PRIVACY + 0)
 /** @brief Start the named advert last started again, from the address
  *         privacy now gives. */
 static void bt_readvertise(void)
@@ -6270,6 +6329,7 @@ static void bt_readvertise(void)
     (void)bt_advertise_begin(nz, bt_state.adv_type, bt_state.adv_uuid128);
 }
 
+#if (TIKU_BT_PRIVACY + 0)
 int tiku_bt_set_privacy(uint8_t on, uint16_t seconds)
 {
     bt_local_t l;
@@ -6389,6 +6449,7 @@ void tiku_bt_shutdown(void)
     bt_state.acl_inflight = 0U;
     for (k = 0U; k < TIKU_BT_CONN_MAX; ++k) {
         bt_state.conns[k].in_use  = 0U;
+        bt_state.conns[k].acl_inflight = 0U;
         bt_state.conns[k].rx_need = 0U;
         bt_state.smp[k].state     = SMP_IDLE;
     }
@@ -6947,13 +7008,16 @@ static int bt_cccd_find(const tiku_bt_char_t *c)
 int tiku_bt_subscribed(const tiku_bt_char_t *c)
 {
     int slot = bt_cccd_find(c);
-    return (slot >= 0 && (bt_state.cccd_value[slot] & 0x0001U) != 0U
-            && bt_any_connection()) ? 1 : 0;
+    if (slot < 0) return 0;
+    for (unsigned i = 0; i < TIKU_BT_CONN_MAX; i++)
+        if (bt_state.conns[i].in_use && (bt_state.cccd_value[i][slot] & 1U)) return 1;
+    return 0;
 }
 
 uint16_t tiku_bt_notify_max(void)
 {
     uint8_t  i;
+    uint16_t minimum = 0;
 
     for (i = 0U; i < TIKU_BT_CONN_MAX; ++i) {
         if (bt_state.conns[i].in_use) {
@@ -6961,10 +7025,11 @@ uint16_t tiku_bt_notify_max(void)
              * the link layer carries whole. */
             uint16_t m    = (uint16_t)(bt_att_mtu(i) - 3U);
             uint16_t frag = (uint16_t)(bt_acl_frag_max((int)i) - 7U);
-            return (m < frag) ? m : frag;
+            uint16_t limit = (m < frag) ? m : frag;
+            if (!minimum || limit < minimum) minimum = limit;
         }
     }
-    return 0U;
+    return minimum;
 }
 
 int tiku_bt_notify_char(const tiku_bt_char_t *c, const uint8_t *value,
@@ -6988,19 +7053,24 @@ int tiku_bt_notify_char(const tiku_bt_char_t *c, const uint8_t *value,
      * Treat as "no subscriber" -- silent no-op. */
     cccd_slot = bt_cccd_find(c);
     if (cccd_slot < 0) return TIKU_DRV_OK;
-    if ((bt_state.cccd_value[cccd_slot] & 0x0001U) == 0U) {
-        return TIKU_DRV_OK;
-    }
-
-    /* Broadcast to every connection (today CONN_MAX=1, loop is forward-
-     * compatible). CCCD is per-char today; per-{char, conn} is a
-     * Phase 13+ refinement once multi-link bonding is supported. */
+#if TIKU_BT_CONN_MAX > 1
+    unsigned subscribers = 0;
+    for (unsigned link = 0; link < TIKU_BT_CONN_MAX; link++)
+        if (bt_state.conns[link].in_use && (bt_state.cccd_value[link][cccd_slot] & 1U))
+            subscribers++;
+    if (!subscribers) return TIKU_DRV_OK;
+    if (len > tiku_bt_notify_max()) return TIKU_DRV_ERR_INVALID;
+    if (bt_state.acl_num && subscribers + bt_state.acl_inflight > bt_state.acl_num)
+        return TIKU_BT_ERR_BUSY;
+#endif
+    /* Deliver notifications to this characteristic's subscribed links. */
     for (conn_idx = 0U; conn_idx < TIKU_BT_CONN_MAX; ++conn_idx) {
         uint8_t  pdu[BT_ATT_MTU_MAX];
         uint16_t value_handle;
         uint16_t i;
 
-        if (bt_state.conns[conn_idx].in_use == 0U) continue;
+        if (!bt_state.conns[conn_idx].in_use ||
+            !(bt_state.cccd_value[conn_idx][cccd_slot] & 1U)) continue;
         if ((uint32_t)len + 3U > (uint32_t)bt_att_mtu(conn_idx)) {
             return TIKU_DRV_ERR_INVALID;
         }
@@ -7378,6 +7448,11 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
         /* Drain pending events / ACL from the BT2H ring. Cheap
          * (one bp_read32) when nothing is queued. */
         tiku_bt_poll();
+#if TIKU_BT_CONN_MAX > 1
+        if (bt_state.ready && bt_state.adv_wanted && !bt_state.advertising &&
+            !bt_state.connecting && tiku_bt_connection_count() < TIKU_BT_CONN_MAX)
+            bt_readvertise();
+#endif
 
 #if (TIKU_BT_PRIVACY + 0)
         /* An advert running past its private address's time starts again
