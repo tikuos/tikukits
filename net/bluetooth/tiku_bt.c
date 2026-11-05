@@ -146,6 +146,7 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define HCI_OP_LE_SET_EXT_ADV_DATA      0x2037U
 #define HCI_OP_LE_SET_EXT_SCAN_RSP      0x2038U
 #define HCI_OP_LE_SET_EXT_ADV_ENABLE    0x2039U
+#define HCI_OP_LE_READ_ADV_SETS         0x203BU
 #define HCI_OP_LE_SET_EXT_SCAN_PARAMS   0x2041U
 #define HCI_OP_LE_SET_EXT_SCAN_ENABLE   0x2042U
 #define HCI_OP_LE_EXT_CREATE_CONNECTION 0x2043U
@@ -448,6 +449,8 @@ static struct {
     uint8_t                    scan_prefix_len;  /* 0: cache every device */
 #if (TIKU_BT_EXTENDED + 0)
     uint8_t ext_commands;
+    uint8_t extra_advertising, extra_private;
+    uint32_t extra_address_at[TIKU_BT_ADV_SET_MAX];
     uint8_t adv_primary;       /* zero selects legacy PDUs */
     uint8_t adv_secondary;
     int8_t adv_tx_power;
@@ -4775,7 +4778,7 @@ static int bt_ext_command(uint16_t opcode, const uint8_t *p, uint8_t len)
     int rc = bt_hci_cmd_response(opcode, p, len, evt, sizeof evt, &n);
     if (rc != TIKU_DRV_OK) return rc;
     if (n < 7 || evt[6] != 0U) return TIKU_DRV_ERR_INVALID;
-    if (opcode == HCI_OP_LE_SET_EXT_ADV_PARAMS && n >= 8) {
+    if (opcode == HCI_OP_LE_SET_EXT_ADV_PARAMS && n >= 8 && p && p[0] == 0U) {
         bt_state.adv_tx_power = (int8_t)evt[7];
     }
     return TIKU_DRV_OK;
@@ -4807,7 +4810,7 @@ static int bt_ext_phys(uint8_t primary, uint8_t secondary)
 }
 
 /** @brief Load advertising or scan-response data in bounded HCI fragments. */
-static int bt_ext_data(uint16_t opcode, const uint8_t *data, uint8_t len)
+static int bt_ext_data(uint16_t opcode, uint8_t set, const uint8_t *data, uint8_t len)
 {
     uint8_t p[252];
     uint16_t offset = 0U;
@@ -4815,7 +4818,7 @@ static int bt_ext_data(uint16_t opcode, const uint8_t *data, uint8_t len)
         uint8_t n = (uint8_t)(len - offset);
         int rc;
         if (n > 248U) n = 248U;
-        p[0] = 0U;
+        p[0] = set;
         p[1] = len <= 248U ? 3U : (offset == 0U ? 1U : 2U);
         p[2] = 0U;
         p[3] = n;
@@ -4825,6 +4828,128 @@ static int bt_ext_data(uint16_t opcode, const uint8_t *data, uint8_t len)
         offset += n;
     } while (offset < len);
     return TIKU_DRV_OK;
+}
+
+/** @brief Set one controller advertising handle's enable state. */
+static int bt_extra_enable(uint8_t set, uint8_t on)
+{
+    uint8_t p[6] = {on, 1U, set, 0U, 0U, 0U};
+    int rc = bt_ext_command(HCI_OP_LE_SET_EXT_ADV_ENABLE, p, sizeof p);
+    if (rc == TIKU_DRV_OK) {
+        if (on) bt_state.extra_advertising |= (uint8_t)(1U << set);
+        else bt_state.extra_advertising &= (uint8_t)~(1U << set);
+    }
+    return rc;
+}
+
+/** @brief Assign an independent random address while this set is disabled. */
+static int bt_extra_address(uint8_t set)
+{
+    uint8_t p[7] = {set};
+    uint8_t private = 0U;
+    int rc;
+#if (TIKU_BT_PRIVACY + 0)
+    if (bt_local.privacy) {
+        uint8_t prand[3], hash[3];
+        if (bt_local.magic != BT_LOCAL_MAGIC || bt_rand_bytes(prand, 3U) != 0)
+            return TIKU_DRV_ERR_NOT_PRESENT;
+        prand[0] = (uint8_t)((prand[0] & 0x3FU) | 0x40U);
+        if ((prand[0] == 0x40U && !prand[1] && !prand[2]) ||
+            (prand[0] == 0x7FU && prand[1] == 0xFFU && prand[2] == 0xFFU)) prand[2] ^= 1U;
+        rc = bt_rpa_hash(bt_local.irk, prand, hash);
+        if (rc != TIKU_DRV_OK) return rc;
+        p[1] = hash[2]; p[2] = hash[1]; p[3] = hash[0];
+        p[4] = prand[2]; p[5] = prand[1]; p[6] = prand[0];
+        private = 1U;
+    } else
+#endif
+    {
+        uint8_t i;
+        for (i = 0U; i < 6U; ++i) p[1U + i] = bt_state.bd_addr[5U - i];
+        p[1] ^= set;
+        p[6] |= 0xC0U;
+        if (!(p[6] & 0x3FU) && !p[5] && !p[4] && !p[3] && !p[2] && !p[1]) p[2] = 1U;
+        if (p[6] == 0xFFU && p[5] == 0xFFU && p[4] == 0xFFU && p[3] == 0xFFU &&
+            p[2] == 0xFFU && p[1] == 0xFFU) p[2] ^= 1U;
+    }
+    rc = bt_ext_command(HCI_OP_LE_SET_ADV_SET_ADDR, p, sizeof p);
+    if (rc == TIKU_DRV_OK) {
+        bt_state.extra_address_at[set] = (uint32_t)tiku_clock_seconds();
+        if (private) bt_state.extra_private |= (uint8_t)(1U << set);
+        else bt_state.extra_private &= (uint8_t)~(1U << set);
+    }
+    return rc;
+}
+
+#if (TIKU_BT_PRIVACY + 0)
+/** @brief Rotate active sets independently; a failed address change leaves its set off. */
+static void bt_extra_refresh(uint8_t force)
+{
+    uint8_t set;
+    if (bt_waiting || bt_rx_depth) return;
+    for (set = 1U; set < TIKU_BT_ADV_SET_MAX; ++set) {
+        uint8_t bit = (uint8_t)(1U << set);
+        if (!(bt_state.extra_advertising & bit)) continue;
+        if (!force && !!(bt_state.extra_private & bit) == !!bt_local.privacy &&
+            (!bt_local.privacy || (uint32_t)(tiku_clock_seconds() - bt_state.extra_address_at[set]) < bt_local.rpa_s)) continue;
+        if (bt_extra_enable(set, 0U) != TIKU_DRV_OK) continue;
+        if (bt_extra_address(set) == TIKU_DRV_OK) (void)bt_extra_enable(set, 1U);
+    }
+}
+#endif
+
+int tiku_bt_advertising_sets(void)
+{
+    uint8_t evt[16];
+    int n, rc;
+    if (!bt_state.ready || !bt_state.ext_commands) return TIKU_DRV_ERR_NOT_PRESENT;
+    rc = bt_hci_cmd_response(HCI_OP_LE_READ_ADV_SETS, NULL, 0U, evt, sizeof evt, &n);
+    if (rc != TIKU_DRV_OK) return rc;
+    if (n < 8 || evt[6] || !evt[7]) return TIKU_DRV_ERR_INVALID;
+    return evt[7] < TIKU_BT_ADV_SET_MAX ? evt[7] : TIKU_BT_ADV_SET_MAX;
+}
+
+int tiku_bt_advertise_set_active(uint8_t set)
+{
+    if (!set) return !!bt_state.advertising;
+    return set < TIKU_BT_ADV_SET_MAX && !!(bt_state.extra_advertising & (1U << set));
+}
+
+int tiku_bt_advertise_set_stop(uint8_t set)
+{
+    if (!set) return tiku_bt_advertise_stop();
+    if (set >= TIKU_BT_ADV_SET_MAX) return TIKU_DRV_ERR_INVALID;
+    if (!bt_state.ready || !bt_state.ext_commands) return TIKU_DRV_ERR_NOT_PRESENT;
+    if (!tiku_bt_advertise_set_active(set)) return TIKU_DRV_OK;
+    return bt_extra_enable(set, 0U);
+}
+
+int tiku_bt_advertise_set(uint8_t set, uint8_t primary, uint8_t secondary,
+    uint16_t interval_ms, const uint8_t *ad, uint8_t ad_len)
+{
+    uint8_t p[25] = {0};
+    uint16_t iv = bt_ms_to_chip_units(interval_ms);
+    int rc = bt_ext_phys(primary, secondary);
+    if (rc != TIKU_DRV_OK) return rc;
+    if (!set || set >= TIKU_BT_ADV_SET_MAX || ad_len > TIKU_BT_EXT_ADV_MAX || (!ad && ad_len))
+        return TIKU_DRV_ERR_INVALID;
+    rc = tiku_bt_advertising_sets();
+    if (rc < 0) return rc;
+    if (set >= (unsigned)rc) return TIKU_DRV_ERR_NOT_PRESENT;
+    rc = tiku_bt_advertise_set_stop(set);
+    if (rc != TIKU_DRV_OK) return rc;
+    if (iv < 0x20U) iv = 0x20U;
+    p[0] = set;
+    p[3] = (uint8_t)iv; p[4] = (uint8_t)(iv >> 8);
+    p[6] = p[3]; p[7] = p[4];
+    p[9] = 7U; p[10] = 1U; p[19] = 0x7FU;
+    p[20] = primary; p[22] = secondary; p[23] = set;
+    rc = bt_ext_command(HCI_OP_LE_SET_EXT_ADV_PARAMS, p, sizeof p);
+    if (rc == TIKU_DRV_OK) rc = bt_extra_address(set);
+    if (rc == TIKU_DRV_OK) rc = bt_ext_data(HCI_OP_LE_SET_EXT_ADV_DATA, set, ad, ad_len);
+    if (rc == TIKU_DRV_OK) rc = bt_extra_enable(set, 1U);
+    if (rc == TIKU_DRV_OK) bt_wake_runner();
+    return rc;
 }
 
 /** @brief Configure and enable advertising set zero; failures leave it off. */
@@ -4864,10 +4989,10 @@ static int bt_ext_advertise_setup(uint8_t properties, uint8_t primary,
         rc = bt_ext_command(HCI_OP_LE_SET_ADV_SET_ADDR, address, 7U);
         if (rc != TIKU_DRV_OK) return rc;
     }
-    rc = bt_ext_data(HCI_OP_LE_SET_EXT_ADV_DATA, ad, ad_len);
+    rc = bt_ext_data(HCI_OP_LE_SET_EXT_ADV_DATA, 0U, ad, ad_len);
     if (rc != TIKU_DRV_OK) return rc;
     if (properties & 2U) {
-        rc = bt_ext_data(HCI_OP_LE_SET_EXT_SCAN_RSP, rsp, rsp_len);
+        rc = bt_ext_data(HCI_OP_LE_SET_EXT_SCAN_RSP, 0U, rsp, rsp_len);
         if (rc != TIKU_DRV_OK) return rc;
     }
     if (properties & 1U) {
@@ -5316,8 +5441,10 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         memset(bt_state.fragments, 0, sizeof bt_state.fragments);
         return;
     }
-    if (pkt[3] == 0x12U && len >= 9 && pkt[5] == 0U) {
-        bt_state.advertising = 0U;
+    if (pkt[3] == 0x12U && len >= 9) {
+        if (pkt[5] == 0U) bt_state.advertising = 0U;
+        else if (pkt[5] < TIKU_BT_ADV_SET_MAX)
+            bt_state.extra_advertising &= (uint8_t)~(1U << pkt[5]);
         return;
     }
     if (pkt[3] == 0x0DU) {
@@ -5807,6 +5934,7 @@ int tiku_bt_init(void)
 {
 #if (TIKU_BT_EXTENDED + 0)
     bt_state.ext_commands = 0U;
+    bt_state.extra_advertising = bt_state.extra_private = 0U;
     bt_state.adv_tx_power = 127;
     bt_state.adv_primary = 0U;
     bt_state.adv_secondary = 0U;
@@ -6295,8 +6423,14 @@ int tiku_bt_advertise_stop(void)
 
 #if (TIKU_BT_EXTENDED + 0)
     if (bt_state.ext_commands) {
-        const uint8_t disable[2] = {0U, 0U};
-        rc = bt_ext_command(HCI_OP_LE_SET_EXT_ADV_ENABLE, disable, 2U);
+        const uint8_t disable[6] = {0U, 1U, 0U, 0U, 0U, 0U};
+        if (bt_state.extra_advertising) {
+            rc = bt_state.advertising ?
+                bt_ext_command(HCI_OP_LE_SET_EXT_ADV_ENABLE, disable, 6U) : TIKU_DRV_OK;
+        } else {
+            const uint8_t all[2] = {0U, 0U};
+            rc = bt_ext_command(HCI_OP_LE_SET_EXT_ADV_ENABLE, all, 2U);
+        }
         if (rc != TIKU_DRV_OK) return rc;
         bt_state.advertising = 0U;
         bt_state.adv_wanted = 0U;
@@ -6314,6 +6448,9 @@ int tiku_bt_advertise_stop(void)
 
 int tiku_bt_is_advertising(void)
 {
+#if (TIKU_BT_EXTENDED + 0)
+    if (bt_state.extra_advertising) return 1;
+#endif
     return bt_state.advertising ? 1 : 0;
 }
 
@@ -6347,6 +6484,9 @@ int tiku_bt_set_privacy(uint8_t on, uint16_t seconds)
     mpu_saved = tiku_mpu_unlock_nvm();
     bt_local = l;
     tiku_mpu_lock_nvm(mpu_saved);
+#if (TIKU_BT_EXTENDED + 0)
+    bt_extra_refresh(1U);
+#endif
     /* Turned on, a fresh private address; a running advert starts again
      * from it, else the controller takes it while nothing is on air. */
     if (on) bt_state.rpa_live = 0U;
@@ -6435,6 +6575,7 @@ void tiku_bt_shutdown(void)
     }
 #if (TIKU_BT_EXTENDED + 0)
     bt_state.ext_commands = 0U;
+    bt_state.extra_advertising = bt_state.extra_private = 0U;
     bt_state.adv_tx_power = 127;
     bt_state.adv_primary = 0U;
     bt_state.scan_fault = 0U;
@@ -7381,7 +7522,7 @@ void tiku_bt_poll(void)
     }
 #endif
     if (bt_state.scanning == 0U
-        && bt_state.advertising == 0U
+        && !tiku_bt_is_advertising()
         && bt_state.connecting == 0U
         && bt_any_connection() == 0) {
         /* Nothing on-air that could produce events. The empty-ring
@@ -7437,7 +7578,7 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
          * flips state, so plain YIELD is the right power posture. */
         if (bt_state.ready
             && (bt_state.scanning
-                || bt_state.advertising
+                || tiku_bt_is_advertising()
                 || bt_state.connecting
                 || bt_any_connection())) {
             PT_WAIT_UNTIL_TIMEOUT(process_pt, &rx_drain_timer, 0, 1U);
@@ -7455,6 +7596,9 @@ TIKU_PROCESS_THREAD(tiku_bt_runner, ev, data)
 #endif
 
 #if (TIKU_BT_PRIVACY + 0)
+#if (TIKU_BT_EXTENDED + 0)
+        bt_extra_refresh(0U);
+#endif
         /* An advert running past its private address's time starts again
          * from a new one. */
         if (bt_local.privacy && bt_state.rpa_live && bt_state.advertising
