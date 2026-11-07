@@ -16,5 +16,6 @@ TIKU_DIR ?= ..
 # before trusting a clean run.
 lint:
 	@python3 $(TIKU_DIR)/tools/check_comment_style.py --root=$(CURDIR)
+	@python3 $(TIKU_DIR)/tools/check_kernel_dependencies.py --root=$(TIKU_DIR) --kits-only
 
 .PHONY: lint
