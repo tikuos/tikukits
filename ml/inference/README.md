@@ -1,4 +1,4 @@
-# Static dense models
+# Static quantized models
 
 `tiku_kits_ml_chain_s8` executes an ordered array of quantized int8 dense
 layers. Enable it with `TIKU_KIT_ML_INFERENCE_ENABLE=1`; this includes the
@@ -34,10 +34,9 @@ layers have run. Workspace can change on failure. Calls use independent
 workspace/output buffers and immutable shared models; compute tracing
 must be disabled or serialized for concurrent calls.
 
-This runtime accepts static C dense descriptors. It does not parse LiteRT
-or ONNX files, execute convolution or attention graphs, or interpret an
-NPU command stream. Compiled NPU models retain the TikuOS `interfaces/npu`
-execution path and require their device-specific artifact and backend.
+The dense-chain entry point accepts static C dense descriptors. Compiled
+NPU models retain the TikuOS `interfaces/npu` execution path and require
+their device-specific artifact and backend.
 
 ## Tests
 
@@ -52,3 +51,30 @@ future layer parameters. Host tests also exercise one- and three-layer
 models and incompatible tensor connections. The
 `model-future-weights-unprotected` defect removes the preflight weight
 check so that workspace writes occur before a later layer rejects them.
+
+
+## Mixed models and model files
+
+`tiku_kits_ml_model_s8` accepts a sequential list of dense, Conv2D, max/average
+pooling and reshape descriptors. Image tensors use NHWC layout, batch one.
+Each layer checks its input shape and zero point against the previous
+output. Dense flattens its input; reshape preserves element count and
+quantization. The workspace query reserves two largest-output buffers
+plus the largest operator scratch requirement. The executor protects all
+layers' parameter spans before writing intermediates and publishes output
+after the last layer succeeds. The dense-chain API remains available.
+
+The offline [model converter](../tools/README.md) imports quantized
+TensorFlow Lite models and versioned JSON into these static C descriptors.
+It rejects unsupported operators, branching graphs, dynamic shapes,
+asymmetric weights and incompatible quantization. Parsing and model
+conversion run on the computer; device execution requires no heap or
+FlatBuffer parser. Neither runtime executes ONNX, attention, depthwise
+convolution, softmax or recurrent graphs.
+
+`ml-cnn` runs an imported Conv2D → average pool → reshape → dense model
+whose output is `13`, a generated per-channel model, padding and negative
+tie fixtures, scratch rejection and future-parameter protection. Host
+tests compile and execute 120 generated models against exact rational
+expectations and check malformed imports. Their mutations must fail the
+padding, pooling and future-parameter regression inputs.

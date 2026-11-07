@@ -62,3 +62,32 @@ At 360 MHz, a 256-call batch of an 8×256 layer with SRAM operands averages
 produce the same eight outputs and use eight bytes of caller scratch.
 The first calls measured 120.0 µs and 197.0 µs respectively; these are
 first-invocation measurements, without a forced cold-cache condition.
+
+## Convolution and pooling
+
+`tiku_kits_ml_cnn.h` provides one-image NHWC int8 Conv2D, max pooling and
+average pooling. Dense enable includes these operators. Convolution
+weights use OHWI order and dense per-tensor or per-output-channel scaling.
+The window specifies stride, dilation and explicit top/bottom/left/right
+padding. Convolution pads with the input zero point. Each patch executes
+through the dense operator and its selected shared or vendor backend.
+
+Pooling preserves tensor scale and zero point. It excludes padding from
+both the maximum and the average divisor. A window with no real samples
+is invalid. Average pooling rounds nearest with ties away from zero;
+activation limits apply afterward. Spatial dimensions, window dimensions,
+strides, dilation and padding are bounded to 65535; image element counts
+must fit both `uint32_t` and `size_t`.
+
+Convolution scratch holds the staged output, one input patch and one dense
+row-output buffer. Pooling scratch holds the staged output. Size queries
+return zero for invalid geometry or an unrepresentable requirement. They
+do not read or evaluate weight values. Buffers need byte alignment, and
+the APIs accept exact input length and output capacity. Readable model,
+parameter and input spans are disjoint from scratch and logical output.
+Errors preserve output; scratch can change. Independent workspaces allow
+concurrent calls.
+
+The optional [ESP-NN adapter](../backends/esp_nn/README.md) supports P4
+reductions. `cnn` and `model-import` host targets cover geometry, padding,
+dilation, quantization, alias checks and output preservation.

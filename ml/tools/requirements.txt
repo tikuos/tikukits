@@ -1,0 +1,4 @@
+# TensorFlow Lite schema reader for offline model conversion.
+tflite==2.18.0
+flatbuffers==25.2.10
+numpy==2.2.6
