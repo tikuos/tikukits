@@ -124,7 +124,7 @@ tiku_kits_ml_dense_status_t tiku_kits_ml_dense_s8(
         const int8_t *weights = m.weights + (size_t)r * m.stride;
         int64_t acc;
         int64_t weight_sum = 0;
-#if TIKU_KITS_ML_CMSIS_NN
+#if TIKU_KITS_ML_CMSIS_NN || TIKU_KITS_ML_ESP_NN
         int64_t abs_sum = 0;
 #endif
         int64_t shifted;
@@ -138,11 +138,11 @@ tiku_kits_ml_dense_status_t tiku_kits_ml_dense_s8(
                 return TIKU_KITS_ML_DENSE_ERR_PARAM;
             }
             weight_sum += weights[i];
-#if TIKU_KITS_ML_CMSIS_NN
+#if TIKU_KITS_ML_CMSIS_NN || TIKU_KITS_ML_ESP_NN
             abs_sum += weights[i] < 0 ? -(int32_t)weights[i] : weights[i];
 #endif
         }
-#if TIKU_KITS_ML_CMSIS_NN
+#if TIKU_KITS_ML_CMSIS_NN || TIKU_KITS_ML_ESP_NN
         {
             int32_t bias = m.bias != NULL ? m.bias[r] : 0;
             int64_t bias_abs = bias < 0 ? -(int64_t)bias : bias;
@@ -152,11 +152,17 @@ tiku_kits_ml_dense_status_t tiku_kits_ml_dense_s8(
             if (m.shift[q] > 0) {
                 limit >>= m.shift[q];
             }
-            if (bound <= limit && tiku_kits_ml_cmsis_row(&m, weights, input,
+#if TIKU_KITS_ML_ESP_NN
+#define VENDOR_ROW tiku_kits_ml_esp_row
+#else
+#define VENDOR_ROW tiku_kits_ml_cmsis_row
+#endif
+            if (bound <= limit && VENDOR_ROW(&m, weights, input,
                     bias, weight_sum, q, &staged[r])) {
                 continue;
             }
         }
+#undef VENDOR_ROW
 #endif
         if (tiku_compute_dot_s8(weights, input, m.inputs, &acc) != TIKU_COMPUTE_OK) {
             return TIKU_KITS_ML_DENSE_ERR_PARAM;

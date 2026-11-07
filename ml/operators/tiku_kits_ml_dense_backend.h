@@ -22,4 +22,10 @@ int tiku_kits_ml_cmsis_row(const tiku_kits_ml_dense_t *model,
     const int8_t *weights, const int8_t *input, int32_t bias, int64_t weight_sum,
     uint32_t quant, int8_t *output);
 #endif
+#if TIKU_KITS_ML_ESP_NN
+/** @brief Evaluate one bounded row through ESP-NN; return one when handled. */
+int tiku_kits_ml_esp_row(const tiku_kits_ml_dense_t *model,
+    const int8_t *weights, const int8_t *input, int32_t bias, int64_t weight_sum,
+    uint32_t quant, int8_t *output);
+#endif
 #endif
