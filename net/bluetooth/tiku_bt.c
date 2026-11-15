@@ -6049,9 +6049,9 @@ int tiku_bt_init(void)
          * stack handles.  Some firmware sends them unasked (the CYW43's),
          * a spec-following controller (the ESP32-C61's) does not. */
         {
-            /* Default mask (bits 0..44) plus LE Meta, little-endian. */
+            /* Default events, Encryption Key Refresh Complete and LE Meta. */
             static const uint8_t mask[8] = {
-                0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0x00, 0x20
+                0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x9F, 0x00, 0x20
             };
             /* Connection Complete, Advertising Report, Connection Update
              * Complete, Remote Features, LTK Request, Data Length Change,
