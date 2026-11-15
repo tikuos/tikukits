@@ -7185,6 +7185,11 @@ int tiku_bt_notify_char(const tiku_bt_char_t *c, const uint8_t *value,
         || c == (const tiku_bt_char_t *)0) {
         return TIKU_DRV_ERR_INVALID;
     }
+#if TIKU_BT_CONN_MAX > 1
+    /* Consume completion events before checking the multicast credit budget. */
+    tiku_bt_poll();
+    if (!bt_state.ready) return TIKU_DRV_ERR_NOT_PRESENT;
+#endif
     n_attrs = bt_att_snapshot(bt_att_table);
     char_idx = bt_att_find_char(bt_att_table, n_attrs, c);
     if (char_idx < 0) return TIKU_DRV_ERR_INVALID;
