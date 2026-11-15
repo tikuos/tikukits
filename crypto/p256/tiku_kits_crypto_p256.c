@@ -557,7 +557,8 @@ static void cp_dbl(ppt *R, const ppt *P)
 
 /* R = k*P: a doubling and an addition for each of the 256 bits of k, the
  * sum kept or dropped by mask, so k drives no branch and no address. */
-static void cp_mul(ppt *R, const bn k, const ppt *P)
+static void cp_mul(ppt *R, const bn k, const ppt *P,
+                   tiku_kits_crypto_p256_progress_fn progress, void *context)
 {
     ppt A, T; int i;
 
@@ -569,6 +570,7 @@ static void cp_mul(ppt *R, const bn k, const ppt *P)
         bn_select(A.X, T.X, A.X, bit);
         bn_select(A.Y, T.Y, A.Y, bit);
         bn_select(A.Z, T.Z, A.Z, bit);
+        if (progress && !(i & 3)) progress(context);
     }
     *R = A;
     wipe(&A, sizeof A);
@@ -594,7 +596,9 @@ static int cp_to_affine(const ppt *P, uint8_t x[32], uint8_t *y)
     return 0;
 }
 
-int tiku_kits_crypto_p256_public(const uint8_t priv[32], uint8_t pub[65])
+/** @brief Multiply the generator with optional fixed-cadence progress. */
+static int public_progress(const uint8_t priv[32], uint8_t pub[65],
+    tiku_kits_crypto_p256_progress_fn progress, void *context)
 {
     static bn  d, gx, gy;
     static ppt G, Q;
@@ -604,15 +608,21 @@ int tiku_kits_crypto_p256_public(const uint8_t priv[32], uint8_t pub[65])
     if (!scalar_ok(d)) return TIKU_KITS_CRYPTO_P256_BAD;
     bn_from_be(gx, P256_GX); bn_from_be(gy, P256_GY);
     cp_from_affine(&G, gx, gy);
-    cp_mul(&Q, d, &G);
+    cp_mul(&Q, d, &G, progress, context);
     pub[0] = 0x04;
     rc = cp_to_affine(&Q, pub + 1, pub + 33);
     wipe(d, sizeof d);
     return rc == 0 ? TIKU_KITS_CRYPTO_P256_OK : TIKU_KITS_CRYPTO_P256_BAD;
 }
 
-int tiku_kits_crypto_p256_ecdh_keypair(const uint8_t seed[32],
-                                       uint8_t priv[32], uint8_t pub[65])
+int tiku_kits_crypto_p256_public(const uint8_t priv[32], uint8_t pub[65])
+{
+    return public_progress(priv, pub, NULL, NULL);
+}
+
+int tiku_kits_crypto_p256_ecdh_keypair_progress(const uint8_t seed[32],
+    uint8_t priv[32], uint8_t pub[65],
+    tiku_kits_crypto_p256_progress_fn progress, void *context)
 {
     bn d;
     p256_setup();
@@ -620,11 +630,18 @@ int tiku_kits_crypto_p256_ecdh_keypair(const uint8_t seed[32],
     reduce_n(d);
     bn_to_be(priv, d);
     wipe(d, sizeof d);
-    return tiku_kits_crypto_p256_public(priv, pub);  /* _BAD for d = 0 */
+    return public_progress(priv, pub, progress, context);
 }
 
-int tiku_kits_crypto_p256_ecdh_shared(const uint8_t priv[32],
-                                      const uint8_t peer[65], uint8_t out_x[32])
+int tiku_kits_crypto_p256_ecdh_keypair(const uint8_t seed[32],
+                                       uint8_t priv[32], uint8_t pub[65])
+{
+    return tiku_kits_crypto_p256_ecdh_keypair_progress(seed, priv, pub, NULL, NULL);
+}
+
+int tiku_kits_crypto_p256_ecdh_shared_progress(const uint8_t priv[32],
+    const uint8_t peer[65], uint8_t out_x[32],
+    tiku_kits_crypto_p256_progress_fn progress, void *context)
 {
     static bn  d, px, py;
     static ppt P, S;
@@ -637,11 +654,17 @@ int tiku_kits_crypto_p256_ecdh_shared(const uint8_t priv[32],
     bn_from_be(d, priv);
     if (!scalar_ok(d)) return TIKU_KITS_CRYPTO_P256_BAD;
     cp_from_affine(&P, px, py);
-    cp_mul(&S, d, &P);
+    cp_mul(&S, d, &P, progress, context);
     rc = cp_to_affine(&S, out_x, NULL);       /* shared secret = S.x */
     wipe(d, sizeof d);
     wipe(&S, sizeof S);
     return rc == 0 ? TIKU_KITS_CRYPTO_P256_OK : TIKU_KITS_CRYPTO_P256_BAD;
+}
+
+int tiku_kits_crypto_p256_ecdh_shared(const uint8_t priv[32],
+                                      const uint8_t peer[65], uint8_t out_x[32])
+{
+    return tiku_kits_crypto_p256_ecdh_shared_progress(priv, peer, out_x, NULL, NULL);
 }
 
 /* ---- ECDSA sign ---------------------------------------------------------- */
@@ -676,7 +699,7 @@ int tiku_kits_crypto_p256_ecdsa_sign_nonce(const uint8_t priv[32],
         nonce(ctx, hb, tries > 0, kb);
         bn_from_be(k, kb);
         if (!scalar_ok(k)) continue;
-        cp_mul(&R, k, &G);
+        cp_mul(&R, k, &G, NULL, NULL);
         if (cp_to_affine(&R, xb, NULL) != 0) continue;
         bn_from_be(rr, xb);
         reduce_n(rr);                         /* r = x mod n */

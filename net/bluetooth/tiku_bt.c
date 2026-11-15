@@ -48,6 +48,9 @@
 #if (TIKU_BT_SW_CRYPTO + 0)
 #include <tikukits/crypto/aes128/tiku_kits_crypto_aes128.h>
 #include <tikukits/crypto/p256/tiku_kits_crypto_p256.h>
+#if TIKU_THREADS_ENABLE
+#include <kernel/threads/tiku_thread.h>
+#endif
 #endif
 
 #if PLATFORM_RP2350
@@ -3095,6 +3098,20 @@ static uint8_t bt_sw_priv[32];
 
 static void bt_handle_le_meta(const uint8_t *pkt, int len);   /* fwd */
 
+/** @brief Service controller workers without reentering host packet handling. */
+static void bt_crypto_progress(void *context)
+{
+    (void)context;
+    tiku_watchdog_kick();
+#if TIKU_THREADS_ENABLE
+    if (tiku_thread_in_kernel()) {
+        tiku_atomic_enter();
+        if (tiku_thread_worker_ready()) tiku_thread_kernel_block();
+        tiku_atomic_exit();
+    }
+#endif
+}
+
 /**
  * @brief Make the local P-256 key pair here and hand the public key on as
  *        the controller's LE Read Local P-256 Public Key Complete would.
@@ -3106,7 +3123,8 @@ static int bt_sw_p256_pubkey(void)
 
     if (bt_rand_bytes(seed, 32U) != 0) return TIKU_DRV_ERR_INVALID;
     tiku_watchdog_kick();
-    if (tiku_kits_crypto_p256_ecdh_keypair(seed, bt_sw_priv, pub)
+    if (tiku_kits_crypto_p256_ecdh_keypair_progress(seed, bt_sw_priv, pub,
+                                                  bt_crypto_progress, NULL)
         != TIKU_KITS_CRYPTO_P256_OK) {
         return TIKU_DRV_ERR_INVALID;
     }
@@ -3142,7 +3160,8 @@ static int bt_sw_p256_dhkey(const uint8_t peer_pubkey[64])
         point[33U + k] = peer_pubkey[63U - k];
     }
     tiku_watchdog_kick();
-    if (tiku_kits_crypto_p256_ecdh_shared(bt_sw_priv, point, sx)
+    if (tiku_kits_crypto_p256_ecdh_shared_progress(bt_sw_priv, point, sx,
+                                                 bt_crypto_progress, NULL)
         != TIKU_KITS_CRYPTO_P256_OK) {
         return TIKU_DRV_ERR_INVALID;             /* not a point on P-256 */
     }

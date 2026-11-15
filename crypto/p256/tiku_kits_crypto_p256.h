@@ -98,6 +98,33 @@ int tiku_kits_crypto_p256_ecdh_shared(
     uint8_t out_x[TIKU_KITS_CRYPTO_P256_LEN]);
 
 /**
+ * @brief Service work after each four scalar bits, independent of their values.
+ * The callback receives its caller's context. P-256 uses shared scratch:
+ * neither the callback nor work it schedules may reenter any P-256 operation.
+ */
+typedef void (*tiku_kits_crypto_p256_progress_fn)(void *context);
+
+/** @brief Generate an ECDH key pair with optional progress during multiplication.
+ * Inputs, outputs and return values match tiku_kits_crypto_p256_ecdh_keypair().
+ * A valid scalar invokes progress 64 times; NULL selects blocking operation.
+ */
+int tiku_kits_crypto_p256_ecdh_keypair_progress(
+    const uint8_t seed[TIKU_KITS_CRYPTO_P256_LEN],
+    uint8_t priv[TIKU_KITS_CRYPTO_P256_LEN],
+    uint8_t pub[TIKU_KITS_CRYPTO_P256_PUB_LEN],
+    tiku_kits_crypto_p256_progress_fn progress, void *context);
+
+/** @brief Compute an ECDH secret with optional progress during multiplication.
+ * Inputs, outputs and return values match tiku_kits_crypto_p256_ecdh_shared().
+ * Valid inputs invoke progress 64 times; NULL selects blocking operation.
+ */
+int tiku_kits_crypto_p256_ecdh_shared_progress(
+    const uint8_t priv[TIKU_KITS_CRYPTO_P256_LEN],
+    const uint8_t peer[TIKU_KITS_CRYPTO_P256_PUB_LEN],
+    uint8_t out_x[TIKU_KITS_CRYPTO_P256_LEN],
+    tiku_kits_crypto_p256_progress_fn progress, void *context);
+
+/**
  * @brief The public point of a private key.
  * @param priv  The private scalar d (32 bytes, big-endian), 0 < d < n.
  * @param pub   Output: d*G as 0x04 || X || Y (65 bytes).
