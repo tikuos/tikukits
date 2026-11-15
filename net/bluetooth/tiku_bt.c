@@ -64,6 +64,8 @@
 #include <arch/esp32p4/tiku_trng_arch.h>
 #elif PLATFORM_ESP32C5
 #include <arch/esp32c5/tiku_trng_arch.h>
+#elif PLATFORM_ESP32S31
+#include <arch/esp32s31/tiku_trng_arch.h>
 #elif PLATFORM_AMBIQ
 #include <arch/ambiq/tiku_trng_arch.h>
 #elif PLATFORM_NORDIC
@@ -364,7 +366,7 @@ typedef enum {
 #define BT_SCRATCH_CMD_SIZE   260U
 #define BT_ARENA_BYTES        (BT_SCRATCH_CMD_SIZE + 32U /* alignment slack */)
 
-#if !defined(PLATFORM_ESP32C6) && !(TIKU_DRV_BLE_IPC_ENABLE + 0)
+#if !defined(PLATFORM_ESP32C6) && !defined(PLATFORM_ESP32S31) && !(TIKU_DRV_BLE_IPC_ENABLE + 0)
 static uint8_t       bt_arena_buf[BT_ARENA_BYTES] __attribute__((aligned(4)));
 #endif
 static tiku_arena_t  bt_arena;
@@ -2175,7 +2177,7 @@ static void bt_random_static_addr(uint8_t *evt, uint16_t cap)
  * block because it's only consumed by the pairing state machine.
  * Returns 0 on success. */
 #if PLATFORM_RP2350 || PLATFORM_ESP32C61 || PLATFORM_ESP32C5 || \
-    PLATFORM_ESP32C6 || PLATFORM_ESP32P4 || \
+    PLATFORM_ESP32C6 || PLATFORM_ESP32P4 || PLATFORM_ESP32S31 || \
     PLATFORM_AMBIQ || PLATFORM_NORDIC
 static int bt_rand_bytes(uint8_t *out, size_t n)
 {
@@ -5984,7 +5986,12 @@ int tiku_bt_init(void)
      * memory budget rather than the buffer being an invisible
      * static .bss array (paired with the transport's id=0xB2 arena). */
     if (bt_scratch_cmd == (uint8_t *)0) {
-#if defined(PLATFORM_ESP32C6) || (TIKU_DRV_BLE_IPC_ENABLE + 0)
+#if defined(PLATFORM_ESP32S31)
+        tiku_mem_request_t request = TIKU_MEM_REQUEST_DEFAULT;
+        request.allocation_class = TIKU_MEM_FIXED;
+        tiku_mem_err_t err = tiku_mem_workspace_open(&bt_arena,
+                              BT_ARENA_BYTES, &request);
+#elif defined(PLATFORM_ESP32C6) || (TIKU_DRV_BLE_IPC_ENABLE + 0)
         /* The port reserves the host's static SRAM as part of its image or IPC region. */
         tiku_mem_err_t err = tiku_mem_workspace_open(&bt_arena,
                               BT_ARENA_BYTES, NULL);
