@@ -508,6 +508,13 @@ typedef void (*tiku_kits_net_tcp_event_cb_t)(
 /* CONNECTION CONTROL BLOCK                                                  */
 /*---------------------------------------------------------------------------*/
 
+#ifndef TIKU_KITS_NET_TCP_DEFERRED_ENABLE
+/** @brief Enable queued application I/O and paced connection retirement. */
+#define TIKU_KITS_NET_TCP_DEFERRED_ENABLE 0
+#endif
+/** @brief Maximum application bytes copied by a deferred read or send. */
+#define TIKU_KITS_NET_TCP_DEFERRED_CHUNK 512u
+
 /**
  * @struct tiku_kits_net_tcp_conn
  * @brief TCP connection control block (TCB).
@@ -523,6 +530,9 @@ typedef struct tiku_kits_net_tcp_conn {
     uint16_t remote_port;                  /**< Remote port (host order) */
     uint8_t  state;                        /**< TCP state */
     uint8_t  active;                       /**< Non-zero if slot in use */
+#if TIKU_KITS_NET_TCP_DEFERRED_ENABLE
+    uint8_t  deferred;                     /**< Pending data/window output bits */
+#endif
 
     /* --- Send sequence variables (RFC 793 §3.2) --- */
     uint32_t snd_una;    /**< Oldest unacknowledged sequence number */
@@ -726,8 +736,39 @@ int8_t tiku_kits_net_tcp_close(tiku_kits_net_tcp_conn_t *conn);
  * @param conn  Connection to abort (may be in any state)
  */
 void tiku_kits_net_tcp_abort(tiku_kits_net_tcp_conn_t *conn);
+#if TIKU_KITS_NET_TCP_DEFERRED_ENABLE
+/** @brief Copy one bounded data segment into an idle connection's TX queue without output.
+ * @note Serialized owner context; requires ESTABLISHED/CLOSE_WAIT, no outstanding
+ * sequence bytes, available peer window, and 1..min(MSS,DEFERRED_CHUNK) bytes.
+ * OVERFLOW retains nothing.
+ * The input is released on return. The network owner schedules deferred_poll. */
+int8_t tiku_kits_net_tcp_send_deferred(tiku_kits_net_tcp_conn_t *,const uint8_t *,uint16_t);
+/** @brief Copy at most DEFERRED_CHUNK RX bytes and defer any window-update ACK.
+ * @note Serialized owner context. Returns the byte count without network output. */
+uint16_t tiku_kits_net_tcp_read_deferred(tiku_kits_net_tcp_conn_t *,uint8_t *,uint16_t);
+/** @brief Attempt at most one queued output, selecting connections in round-robin order.
+ * @note Runs in the network owner and can call the link output provider. Periodic
+ * invokes this once per timer tick; a network owner can poll more frequently
+ * without advancing retransmission timers. Failed output remains queued. */
+void tiku_kits_net_tcp_deferred_poll(void);
+/** @brief Retire one TX segment per call without output or callbacks; 1 pending, 0 released.
+ * @note The first call quiesces the connection and reserves its table slot.
+ * Input, periodic processing and link-down preserve that reservation until the
+ * caller completes retirement. Keep the owned pointer through the zero result. */
+int8_t tiku_kits_net_tcp_discard_step(tiku_kits_net_tcp_conn_t *);
+/** @brief Borrow one live table entry matching a listener port and event callback.
+ * @note Includes incomplete passive handshakes. Index is less than MAX_CONNS;
+ * other indices, NULL callback and nonmatches return NULL. Serialized owner only.
+ * The pointer is borrowed until returning to network processing; discard_step
+ * converts it into a retirement reservation. This call performs no output. */
+tiku_kits_net_tcp_conn_t *tiku_kits_net_tcp_listener_connection(uint16_t,
+    tiku_kits_net_tcp_event_cb_t,unsigned index);
+#endif
 
-/** @brief Abort live connections with ABORTED callbacks after a local link loss. */
+
+/** @brief Abort live connections with ABORTED callbacks after a local link loss.
+ * @note Connections reserved by discard_step retain their slots and segments
+ * until that caller completes retirement. */
 void tiku_kits_net_tcp_link_down(void);
 
 /*---------------------------------------------------------------------------*/

@@ -69,6 +69,10 @@ static tiku_pool_t seg_pool;
 
 /* Whether init has run: see tiku_kits_net_tcp_init. */
 static uint8_t tcp_inited;
+#if TIKU_KITS_NET_TCP_DEFERRED_ENABLE
+/** Next connection considered for deferred output. */
+static uint8_t deferred_cursor;
+#endif
 
 /** ISS counter */
 static uint32_t iss_counter;
@@ -256,7 +260,7 @@ tcp_alloc_conn(uint8_t *idx)
 }
 
 /**
- * @brief Free a connection slot and all its TX segments.
+ * @brief Free a connection and its TX segments unless retirement owns the slot.
  */
 static void
 tcp_free_conn(tiku_kits_net_tcp_conn_t *c)
@@ -264,6 +268,9 @@ tcp_free_conn(tiku_kits_net_tcp_conn_t *c)
     tcp_txseg_t *seg;
     tcp_txseg_t *next;
 
+#if TIKU_KITS_NET_TCP_DEFERRED_ENABLE
+    if (c->active == 2) return;
+#endif
     /* Free all TX segments */
     seg = (tcp_txseg_t *)c->tx_head;
     while (seg) {
@@ -729,6 +736,9 @@ tcp_process(tiku_kits_net_tcp_conn_t *c,
             uint8_t flags, uint16_t seg_wnd,
             const uint8_t *data, uint16_t data_len)
 {
+#if TIKU_KITS_NET_TCP_DEFERRED_ENABLE
+    if (c->active == 2) return;
+#endif
     /* ---------------------------------------------------------------
      * 1. RST processing (checked first for all states)
      * --------------------------------------------------------------- */
@@ -1468,6 +1478,69 @@ tiku_kits_net_tcp_abort(tiku_kits_net_tcp_conn_t *conn)
     tcp_free_conn(conn);
 }
 
+#if TIKU_KITS_NET_TCP_DEFERRED_ENABLE
+int8_t tiku_kits_net_tcp_send_deferred(tiku_kits_net_tcp_conn_t *c,const uint8_t *data,uint16_t length)
+{
+    if(!c||c->active!=1||!data||!length||
+       (c->state!=TIKU_KITS_NET_TCP_STATE_ESTABLISHED&&c->state!=TIKU_KITS_NET_TCP_STATE_CLOSE_WAIT))
+        return TIKU_KITS_NET_ERR_PARAM;
+    if(length>TIKU_KITS_NET_TCP_DEFERRED_CHUNK||length>TIKU_KITS_NET_TCP_MSS||length>c->snd_mss||
+       length>c->snd_wnd||c->tx_head||c->snd_nxt!=c->snd_una)
+        return TIKU_KITS_NET_ERR_OVERFLOW;
+    if(!tcp_tx_enqueue(c,c->snd_nxt,TIKU_KITS_NET_TCP_FLAG_PSH,data,length))return TIKU_KITS_NET_ERR_OVERFLOW;
+    c->snd_nxt+=length;c->deferred|=1u;c->rto_counter=0;c->retries=0;return TIKU_KITS_NET_OK;
+}
+uint16_t tiku_kits_net_tcp_read_deferred(tiku_kits_net_tcp_conn_t *c,uint8_t *out,uint16_t capacity)
+{
+    if(!c||c->active!=1||!out||!capacity)return 0;
+    uint16_t n=rx_available(c);if(n>capacity)n=capacity;
+    if(n>TIKU_KITS_NET_TCP_DEFERRED_CHUNK)n=TIKU_KITS_NET_TCP_DEFERRED_CHUNK;
+    if(!n)return 0;
+    uint16_t first=TIKU_KITS_NET_TCP_RX_BUF_SIZE-c->rx_tail;if(first>n)first=n;
+    memcpy(out,c->rx_buf+c->rx_tail,first);if(n>first)memcpy(out+first,c->rx_buf,n-first);
+    c->rx_tail=(c->rx_tail+n)%TIKU_KITS_NET_TCP_RX_BUF_SIZE;
+    uint16_t old=c->rcv_wnd;c->rcv_wnd=rx_free(c);
+    if(!old&&c->rcv_wnd&&c->state==TIKU_KITS_NET_TCP_STATE_ESTABLISHED)c->deferred|=2u;
+    return n;
+}
+void tiku_kits_net_tcp_deferred_poll(void)
+{
+    for(unsigned i=0;i<TIKU_KITS_NET_TCP_MAX_CONNS;++i){
+        unsigned index=deferred_cursor;deferred_cursor=(uint8_t)((deferred_cursor+1)%TIKU_KITS_NET_TCP_MAX_CONNS);
+        tiku_kits_net_tcp_conn_t *c=&conn_table[index];
+        if(c->active!=1||!c->deferred)continue;
+        if(c->deferred&1u){
+            tcp_txseg_t *seg=c->tx_head;
+            if(!seg){c->deferred&=(uint8_t)~1u;return;}
+            if(!tcp_send_segment(c,TIKU_KITS_NET_TCP_FLAG_ACK|seg->flags,seg->seq,(const uint8_t *)(seg+1),seg->data_len))
+                c->deferred=0;
+        }else if(!tcp_send_segment(c,TIKU_KITS_NET_TCP_FLAG_ACK,c->snd_nxt,NULL,0))c->deferred=0;
+        return;
+    }
+}
+int8_t tiku_kits_net_tcp_discard_step(tiku_kits_net_tcp_conn_t *c)
+{
+    if(!c||!c->active)return 0;
+    if(c->active!=2){
+        c->active=2;c->state=TIKU_KITS_NET_TCP_STATE_CLOSED;c->recv_cb=NULL;c->event_cb=NULL;c->deferred=0;return 1;
+    }
+    tcp_txseg_t *seg=c->tx_head;
+    if(seg){
+        c->tx_head=seg->next;if(!c->tx_head)c->tx_tail=NULL;
+        if(c->tx_count)--c->tx_count;
+        seg_free(seg);return 1;
+    }
+    c->tx_tail=NULL;c->tx_count=0;c->active=0;return 0;
+}
+tiku_kits_net_tcp_conn_t *tiku_kits_net_tcp_listener_connection(uint16_t port,
+    tiku_kits_net_tcp_event_cb_t callback,unsigned index)
+{
+    if(!port||!callback||index>=TIKU_KITS_NET_TCP_MAX_CONNS)return NULL;
+    tiku_kits_net_tcp_conn_t *c=&conn_table[index];
+    return c->active==1&&c->local_port==port&&c->event_cb==callback?c:NULL;
+}
+#endif
+
 void tiku_kits_net_tcp_link_down(void)
 {
     for (unsigned i = 0; i < TIKU_KITS_NET_TCP_MAX_CONNS; i++) {
@@ -1657,6 +1730,10 @@ tiku_kits_net_tcp_periodic(void)
 {
     uint8_t i;
 
+#if TIKU_KITS_NET_TCP_DEFERRED_ENABLE
+    tiku_kits_net_tcp_deferred_poll();
+#endif
+
     for (i = 0; i < TIKU_KITS_NET_TCP_MAX_CONNS; i++) {
         tiku_kits_net_tcp_conn_t *c = &conn_table[i];
 
@@ -1704,6 +1781,9 @@ tiku_kits_net_tcp_periodic(void)
             continue;
         }
 
+#if TIKU_KITS_NET_TCP_DEFERRED_ENABLE
+        if(c->deferred&1u)continue;
+#endif
         /* --- Retransmission timeout --- */
         if (c->tx_head != (void *)0) {
             c->rto_counter++;
