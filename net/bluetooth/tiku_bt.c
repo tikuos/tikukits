@@ -160,6 +160,8 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
  * controller HCI commands, which avoid a software AES/ECDH
  * port (which would dwarf the rest of the stack on Cortex-M33). */
 #define HCI_OP_LE_ENCRYPT                       0x2017U
+#define HCI_OP_LE_CONN_UPDATE                   0x2013U
+#define HCI_OP_LE_REMOTE_CONN_PARAM_REPLY       0x2020U
 #define HCI_OP_LE_LTK_REQUEST_REPLY             0x201AU
 #define HCI_OP_LE_LTK_REQUEST_NEGATIVE_REPLY    0x201BU
 #define HCI_OP_LE_READ_LOCAL_P256_PUBKEY        0x2025U
@@ -197,6 +199,8 @@ const tiku_bt_transport_t *tiku_bt_get_transport(void)
 #define LE_SUBEVT_READ_LOCAL_P256_PUBKEY_CPL    0x08U
 #define LE_SUBEVT_GENERATE_DHKEY_COMPLETE       0x09U
 #define LE_SUBEVT_PHY_UPDATE_COMPLETE           0x0CU
+#define LE_SUBEVT_CONN_UPDATE_COMPLETE          0x03U
+#define LE_SUBEVT_REMOTE_CONN_PARAM_REQUEST     0x06U
 
 /* LE features (LE Read Local Supported Features, its first two octets). */
 #define LE_FEAT_DATA_LENGTH             (1U << 5)
@@ -5743,6 +5747,47 @@ static void bt_handle_le_meta(const uint8_t *pkt, int len)
         return;
     }
 
+#if (TIKU_BT_LINK_UPDATE + 0)
+    /* LE Connection Update Complete: status, handle(2), then the interval,
+     * latency and supervision timeout (2 each). */
+    if (pkt[3] == LE_SUBEVT_CONN_UPDATE_COMPLETE && len >= 13) {
+        uint16_t handle = (uint16_t)((pkt[5] | ((uint16_t)pkt[6] << 8))
+                                     & 0x0FFFU);
+        uint16_t units  = (uint16_t)(pkt[7] | ((uint16_t)pkt[8] << 8));
+        int      idx    = bt_conn_find(handle);
+
+        if (idx >= 0 && pkt[4] == 0x00U) {
+            bt_state.conns[idx].info.conn_interval_units = units;
+            bt_state.conns[idx].info.conn_latency =
+                (uint16_t)(pkt[9] | ((uint16_t)pkt[10] << 8));
+            bt_state.conns[idx].info.supv_timeout_units =
+                (uint16_t)(pkt[11] | ((uint16_t)pkt[12] << 8));
+        }
+        TIKU_BT_PRINTF("p9: interval handle=0x%04x status=0x%02x units=%u\n",
+                        handle, pkt[4], units);
+        return;
+    }
+
+    /* LE Remote Connection Parameter Request: handle(2), interval min and
+     * max, latency, supervision timeout (2 each).  Accepted as asked. */
+    if (pkt[3] == LE_SUBEVT_REMOTE_CONN_PARAM_REQUEST && len >= 14) {
+        uint8_t cmd[4 + 14];
+        uint8_t k;
+
+        cmd[0] = HCI_PKT_TYPE_CMD;
+        cmd[1] = (uint8_t)(HCI_OP_LE_REMOTE_CONN_PARAM_REPLY & 0xFFU);
+        cmd[2] = (uint8_t)(HCI_OP_LE_REMOTE_CONN_PARAM_REPLY >> 8);
+        cmd[3] = 14U;
+        for (k = 0U; k < 10U; ++k) cmd[4U + k] = pkt[4U + k];
+        for (k = 14U; k < 18U; ++k) cmd[k] = 0U;   /* CE lengths */
+        (void)tiku_bt_send(cmd, sizeof cmd);
+        TIKU_BT_PRINTF("p9: the peer asked for %u-%u x 1.25 ms: accepted\n",
+                        (unsigned)(pkt[6] | ((uint16_t)pkt[7] << 8)),
+                        (unsigned)(pkt[8] | ((uint16_t)pkt[9] << 8)));
+        return;
+    }
+#endif
+
     if (pkt[3] != LE_SUBEVT_ADVERTISING_REPORT) return;
 
     {
@@ -6075,11 +6120,14 @@ int tiku_bt_init(void)
             /* Connection Complete, Advertising Report, Connection Update
              * Complete, Remote Features, LTK Request, Data Length Change,
              * P-256 Public Key, DHKey: sub-events 1-5 and 7-9; with
+             * TIKU_BT_LINK_UPDATE, Remote Connection Parameter Request (6)
+             * and
              * TIKU_BT_LINK_UPDATE, PHY Update Complete (12) too. Extended
              * profiles add Enhanced Connection Complete, Extended Advertising
              * Report, Scan Timeout and Advertising Set Terminated. */
             static const uint8_t le_mask[8] = {
-                0xDF, (uint8_t)(0x01U | ((TIKU_BT_EXTENDED + 0) ? 0x12U : 0U)
+                (uint8_t)(0xDFU | ((TIKU_BT_LINK_UPDATE + 0) ? 0x20U : 0U)),
+                (uint8_t)(0x01U | ((TIKU_BT_EXTENDED + 0) ? 0x12U : 0U)
                          | ((TIKU_BT_LINK_UPDATE + 0) ? 0x08U
                                                                   : 0x00U)),
                 (TIKU_BT_EXTENDED + 0) ? 0x03U : 0U,
@@ -7417,6 +7465,40 @@ int tiku_bt_set_phy(uint16_t handle, uint8_t phy)
 int tiku_bt_set_coded_phy(uint16_t handle, uint8_t coding)
 {
     return bt_set_phy(handle, TIKU_BT_PHY_CODED, coding);
+}
+
+int tiku_bt_set_interval(uint16_t handle, uint16_t units)
+{
+    uint8_t  p[14];
+    uint8_t  st  = 0xFFU;
+    int      idx = -1;
+    int      rc  = bt_link_of(handle, &idx);
+    uint16_t lat, to;
+    uint32_t need;
+
+    if (rc != TIKU_DRV_OK) return rc;
+    if (units < 6U || units > 3200U) return TIKU_DRV_ERR_INVALID;
+    /* The link's latency stays; its supervision timeout too, raised where
+     * the new interval needs more: over (1 + latency) x interval x 2. */
+    lat = bt_state.conns[idx].info.conn_latency;
+    to  = bt_state.conns[idx].info.supv_timeout_units;
+    need = ((1UL + lat) * (uint32_t)units * 1250UL * 2UL) / 10000UL + 1UL;
+    if (to < need) to = (need > 3200UL) ? 3200U : (uint16_t)need;
+    handle = bt_state.conns[idx].info.handle;
+    p[0]  = (uint8_t)(handle & 0xFFU);
+    p[1]  = (uint8_t)(handle >> 8);
+    p[2]  = (uint8_t)(units & 0xFFU);
+    p[3]  = (uint8_t)(units >> 8);
+    p[4]  = p[2];
+    p[5]  = p[3];
+    p[6]  = (uint8_t)(lat & 0xFFU);
+    p[7]  = (uint8_t)(lat >> 8);
+    p[8]  = (uint8_t)(to & 0xFFU);
+    p[9]  = (uint8_t)(to >> 8);
+    p[10] = 0U; p[11] = 0U; p[12] = 0U; p[13] = 0U;   /* CE lengths */
+    rc = bt_hci_cmd_status(HCI_OP_LE_CONN_UPDATE, p, sizeof p, &st);
+    if (rc != TIKU_DRV_OK) return rc;
+    return (st == 0x00U) ? TIKU_DRV_OK : TIKU_DRV_ERR_INVALID;
 }
 
 int tiku_bt_set_data_length(uint16_t handle, uint16_t octets)
