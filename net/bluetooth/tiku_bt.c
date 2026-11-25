@@ -6525,8 +6525,8 @@ int tiku_bt_set_privacy(uint8_t on, uint16_t seconds)
     }
     if (on && !bt_state.rpa_live && !bt_state.scanning
         && !bt_state.connecting) {
-        /* The controller takes no private address (the nRF54L's FLPR
-         * takes static ones only): privacy stays off. */
+        /* The controller refused the private address: privacy stays
+         * off. */
         l.privacy = 0U;
         mpu_saved = tiku_mpu_unlock_nvm();
         bt_local = l;
