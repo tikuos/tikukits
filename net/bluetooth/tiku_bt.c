@@ -6121,10 +6121,9 @@ int tiku_bt_init(void)
              * Complete, Remote Features, LTK Request, Data Length Change,
              * P-256 Public Key, DHKey: sub-events 1-5 and 7-9; with
              * TIKU_BT_LINK_UPDATE, Remote Connection Parameter Request (6)
-             * and
-             * TIKU_BT_LINK_UPDATE, PHY Update Complete (12) too. Extended
-             * profiles add Enhanced Connection Complete, Extended Advertising
-             * Report, Scan Timeout and Advertising Set Terminated. */
+             * and PHY Update Complete (12) too.  Extended profiles add
+             * Enhanced Connection Complete, Extended Advertising Report,
+             * Scan Timeout and Advertising Set Terminated. */
             static const uint8_t le_mask[8] = {
                 (uint8_t)(0xDFU | ((TIKU_BT_LINK_UPDATE + 0) ? 0x20U : 0U)),
                 (uint8_t)(0x01U | ((TIKU_BT_EXTENDED + 0) ? 0x12U : 0U)
@@ -6807,6 +6806,15 @@ uint8_t tiku_bt_scan_results(tiku_bt_scan_entry_t *out,
     n = (bt_state.scan_count < max) ? bt_state.scan_count : max;
     for (i = 0U; i < n; ++i) out[i] = bt_state.scan[i];
     return n;
+}
+
+int tiku_bt_scan_entry(uint8_t index, tiku_bt_scan_entry_t *out)
+{
+    if (out == (tiku_bt_scan_entry_t *)0 || index >= bt_state.scan_count) {
+        return 0;
+    }
+    *out = bt_state.scan[index];
+    return 1;
 }
 
 /*---------------------------------------------------------------------------*/
